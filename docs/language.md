@@ -7,7 +7,11 @@
 - The entry point is `int main()` or `int main(void)`
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
-- `if`, `else`, and `while` bodies use braces
+- `if`, `else`, `while`, and `for` bodies use braces
+- `break` exits the innermost loop, and `continue` advances to its next iteration
+- `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
+- Loop control destroys locals in the scopes being exited
+- Compound assignments: `+= -= *= /= %= &= |= ^=`
 - Non-void functions must return a value on every path
 - Operands and call arguments evaluate left to right
 - `&&` and `||` short-circuit
@@ -16,6 +20,25 @@
 `int` is signed 32-bit. Arithmetic overflow and division or remainder by zero
 terminate the program with a source-location diagnostic. Normal scope exits and
 returns run cleanup. Runtime termination ends the process immediately.
+
+```c
+int main() {
+    int total = 0;
+    for (int i = 0; i < 5; i += 1) {
+        if (i == 2) { continue; }
+        total += i;
+    }
+    print(total);
+    return 0;
+}
+```
+
+For-loop clauses may be empty. An omitted condition continues until a `break`
+or return. Header variables are scoped to the loop.
+
+Compound assignments capture their destination before evaluating the right side.
+The right side can read the destination, while mutation or moves of its parent
+are rejected until assignment completes.
 
 ## Ownership
 
@@ -227,7 +250,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, `struct`, `BoxInt`, `typedef`, `static`
+- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `BoxInt`, `typedef`, `static`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
@@ -242,4 +265,4 @@ struct Resource {
 
 Unsupported literal forms and compound operators produce diagnostics. Examples
 include leading-zero integers, `0xff`, `42u`, floating-point literals, `++`,
-`+=`, and `<<`.
+and `<<`.

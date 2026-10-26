@@ -99,19 +99,19 @@ pub struct Parameter {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub statements: Vec<Statement>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StatementKind {
     Local {
         name: String,
@@ -126,8 +126,15 @@ pub enum StatementKind {
         target: Expression,
         value: Expression,
     },
+    CompoundAssign {
+        target: Expression,
+        operator: BinaryOperator,
+        value: Expression,
+    },
     Expression(Expression),
     Return(Option<Expression>),
+    Break,
+    Continue,
     Block(Block),
     If {
         condition: Expression,
@@ -137,6 +144,7 @@ pub enum StatementKind {
     While {
         condition: Expression,
         body: Block,
+        step: Option<Box<Statement>>,
     },
     Empty,
 }

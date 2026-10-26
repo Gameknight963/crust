@@ -505,7 +505,66 @@ impl Parser {
             let body = self.block()?;
             return Ok(Statement {
                 span: start.through(body.span),
-                kind: StatementKind::While { condition, body },
+                kind: StatementKind::While {
+                    condition,
+                    body,
+                    step: None,
+                },
+            });
+        }
+
+        if self.consume(&Token::For) {
+            self.expect(Token::LeftParen, "expected '(' after 'for'")?;
+            let initializer = self.statement()?;
+            if !matches!(
+                initializer.kind,
+                StatementKind::Local { .. }
+                    | StatementKind::Assign { .. }
+                    | StatementKind::Store { .. }
+                    | StatementKind::CompoundAssign { .. }
+                    | StatementKind::Expression(_)
+                    | StatementKind::Empty
+            ) {
+                return Err(Diagnostic::new(
+                    initializer.span,
+                    "a for initializer must be a declaration, assignment, or expression",
+                ));
+            }
+            let condition = if self.at(&Token::Semicolon) {
+                Expression {
+                    span: self.current().span,
+                    kind: ExpressionKind::Integer(1),
+                }
+            } else {
+                self.expression(1)?
+            };
+            self.expect(Token::Semicolon, "expected ';' after the for condition")?;
+            let step_start = self.current().span;
+            let step = if self.at(&Token::RightParen) {
+                StatementKind::Empty
+            } else {
+                self.assignment_or_expression()?
+            };
+            let step_end = self.expect(Token::RightParen, "expected ')' after the for step")?;
+            let body = self.block()?;
+            let span = start.through(body.span);
+            let loop_statement = Statement {
+                span,
+                kind: StatementKind::While {
+                    condition,
+                    body,
+                    step: Some(Box::new(Statement {
+                        span: step_start.through(step_end),
+                        kind: step,
+                    })),
+                },
+            };
+            return Ok(Statement {
+                span,
+                kind: StatementKind::Block(Block {
+                    span,
+                    statements: vec![initializer, loop_statement],
+                }),
             });
         }
 
@@ -534,6 +593,10 @@ impl Parser {
                 ty,
                 initializer,
             };
+        } else if self.consume(&Token::Break) {
+            kind = StatementKind::Break;
+        } else if self.consume(&Token::Continue) {
+            kind = StatementKind::Continue;
         } else if self.consume(&Token::Return) {
             let value = if self.at(&Token::Semicolon) {
                 None
@@ -543,30 +606,8 @@ impl Parser {
             kind = StatementKind::Return(value);
         } else if self.at(&Token::Semicolon) {
             kind = StatementKind::Empty;
-        } else if matches!(self.current().kind, Token::Identifier(_)) && self.next_at(&Token::Equal)
-        {
-            let (name, _) = self.identifier()?;
-            self.advance(); // =
-            let value = self.expression(1)?;
-            kind = StatementKind::Assign { name, value };
         } else {
-            let expression = self.expression(1)?;
-            if self.consume(&Token::Equal) {
-                let value = self.expression(1)?;
-                if let ExpressionKind::Variable(name) = &expression.kind {
-                    kind = StatementKind::Assign {
-                        name: name.clone(),
-                        value,
-                    };
-                } else {
-                    kind = StatementKind::Store {
-                        target: expression,
-                        value,
-                    };
-                }
-            } else {
-                kind = StatementKind::Expression(expression);
-            }
+            kind = self.assignment_or_expression()?;
         }
 
         let end = self.expect(Token::Semicolon, "expected ';' after the statement")?;
@@ -574,6 +615,38 @@ impl Parser {
             kind,
             span: start.through(end),
         });
+    }
+
+    fn assignment_or_expression(&mut self) -> Result<StatementKind, Diagnostic> {
+        let target = self.expression(1)?;
+        if self.consume(&Token::Equal) {
+            let value = self.expression(1)?;
+            if let ExpressionKind::Variable(name) = target.kind {
+                return Ok(StatementKind::Assign { name, value });
+            }
+            return Ok(StatementKind::Store { target, value });
+        }
+        let operator = match self.current().kind {
+            Token::PlusEqual => Some(BinaryOperator::Add),
+            Token::MinusEqual => Some(BinaryOperator::Subtract),
+            Token::StarEqual => Some(BinaryOperator::Multiply),
+            Token::SlashEqual => Some(BinaryOperator::Divide),
+            Token::PercentEqual => Some(BinaryOperator::Remainder),
+            Token::AmpersandEqual => Some(BinaryOperator::BitAnd),
+            Token::PipeEqual => Some(BinaryOperator::BitOr),
+            Token::CaretEqual => Some(BinaryOperator::BitXor),
+            _ => None,
+        };
+        if let Some(operator) = operator {
+            self.advance();
+            let value = self.expression(1)?;
+            return Ok(StatementKind::CompoundAssign {
+                target,
+                operator,
+                value,
+            });
+        }
+        return Ok(StatementKind::Expression(target));
     }
 
     // Higher precedence binds more tightly. The recursive call with +1 makes

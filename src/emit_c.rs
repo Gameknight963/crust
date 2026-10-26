@@ -20,6 +20,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         types: &checked.types,
         expression_types: &checked.expression_types,
         method_calls: &checked.method_calls,
+        loops: Vec::new(),
     };
     emitter
         .return_types
@@ -153,6 +154,12 @@ struct Emitter<'checked> {
     types: &'checked Types,
     expression_types: &'checked HashMap<Span, Type>,
     method_calls: &'checked HashMap<Span, Expression>,
+    loops: Vec<LoopContext>,
+}
+
+struct LoopContext {
+    scope_count: usize,
+    step: Option<Box<Statement>>,
 }
 
 impl Emitter<'_> {
@@ -279,6 +286,44 @@ impl Emitter<'_> {
                 self.drop_value(self.place_type(target), &place);
                 self.line(&format!("{place} = {value};"));
             }
+            StatementKind::CompoundAssign {
+                target,
+                operator,
+                value,
+            } => {
+                let place = self.place(target);
+                let address =
+                    self.temporary(Type::IntBorrow { mutable: true }, &format!("&({place})"));
+                let left = self.temporary(Type::Int, &format!("*{address}"));
+                let right = self.value_expression(value);
+                let operation = match operator {
+                    BinaryOperator::Add => format!(
+                        "crust_rt_add({left}, {right}, {}, {})",
+                        statement.span.line, statement.span.column
+                    ),
+                    BinaryOperator::Subtract => format!(
+                        "crust_rt_sub({left}, {right}, {}, {})",
+                        statement.span.line, statement.span.column
+                    ),
+                    BinaryOperator::Multiply => format!(
+                        "crust_rt_mul({left}, {right}, {}, {})",
+                        statement.span.line, statement.span.column
+                    ),
+                    BinaryOperator::Divide => format!(
+                        "crust_rt_div({left}, {right}, {}, {})",
+                        statement.span.line, statement.span.column
+                    ),
+                    BinaryOperator::Remainder => format!(
+                        "crust_rt_rem({left}, {right}, {}, {})",
+                        statement.span.line, statement.span.column
+                    ),
+                    BinaryOperator::BitAnd => format!("({left} & {right})"),
+                    BinaryOperator::BitOr => format!("({left} | {right})"),
+                    BinaryOperator::BitXor => format!("({left} ^ {right})"),
+                    _ => unreachable!("checked compound operator"),
+                };
+                self.line(&format!("*{address} = {operation};"));
+            }
             StatementKind::Expression(expression) => {
                 if let Some(value) = self.expression(expression) {
                     if self.types.owns(self.expression_type(expression)) {
@@ -315,12 +360,42 @@ impl Emitter<'_> {
                     self.block(block);
                 }
             }
-            StatementKind::While { condition, body } => {
+            StatementKind::Break | StatementKind::Continue => {
+                let context = self.loops.last().expect("checked loop control");
+                let scope_count = context.scope_count;
+                let step = context.step.clone();
+                for index in (scope_count..self.scopes.len()).rev() {
+                    self.cleanup_scope(index);
+                }
+                if matches!(statement.kind, StatementKind::Continue) {
+                    if let Some(step) = step {
+                        let inner_scopes = self.scopes.split_off(scope_count);
+                        self.statement(&step);
+                        self.scopes.extend(inner_scopes);
+                    }
+                    self.line("continue;");
+                } else {
+                    self.line("break;");
+                }
+            }
+            StatementKind::While {
+                condition,
+                body,
+                step,
+            } => {
                 self.line("while (1) {");
                 self.indent += 1;
                 let condition = self.value_expression(condition);
                 self.line(&format!("if (!{condition}) {{ break; }}"));
+                self.loops.push(LoopContext {
+                    scope_count: self.scopes.len(),
+                    step: step.clone(),
+                });
                 self.block(body);
+                if let Some(step) = step {
+                    self.statement(step);
+                }
+                self.loops.pop();
                 self.indent -= 1;
                 self.line("}");
             }

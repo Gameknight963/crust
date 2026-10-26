@@ -75,6 +75,14 @@
             "problemMatcher": ["$rustc"]
         },
         {
+            "label": "Crust: run loops example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/loops.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
             "label": "Crust: test",
             "type": "process",
             "command": "cargo",

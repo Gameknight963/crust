@@ -12,6 +12,9 @@ pub enum Token {
     If,
     Else,
     While,
+    For,
+    Break,
+    Continue,
     BoxInt,
     Const,
     Struct,
@@ -37,6 +40,14 @@ pub enum Token {
 
     // Operators.
     Equal,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
+    AmpersandEqual,
+    PipeEqual,
+    CaretEqual,
     Plus,
     Minus,
     Star,
@@ -150,6 +161,9 @@ impl Lexer<'_> {
             "if" => Token::If,
             "else" => Token::Else,
             "while" => Token::While,
+            "for" => Token::For,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
             "BoxInt" => Token::BoxInt,
             "const" => Token::Const,
             "struct" => Token::Struct,
@@ -196,9 +210,7 @@ impl Lexer<'_> {
 
         // Even unsupported C operators must stay distinct from spaced tokens:
         // x++ is not the same token sequence as x + +y.
-        for operator in [
-            "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<", ">>", "...",
-        ] {
+        for operator in ["++", "--", "<<", ">>", "..."] {
             if self.source[self.offset..].starts_with(operator) {
                 for _ in operator.chars() {
                     self.advance();
@@ -220,6 +232,14 @@ impl Lexer<'_> {
             (Some('|'), Some('|')) => Some(Token::PipePipe),
             (Some('-'), Some('>')) => Some(Token::Arrow),
             (Some(':'), Some(':')) => Some(Token::ColonColon),
+            (Some('+'), Some('=')) => Some(Token::PlusEqual),
+            (Some('-'), Some('=')) => Some(Token::MinusEqual),
+            (Some('*'), Some('=')) => Some(Token::StarEqual),
+            (Some('/'), Some('=')) => Some(Token::SlashEqual),
+            (Some('%'), Some('=')) => Some(Token::PercentEqual),
+            (Some('&'), Some('=')) => Some(Token::AmpersandEqual),
+            (Some('|'), Some('=')) => Some(Token::PipeEqual),
+            (Some('^'), Some('=')) => Some(Token::CaretEqual),
             _ => None,
         };
 
@@ -524,7 +544,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_compound_operators_without_confusing_spaced_ones() {
-        for source in ["x++", "x--", "x+=1", "x<<=2", "x>>1", "..."] {
+        for source in ["x++", "x--", "x<<=2", "x>>1", "..."] {
             let error = tokenize(source).unwrap_err();
             assert!(error.message.contains("not supported yet"));
         }

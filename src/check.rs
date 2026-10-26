@@ -47,6 +47,12 @@ struct Loan {
     mutable: bool,
 }
 
+struct LoopContext {
+    scope_count: usize,
+    breaks: Vec<Scopes>,
+    continues: Vec<(Scopes, Span)>,
+}
+
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let types = Types::build(&program)?;
     let mut expression_types = HashMap::new();
@@ -158,6 +164,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             types: &types,
             expression_types: &mut expression_types,
             method_calls: &mut method_calls,
+            loops: Vec::new(),
         };
         for (index, parameter) in function.parameters.iter().enumerate() {
             if parameter.name == "this"
@@ -207,6 +214,7 @@ struct FunctionChecker<'program> {
     types: &'program Types,
     expression_types: &'program mut HashMap<Span, Type>,
     method_calls: &'program mut HashMap<Span, Expression>,
+    loops: Vec<LoopContext>,
 }
 
 impl FunctionChecker<'_> {
@@ -261,6 +269,22 @@ impl FunctionChecker<'_> {
                 self.require_type(value, target.ty)?;
                 self.access(&self.root(name), true, statement.span)?;
                 self.set_state(name, State::Available);
+            }
+            StatementKind::CompoundAssign { target, value, .. } => {
+                let place = self.place(target)?;
+                if !place.mutable || place.ty != Type::Int {
+                    return Err(Diagnostic::new(
+                        target.span,
+                        "compound assignment requires a mutable int place",
+                    ));
+                }
+                let previous_loans = self.loans.len();
+                // Reads such as n += n are allowed. Prevent mutation or moves
+                // that could invalidate a captured destination during the RHS.
+                self.borrow(place.root.clone(), false, target.span)?;
+                self.require_type(value, Type::Int)?;
+                self.loans.truncate(previous_loans);
+                self.access(&place.root, true, target.span)?;
             }
             StatementKind::Store { target, value } => {
                 let place = self.place(target)?;
@@ -322,8 +346,8 @@ impl FunctionChecker<'_> {
                 };
                 let else_state = self.scopes.clone();
 
-                // A branch that returns doesn't contribute to the state after
-                // the if. Otherwise an owner must be available on both paths.
+                // A branch ending in return/break/continue doesn't contribute
+                // to the fallthrough state after this if.
                 self.scopes = match (then_returns, else_returns) {
                     (true, false) => else_state,
                     (false, true) => then_state,
@@ -331,7 +355,26 @@ impl FunctionChecker<'_> {
                 };
                 return Ok(then_returns && else_returns);
             }
-            StatementKind::While { condition, body } => {
+            StatementKind::Break | StatementKind::Continue => {
+                let Some(context) = self.loops.last_mut() else {
+                    return Err(Diagnostic::new(
+                        statement.span,
+                        "break and continue require an enclosing loop",
+                    ));
+                };
+                let state = self.scopes[..context.scope_count].to_vec();
+                if matches!(statement.kind, StatementKind::Break) {
+                    context.breaks.push(state);
+                } else {
+                    context.continues.push((state, statement.span));
+                }
+                return Ok(true);
+            }
+            StatementKind::While {
+                condition,
+                body,
+                step,
+            } => {
                 let before = self.scopes.clone();
                 self.require_type(condition, Type::Int)?;
                 if !same_owner_states(&before, &self.scopes, self.types) {
@@ -341,16 +384,42 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 let after_condition = self.scopes.clone();
-                let body_returns = self.block(body)?;
-                if !body_returns && !same_owner_states(&after_condition, &self.scopes, self.types) {
-                    return Err(Diagnostic::new(
-                        body.span,
-                        "a loop must restore moved outer owners before the next iteration",
-                    ));
+                self.loops.push(LoopContext {
+                    scope_count: self.scopes.len(),
+                    breaks: Vec::new(),
+                    continues: Vec::new(),
+                });
+                let body_terminates = self.block(body)?;
+                let mut context = self.loops.pop().expect("loop context");
+                if !body_terminates {
+                    context.continues.push((self.scopes.clone(), body.span));
                 }
-                // The loop may execute zero times. Every continuing iteration
-                // must preserve the availability of owners outside its body.
+                if context.continues.is_empty() {
+                    // Validate and record even an unreachable step so its
+                    // generated expressions have checked types and callees.
+                    self.scopes = after_condition.clone();
+                    if let Some(step) = step {
+                        self.statement(step)?;
+                    }
+                }
+                for (state, span) in context.continues {
+                    // These snapshots exclude body-local scopes, so the for
+                    // step resolves header variables even after a shadowing local.
+                    self.scopes = state;
+                    if let Some(step) = step {
+                        self.statement(step)?;
+                    }
+                    if !same_owner_states(&after_condition, &self.scopes, self.types) {
+                        return Err(Diagnostic::new(
+                            span,
+                            "a loop must restore moved outer owners before the next iteration",
+                        ));
+                    }
+                }
                 self.scopes = after_condition;
+                for state in context.breaks {
+                    self.scopes = merge(&self.scopes, &state);
+                }
             }
             StatementKind::Empty => {}
         }
