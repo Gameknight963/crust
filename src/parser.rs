@@ -119,6 +119,75 @@ struct Alias {
     span: Span,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FunctionDeclaration {
+    Definition,
+    External,
+    Requirement,
+}
+
+fn valid_c_symbol(symbol: &str) -> bool {
+    let mut bytes = symbol.bytes();
+    if !bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return false;
+    }
+    return !matches!(
+        symbol,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Alignas"
+            | "_Alignof"
+            | "_Atomic"
+            | "_Bool"
+            | "_Complex"
+            | "_Generic"
+            | "_Imaginary"
+            | "_Noreturn"
+            | "_Static_assert"
+            | "_Thread_local"
+            | "bool"
+            | "true"
+            | "false"
+            | "NULL"
+    );
+}
+
 impl Parser {
     // Collect top-level type declarations first so forward uses have the same
     // meaning throughout the file. Type aliases expand before the checker.
@@ -695,6 +764,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    link_name: None,
                     variadic: false,
                     requires_unsafe: false,
                     external: false,
@@ -729,7 +799,14 @@ impl Parser {
                 } else {
                     method_name(id, &name)
                 };
-                let mut method = self.function_body(ty, key, span, Some(id), is_static, false)?;
+                let mut method = self.function_body(
+                    ty,
+                    key,
+                    span,
+                    Some(id),
+                    is_static,
+                    FunctionDeclaration::Definition,
+                )?;
                 method.requires_unsafe = requires_unsafe;
                 self.methods.push(method);
                 continue;
@@ -777,7 +854,13 @@ impl Parser {
                     Diagnostic::new(start, "generic function needs type arguments")
                 })?;
         }
-        let mut function = self.function_body(return_type, name, start, None, false, external)?;
+        let declaration = if external {
+            FunctionDeclaration::External
+        } else {
+            FunctionDeclaration::Definition
+        };
+        let mut function =
+            self.function_body(return_type, name, start, None, false, declaration)?;
         function.requires_unsafe = requires_unsafe;
         return Ok(function);
     }
@@ -789,8 +872,11 @@ impl Parser {
         start: Span,
         owner: Option<usize>,
         is_static: bool,
-        external: bool,
+        declaration: FunctionDeclaration,
     ) -> Result<Function, Diagnostic> {
+        let external = declaration == FunctionDeclaration::External;
+        let prototype = declaration != FunctionDeclaration::Definition;
+        let mut link_name = external.then(|| name.clone());
         self.expect(Token::LeftParen, "expected '(' after the function name")?;
         let mut parameters = Vec::new();
         let mut variadic = false;
@@ -816,7 +902,7 @@ impl Parser {
                         "a named parameter cannot have type void",
                     ));
                 }
-                let (name, span) = if external
+                let (name, span) = if prototype
                     && matches!(self.current().kind, Token::Comma | Token::RightParen)
                 {
                     (format!("arg_{}", parameters.len()), self.current().span)
@@ -875,11 +961,27 @@ impl Parser {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
         );
-        let body = if external {
-            let span = self.expect(
-                Token::Semicolon,
-                "expected ';' after external function declaration",
-            )?;
+        let body = if prototype {
+            if external && self.consume(&Token::Equal) {
+                let token = self.advance();
+                let Token::StringLiteral(bytes) = token.kind else {
+                    return Err(Diagnostic::new(
+                        token.span,
+                        "expected a quoted C symbol name",
+                    ));
+                };
+                let symbol = String::from_utf8(bytes).map_err(|_| {
+                    Diagnostic::new(token.span, "C symbol names require ASCII identifiers")
+                })?;
+                if !valid_c_symbol(&symbol) {
+                    return Err(Diagnostic::new(
+                        token.span,
+                        "C symbol name is not usable as a C function identifier",
+                    ));
+                }
+                link_name = Some(symbol);
+            }
+            let span = self.expect(Token::Semicolon, "expected ';' after function declaration")?;
             Block {
                 statements: Vec::new(),
                 span,
@@ -890,6 +992,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            link_name,
             variadic,
             requires_unsafe: external,
             external,

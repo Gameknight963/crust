@@ -45,6 +45,7 @@ to the original path and byte range.
 - Struct values use generated aliases, and opaque aliases preserve their native C tags
 - Union types share the aggregate type registry and generate native C unions, including opaque union tags
 - External declarations and calls retain their C symbol names
+- Renamed imports keep separate Crust and C names, and declarations sharing a C symbol are checked for compatible signatures
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
 - Variadic function types retain the fixed parameter list and ellipsis, and additional call arguments receive C integer promotions before emission

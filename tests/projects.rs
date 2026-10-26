@@ -586,6 +586,42 @@ fn native_integer_types_survive_variadic_calls_and_repeated_imported_declaration
 }
 
 #[test]
+fn renamed_c_functions_can_use_crust_keywords_and_builtin_names() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nsources=['native.c']\n");
+    fixture.write(
+        "native.c",
+        r#"
+        int destroy(int value) { return value + 1; }
+        int move(int value) { return value + 2; }
+        int print(int value) { return value + 3; }
+        typedef int (*Callback)(int);
+        Callback native_callback(void) { return destroy; }
+    "#,
+    );
+    fixture.write(
+        "main.cr",
+        r#"
+        extern int native_destroy(int value) = "destroy";
+        extern int native_move(int value) = "move";
+        extern int native_print(int value) = "print";
+        typedef int (*Callback)(int);
+        extern Callback get_callback() = "native_callback";
+        int main() {
+            unsafe {
+                print(native_destroy(41)); print(native_move(40)); print(native_print(39));
+                Callback callback = native_destroy; print(callback(41)); print(get_callback()(41));
+            }
+            return 0;
+        }
+    "#,
+    );
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n42\n42\n42\n42\n");
+}
+
+#[test]
 fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     let fixture = Fixture::new();
     for arguments in [

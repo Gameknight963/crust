@@ -23,6 +23,7 @@ pub(crate) struct FunctionAnalysis {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Signature {
+    link_name: Option<String>,
     variadic: bool,
     requires_unsafe: bool,
     external: bool,
@@ -76,6 +77,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let mut types = Types::build(&program)?;
     let mut analyses = HashMap::new();
     let mut signatures = HashMap::new();
+    let mut native_signatures = HashMap::new();
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
         ("box_int", Type::BoxInt, vec![Type::Integer(IntType::I32)]),
@@ -84,6 +86,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             name.to_owned(),
             Signature {
+                link_name: None,
                 variadic: false,
                 requires_unsafe: false,
                 external: false,
@@ -182,6 +185,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             None
         };
         let signature = Signature {
+            link_name: function.link_name.clone(),
             variadic: function.variadic,
             requires_unsafe: function.requires_unsafe,
             external: function.external,
@@ -193,6 +197,17 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 .map(|parameter| parameter.ty)
                 .collect(),
         };
+        if let Some(symbol) = &function.link_name {
+            if let Some(previous) = native_signatures.get(symbol)
+                && previous != &signature
+            {
+                return Err(Diagnostic::new(
+                    function.span,
+                    format!("conflicting declarations for C symbol '{symbol}'"),
+                ));
+            }
+            native_signatures.insert(symbol.clone(), signature.clone());
+        }
         if let Some(previous) = signatures.get(&function.name) {
             if previous.external && signature.external {
                 if previous == &signature {

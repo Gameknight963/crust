@@ -334,6 +334,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub link_name: Option<String>,
     pub variadic: bool,
     pub requires_unsafe: bool,
     pub external: bool,

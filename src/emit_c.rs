@@ -28,7 +28,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .functions
             .iter()
             .filter(|function| function.external)
-            .map(|function| function.name.clone())
+            .map(|function| (function.name.clone(), function.link_name.clone().unwrap()))
             .collect(),
         function_values: &empty_analysis.function_values,
     };
@@ -189,7 +189,7 @@ fn header(function: &Function) -> String {
     return format!(
         "{result} {}({parameters})",
         if function.external {
-            function.name.clone()
+            function.link_name.clone().unwrap()
         } else {
             function_name(&function.name)
         }
@@ -231,7 +231,7 @@ struct Emitter<'checked> {
     conversions: &'checked HashMap<Span, Type>,
     constants: &'checked HashMap<Span, i128>,
     loops: Vec<LoopContext>,
-    external_names: HashSet<String>,
+    external_names: HashMap<String, String>,
 }
 
 struct LoopContext {
@@ -710,8 +710,8 @@ impl Emitter<'_> {
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
         if let Some(name) = self.function_values.get(&expression.span) {
-            let function = if self.external_names.contains(name) {
-                name.clone()
+            let function = if let Some(symbol) = self.external_names.get(name) {
+                symbol.clone()
             } else {
                 function_name(name)
             };
@@ -900,8 +900,8 @@ impl Emitter<'_> {
                         (false, 32 | 64) => String::from("crust_rt_print_u64"),
                         _ => function_name(name),
                     }
-                } else if self.external_names.contains(name) {
-                    name.clone()
+                } else if let Some(symbol) = self.external_names.get(name) {
+                    symbol.clone()
                 } else {
                     function_name(name)
                 };

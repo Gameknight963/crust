@@ -558,7 +558,14 @@ impl Parser {
             } else {
                 method_name(id, &name)
             };
-            let mut function = self.function_body(result, key, start, Some(id), is_static, true)?;
+            let mut function = self.function_body(
+                result,
+                key,
+                start,
+                Some(id),
+                is_static,
+                FunctionDeclaration::Requirement,
+            )?;
             function.requires_unsafe = requires_unsafe;
             if function.variadic {
                 return Err(Diagnostic::new(

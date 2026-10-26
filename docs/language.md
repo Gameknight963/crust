@@ -593,6 +593,17 @@ lifetimes. External declarations must match the linked C function's ABI.
 Matching `extern` declarations can repeat across imported files. Parameter names
 can differ, and conflicting types or variadic signatures produce diagnostics.
 
+An import can use a different Crust name from its C symbol:
+
+```c
+extern int native_destroy(int value) = "destroy";
+```
+
+Calls and function addresses use the named C symbol directly. Multiple Crust
+names can refer to the same symbol when their signatures match. The symbol uses
+a C function identifier, and the import retains its unsafe caller contract.
+See [renamed imports](../examples/renamed_imports.cr) for direct and callback use.
+
 Functions and methods can declare an unsafe caller contract:
 
 ```c
