@@ -53,6 +53,47 @@ fn void_pointer_locals_support_null_nested_indirection_and_for_initializers() {
 }
 
 #[test]
+fn named_struct_and_typedef_pointer_slots_support_mutable_and_shared_borrows() {
+    run(
+        r#"
+        struct Item { int value; };
+        typedef Item Named;
+        void set_pointer<T>(T*^ target, T* next) {
+            T*^ slot = ^*target;
+            *slot = next;
+        }
+        int main() {
+            Item first = { .value = 7 };
+            Item second = { .value = 42 };
+            unsafe {
+                Item* pointer = &first;
+                { Item*^ slot = ^pointer; set_pointer<Item>(^*slot, &second); print((*slot)->value); }
+                { Named* const^ slot = ^const pointer; print((*slot)->value); }
+                pointer = &first; print(pointer->value);
+            }
+            return 0;
+        }
+    "#,
+        "42\n42\n7\n",
+        "",
+    );
+}
+
+#[test]
+fn pointer_slot_borrows_preserve_shared_permissions_and_exclusive_root_loans() {
+    for (declaration, action) in [
+        ("Handle* const^ slot = ^const pointer;", "*slot = 0;"),
+        ("Handle*^ slot = ^pointer;", "pointer = 0;"),
+    ] {
+        let source = format!(
+            "struct Handle; int main() {{ Handle* pointer = 0; {declaration} {action} return 0; }}"
+        );
+        let error = crust::check(&source).unwrap_err();
+        assert!(error.message.contains("borrow"), "{}", error.message);
+    }
+}
+
+#[test]
 fn raw_pointers_support_nested_indirection_and_safe_borrow_bindings() {
     run(
         r#"

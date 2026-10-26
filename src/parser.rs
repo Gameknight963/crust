@@ -722,11 +722,9 @@ impl Parser {
         }
         if self.next_at(&Token::Star) {
             let mut position = self.position + 1;
-            while self
-                .tokens
-                .get(position)
-                .is_some_and(|token| matches!(token.kind, Token::Star | Token::Const))
-            {
+            while self.tokens.get(position).is_some_and(|token| {
+                matches!(token.kind, Token::Star | Token::Const | Token::Caret)
+            }) {
                 position += 1;
             }
             return matches!(

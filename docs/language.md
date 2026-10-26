@@ -613,6 +613,12 @@ int main() {
 
 Unsafe code is responsible for pointer validity, alignment, aliasing, and resource
 lifetimes. External declarations must match the linked C function's ABI.
+
+Pointer-slot borrows use the full pointer type, such as `Item*^ slot = ^pointer;`
+or `Item* const^ view = ^const pointer;`. The first can replace the pointer value.
+The second shares access to it. Dereferencing the stored raw pointer requires
+`unsafe`.
+
 Matching `extern` declarations can repeat across imported files. Parameter names
 can differ, and conflicting types or variadic signatures produce diagnostics.
 
