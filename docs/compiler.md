@@ -65,6 +65,7 @@ reject name capture. LSP clients receive a workspace edit for review and applica
 - Union types share the aggregate type registry and generate native C unions, including opaque union tags
 - External declarations and calls retain their C symbol names
 - Renamed imports keep separate Crust and C names, and declarations sharing a C symbol are checked for compatible signatures
+- External variables emit native object declarations, retain const permissions, and share borrow roots across aliases of one C symbol
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Function declarations and callback typedefs emit their effective calling convention, with matching checks for native symbols and interface requirements
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature

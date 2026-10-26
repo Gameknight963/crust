@@ -35,6 +35,7 @@ pub enum SymbolKind {
     Field,
     Parameter,
     Variable,
+    Global,
     Interface,
     Alias,
     TypeParameter,
@@ -280,6 +281,16 @@ pub(crate) fn build(
             declaration.container.clone(),
         );
     }
+    for global in &checked.program.globals {
+        builder.symbol(
+            global.name.clone(),
+            SymbolKind::Global,
+            global.name_span,
+            global.span,
+            builder.text(global.span).trim_end_matches(';').to_owned(),
+            None,
+        );
+    }
     for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
         if !checked.types.structs[id].complete {
             let kind = if checked.types.structs[id].is_union {
@@ -404,6 +415,12 @@ pub(crate) fn build(
         builder.block(&function.body);
     }
     let mut canonical = HashMap::new();
+    let mut globals = HashMap::new();
+    for global in &checked.program.globals {
+        let location = locate(global.name_span);
+        let declaration = *globals.entry(&global.name).or_insert(location);
+        canonical.insert(location, declaration);
+    }
     let mut functions = HashMap::new();
     for function in &checked.program.functions {
         let location = locate(function.name_span);

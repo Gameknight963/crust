@@ -44,6 +44,8 @@ enum State {
 
 #[derive(Clone, Copy)]
 struct Variable {
+    external: bool,
+    mutable: bool,
     declaration: Option<Span>,
     ty: Type,
     state: State,
@@ -86,6 +88,71 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         function_declarations
             .entry(function.name.clone())
             .or_insert(function.name_span);
+    }
+    let mut globals: HashMap<String, Variable> = HashMap::new();
+    let mut global_symbols = HashMap::new();
+    let mut native_globals = HashMap::new();
+    for global in &program.globals {
+        if global.ty == Type::Void
+            || !types.is_sized(global.ty)
+            || types.owns(global.ty)
+            || global.ty.is_borrow()
+            || matches!(global.ty, Type::Array(_) | Type::Function(_))
+        {
+            return Err(Diagnostic::new(
+                global.span,
+                "external variables require complete copyable C values or raw pointers",
+            ));
+        }
+        if matches!(
+            global.name.as_str(),
+            "Self" | "this" | "print" | "move" | "box_int"
+        ) || types.enumerator(&global.name).is_some()
+            || function_declarations.contains_key(&global.name)
+        {
+            return Err(Diagnostic::new(
+                global.name_span,
+                "external variable name is already defined or reserved",
+            ));
+        }
+        if global.link_name == "main"
+            || program
+                .functions
+                .iter()
+                .any(|function| function.link_name.as_ref() == Some(&global.link_name))
+        {
+            return Err(Diagnostic::new(
+                global.span,
+                "a C symbol cannot name both a function and an external variable",
+            ));
+        }
+        let signature = (global.ty, global.readonly);
+        if let Some(previous) = native_globals.insert(&global.link_name, signature)
+            && previous != signature
+        {
+            return Err(Diagnostic::new(
+                global.span,
+                "conflicting declarations for a C variable symbol",
+            ));
+        }
+        if let Some(previous) = global_symbols.insert(global.name.clone(), global.link_name.clone())
+            && (previous != global.link_name
+                || globals[&global.name].ty != global.ty
+                || globals[&global.name].mutable == global.readonly)
+        {
+            return Err(Diagnostic::new(
+                global.span,
+                "conflicting external variable declarations",
+            ));
+        }
+        globals.entry(global.name.clone()).or_insert(Variable {
+            external: true,
+            mutable: !global.readonly,
+            declaration: Some(global.name_span),
+            ty: global.ty,
+            state: State::Available,
+            reference: None,
+        });
     }
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
@@ -305,11 +372,12 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             function_declarations: &function_declarations,
             symbol_uses: &mut analysis.symbol_uses,
             signatures: &signatures,
-            scopes: vec![HashMap::new()],
+            global_symbols: &global_symbols,
+            scopes: vec![globals.clone(), HashMap::new()],
             return_type: function.return_type,
             return_borrow_root: signatures[&function.name]
                 .return_borrow
-                .map(|index| (0, function.parameters[index].name.clone())),
+                .map(|index| (1, function.parameters[index].name.clone())),
             loans: Vec::new(),
             next_loan: 0,
             references: HashMap::new(),
@@ -379,6 +447,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 }
 
 struct FunctionChecker<'program> {
+    global_symbols: &'program HashMap<String, String>,
     function_declarations: &'program HashMap<String, Span>,
     symbol_uses: &'program mut HashMap<Span, Span>,
     function_values: &'program mut HashMap<Span, String>,
@@ -496,6 +565,12 @@ impl FunctionChecker<'_> {
             } => {
                 // Assignment may reinitialize an owner that has been moved.
                 let target = self.lookup(name, statement.span)?;
+                if !target.mutable {
+                    return Err(Diagnostic::new(
+                        *name_span,
+                        "cannot assign to a const external variable",
+                    ));
+                }
                 self.record_binding_symbol(*name_span, target);
                 if target.ty.is_borrow() {
                     return Err(Diagnostic::new(
@@ -1971,7 +2046,8 @@ impl FunctionChecker<'_> {
     fn probe_mutability(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
         return match &expression.kind {
             ExpressionKind::Variable { name, .. } => {
-                Ok(!self.available(name, expression.span)?.ty.is_borrow())
+                let variable = self.available(name, expression.span)?;
+                Ok(variable.mutable && !variable.ty.is_borrow())
             }
             ExpressionKind::Field { base, .. } => self.probe_mutability(base),
             ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
@@ -2285,7 +2361,7 @@ impl FunctionChecker<'_> {
         };
         return Ok(Place {
             ty: variable.ty,
-            mutable: !variable.ty.is_borrow(),
+            mutable: variable.mutable && !variable.ty.is_borrow(),
             root,
             fields,
             via: variable.reference,
@@ -2295,7 +2371,14 @@ impl FunctionChecker<'_> {
     fn root(&self, name: &str) -> (usize, String) {
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if scope.contains_key(name) {
-                return (index, name.to_owned());
+                return (
+                    index,
+                    if index == 0 {
+                        self.global_symbols[name].clone()
+                    } else {
+                        name.to_owned()
+                    },
+                );
             }
         }
         unreachable!("variable is resolved before finding its root");
@@ -2385,6 +2468,8 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
+                external: false,
+                mutable: true,
                 declaration,
                 ty,
                 state,
@@ -2397,6 +2482,9 @@ impl FunctionChecker<'_> {
     fn lookup(&self, name: &str, span: Span) -> Result<Variable, Diagnostic> {
         for scope in self.scopes.iter().rev() {
             if let Some(variable) = scope.get(name) {
+                if variable.external {
+                    self.require_unsafe(span, "accessing an external C variable")?;
+                }
                 return Ok(*variable);
             }
         }

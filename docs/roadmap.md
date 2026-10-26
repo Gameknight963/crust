@@ -38,6 +38,7 @@
 - Constant expressions for fixed array lengths in typedefs, fields, locals, and generic arguments
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
 - Explicit C and Windows calling conventions for native declarations, callbacks, functions, and methods
+- External C variables with const permissions, renamed imports, shared alias borrow roots, and source navigation
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping
@@ -65,8 +66,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 - Add native source-level debugging through the generated C backend
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
-source outlines, and reference searches. Completion and rename can extend the
-same symbol index.
+source outlines, reference searches, and local rename. Completion and broader
+rename support can extend the same symbol index.
 
 ## Further design
 

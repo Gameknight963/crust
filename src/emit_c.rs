@@ -12,7 +12,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         output: format!("{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
         next_name: 0,
-        scopes: Vec::new(),
+        scopes: vec![Scope::default()],
         return_types: program
             .functions
             .iter()
@@ -87,6 +87,22 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         emitter.type_declaration(Type::Function(id), &mut declared);
     }
     emitter.struct_definitions();
+    for variable in &program.globals {
+        emitter.line(&format!(
+            "extern {}{} {};",
+            c_type(variable.ty),
+            if variable.readonly { " const" } else { "" },
+            variable.link_name
+        ));
+        emitter.scopes[0].insert(
+            variable.name.clone(),
+            Local {
+                name: variable.link_name.clone(),
+                ty: variable.ty,
+                live: None,
+            },
+        );
+    }
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
     }

@@ -704,6 +704,50 @@ fn type_navigation_and_outlines_include_aliases_interfaces_and_unused_generics()
 }
 
 #[test]
+fn external_variables_have_hover_navigation_references_and_source_outlines() {
+    let uri = "untitled:external-variables.cr";
+    let source = "extern int value; extern int value; int main() { unsafe { value = 42; print(value); } return 0; }";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let query = json!({"textDocument": {"uri": uri}, "position": point(source, "value =")});
+    let hover = server
+        .request("textDocument/hover", query.clone())
+        .result
+        .unwrap();
+    assert_eq!(
+        hover["contents"]["value"],
+        "```crust\nextern int value\n```"
+    );
+    let definition = server
+        .request("textDocument/definition", query.clone())
+        .result
+        .unwrap();
+    assert_eq!(definition[0]["range"]["start"], point(source, "value;"));
+    let mut references = query;
+    references["context"] = json!({"includeDeclaration": true});
+    let references = server
+        .request("textDocument/references", references)
+        .result
+        .unwrap();
+    assert_eq!(references.as_array().unwrap().len(), 4);
+    let symbols = server
+        .request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .result
+        .unwrap();
+    assert!(
+        symbols
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|symbol| symbol["name"] == "value" && symbol["kind"] == 13)
+    );
+    server.stop();
+}
+
+#[test]
 fn prepare_and_rename_return_identifier_ranges_and_client_compatible_edits() {
     let source = "/* 🦀 */ int main() { int value = 1; return (value); }";
     let uri = "untitled:rename.cr";

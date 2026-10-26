@@ -260,6 +260,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub globals: Vec<ExternalVariable>,
     pub source_declarations: Vec<SourceDeclaration>,
     pub type_references: Vec<TypeReference>,
     pub type_annotations: Vec<(Span, Type)>,
@@ -273,6 +274,16 @@ pub struct Program {
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug)]
+pub struct ExternalVariable {
+    pub name: String,
+    pub name_span: Span,
+    pub ty: Type,
+    pub readonly: bool,
+    pub link_name: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -675,6 +675,26 @@ sizes, initialized elements, bounds-checked getters, and move-only cleanup.
 For a shared borrow of a raw pointer binding, use a typedef such as
 `typedef int* IntPointer;` followed by `const IntPointer^`.
 
+## External variables
+
+```c
+extern int count;
+extern const int limit;
+extern int local_name = "native_name";
+```
+
+- External variables refer to storage provided by C
+- Reads, writes, addresses, and borrows require `unsafe`
+- `sizeof` can inspect an external variable without evaluating it
+- `const` qualifies the imported object, including `extern int* const pointer`
+- External variables use complete copyable C values or raw pointers
+- Compatible declarations can repeat, and renamed imports can share a native symbol
+- Borrows through aliases of the same C symbol overlap
+- Function-local declarations can shadow an imported variable
+
+The [native globals project](../examples/global_project/) imports mutable storage,
+a const object, and a callback variable from a separate C file.
+
 ## Function pointers and callbacks
 
 ```c

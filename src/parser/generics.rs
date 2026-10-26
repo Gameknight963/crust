@@ -103,6 +103,9 @@ fn closing(
 }
 
 impl Parser {
+    pub(super) fn has_function_template(&self, name: &str) -> bool {
+        return self.generics.functions.contains_key(name);
+    }
     pub(super) fn generic_declaration_ahead(&self) -> bool {
         if self.value_scopes.iter().rev().any(
             |scope| matches!(&self.current().kind, Token::Identifier(name) if scope.contains(name)),

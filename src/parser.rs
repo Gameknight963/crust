@@ -41,6 +41,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut enums = Vec::new();
+    let mut globals = Vec::new();
 
     loop {
         if parser.at(&Token::EndOfFile) {
@@ -81,7 +82,10 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         {
             structs.push(parser.struct_definition()?);
         } else {
-            functions.push(parser.function()?);
+            match parser.declaration()? {
+                Declaration::Function(function) => functions.push(function),
+                Declaration::Global(variable) => globals.push(variable),
+            }
         }
     }
 
@@ -90,6 +94,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
+        globals,
         source_declarations: parser.source_declarations,
         type_references: parser.type_references,
         type_annotations: parser.type_annotations,
@@ -146,6 +151,11 @@ enum FunctionDeclaration {
     Definition,
     External,
     Requirement,
+}
+
+enum Declaration {
+    Function(Function),
+    Global(ExternalVariable),
 }
 
 fn valid_c_symbol(symbol: &str) -> bool {
@@ -978,13 +988,56 @@ impl Parser {
     }
 
     fn function(&mut self) -> Result<Function, Diagnostic> {
+        let span = self.current().span;
+        return match self.declaration()? {
+            Declaration::Function(function) => Ok(function),
+            Declaration::Global(_) => Err(Diagnostic::new(span, "expected a function declaration")),
+        };
+    }
+
+    fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().span;
         let unsafe_prefix = self.consume(&Token::Unsafe);
         let external = self.consume(&Token::Extern);
-        let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix || external;
-        let return_type = self.type_name()?;
+        let unsafe_suffix = self.consume(&Token::Unsafe);
+        let requires_unsafe = unsafe_suffix || unsafe_prefix || external;
+        let (return_type, readonly) = self.qualified_type_name(external)?;
         let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
+        if external && !self.at(&Token::LeftParen) && !self.at(&Token::Less) {
+            if convention.is_some() || unsafe_prefix || unsafe_suffix {
+                return Err(Diagnostic::new(
+                    start,
+                    "calling conventions and unsafe modifiers apply to functions",
+                ));
+            }
+            let ty = self.array_suffix(return_type)?;
+            if self.has_function_template(&name) {
+                return Err(Diagnostic::new(
+                    name_span,
+                    "external variable name conflicts with a generic function",
+                ));
+            }
+            let link_name = self.external_link_name(&name)?;
+            let end = self.expect(
+                Token::Semicolon,
+                "expected ';' after external variable declaration",
+            )?;
+            return Ok(Declaration::Global(ExternalVariable {
+                name,
+                name_span,
+                ty,
+                readonly,
+                link_name,
+                span: start.through(end),
+            }));
+        }
+        if readonly {
+            return Err(Diagnostic::new(
+                start,
+                "const-qualified function results require a pointer type",
+            ));
+        }
         if self.at(&Token::Less) {
             self.skip_type_parameters()?;
             name =
@@ -1011,7 +1064,29 @@ impl Parser {
             function.variadic,
             start,
         )?;
-        return Ok(function);
+        return Ok(Declaration::Function(function));
+    }
+
+    fn external_link_name(&mut self, name: &str) -> Result<String, Diagnostic> {
+        if !self.consume(&Token::Equal) {
+            return Ok(name.to_owned());
+        }
+        let token = self.advance();
+        let Token::StringLiteral(bytes) = token.kind else {
+            return Err(Diagnostic::new(
+                token.span,
+                "expected a quoted C symbol name",
+            ));
+        };
+        let symbol = String::from_utf8(bytes)
+            .map_err(|_| Diagnostic::new(token.span, "C symbol names require ASCII identifiers"))?;
+        if !valid_c_symbol(&symbol) {
+            return Err(Diagnostic::new(
+                token.span,
+                "C symbol name is not usable as a C identifier",
+            ));
+        }
+        return Ok(symbol);
     }
 
     fn function_body(
@@ -1129,24 +1204,8 @@ impl Parser {
                 .collect(),
         );
         let body = if prototype {
-            if external && self.consume(&Token::Equal) {
-                let token = self.advance();
-                let Token::StringLiteral(bytes) = token.kind else {
-                    return Err(Diagnostic::new(
-                        token.span,
-                        "expected a quoted C symbol name",
-                    ));
-                };
-                let symbol = String::from_utf8(bytes).map_err(|_| {
-                    Diagnostic::new(token.span, "C symbol names require ASCII identifiers")
-                })?;
-                if !valid_c_symbol(&symbol) {
-                    return Err(Diagnostic::new(
-                        token.span,
-                        "C symbol name is not usable as a C function identifier",
-                    ));
-                }
-                link_name = Some(symbol);
+            if external {
+                link_name = Some(self.external_link_name(&name)?);
             }
             let span = self.expect(Token::Semicolon, "expected ';' after function declaration")?;
             Block {
@@ -1174,6 +1233,10 @@ impl Parser {
     }
 
     fn type_name(&mut self) -> Result<Type, Diagnostic> {
+        return self.qualified_type_name(false).map(|(ty, _)| ty);
+    }
+
+    fn qualified_type_name(&mut self, allow_const: bool) -> Result<(Type, bool), Diagnostic> {
         let start = self.current().span;
         let mut shared = self.consume(&Token::Const);
         let token = self.advance();
@@ -1241,10 +1304,13 @@ impl Parser {
         }
         let base = self.array_suffix(base)?;
         let ty = if self.consume(&Token::Caret) {
-            base.borrowed(!shared)
-                .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?
+            let ty = base
+                .borrowed(!shared)
+                .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?;
+            shared = false;
+            ty
         } else {
-            if shared {
+            if shared && !allow_const {
                 return Err(Diagnostic::new(
                     token.span,
                     "const currently applies to borrows, such as 'const int^'",
@@ -1265,7 +1331,7 @@ impl Parser {
             span,
             declaration: None,
         });
-        return Ok(ty);
+        return Ok((ty, shared));
     }
 
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
