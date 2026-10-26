@@ -1,0 +1,56 @@
+# Cargo output, including targets in future workspace members.
+target/
+
+# Other generated output directories. Generated C belongs here, not beside source.
+/build/
+/out/
+/dist/
+/coverage/
+
+# Native compiler and linker artifacts.
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.dll
+*.so
+*.so.*
+*.dylib
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.ipdb
+*.iobj
+*.pch
+*.dSYM/
+
+# Profiling, coverage, and Rust compiler crash reports.
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+rustc-ice-*.txt
+
+# Local IDE state. Keep shared VS Code tasks and extension/debug recommendations.
+.vs/
+.idea/
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/tasks.json
+!/.vscode/launch.json
+
+# Editor backups and temporary files.
+*.rs.bk
+*.swp
+*.swo
+*~
+*.tmp
+
+# Operating-system metadata.
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep Cargo.lock, Rust/Crust sources, and C interop sources trackable.

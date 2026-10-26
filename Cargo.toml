@@ -1,0 +1,12 @@
+[package]
+name = "crust"
+version = "0.1.0"
+edition = "2024"
+description = "An experimental C-like language with ownership checking"
+publish = false
+
+[dependencies]
+
+[lints.clippy]
+# Keep explicit returns while the implementation is also a Rust learning project.
+needless_return = "allow"

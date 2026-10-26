@@ -1,0 +1,55 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Crust: build",
+            "type": "process",
+            "command": "cargo",
+            "args": ["build"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"],
+            "group": { "kind": "build", "isDefault": true }
+        },
+        {
+            "label": "Crust: check",
+            "type": "process",
+            "command": "cargo",
+            "args": ["check"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Crust: run example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/hello.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Crust: run ownership example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/ownership.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Crust: run borrowing example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/borrowing.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Crust: test",
+            "type": "process",
+            "command": "cargo",
+            "args": ["test"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"],
+            "group": { "kind": "test", "isDefault": true }
+        }
+    ]
+}

@@ -1,0 +1,625 @@
+use std::collections::HashMap;
+
+use crate::ast::*;
+use crate::diagnostic::{Diagnostic, Span};
+
+// Code generation accepts only a program that has passed this checker.
+pub(crate) struct CheckedProgram {
+    pub program: Program,
+}
+
+#[derive(Clone)]
+struct Signature {
+    return_type: Type,
+    parameters: Vec<Type>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    Uninitialized,
+    Available,
+    Moved,
+    MaybeMoved,
+}
+
+#[derive(Clone, Copy)]
+struct Variable {
+    ty: Type,
+    state: State,
+}
+
+type Scopes = Vec<HashMap<String, Variable>>;
+
+struct Place {
+    ty: Type,
+    mutable: bool,
+    root: (usize, String),
+}
+
+struct Loan {
+    root: (usize, String),
+    mutable: bool,
+}
+
+pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
+    let mut signatures = HashMap::new();
+    for (name, return_type, parameters) in [
+        ("print", Type::Void, vec![Type::Int]),
+        ("box_int", Type::BoxInt, vec![Type::Int]),
+        ("move", Type::BoxInt, vec![Type::BoxInt]),
+    ] {
+        signatures.insert(
+            name.to_owned(),
+            Signature {
+                return_type,
+                parameters,
+            },
+        );
+    }
+
+    // Signatures are known before bodies, allowing forward calls and recursion.
+    for function in &program.functions {
+        if function.return_type.is_borrow() {
+            return Err(Diagnostic::new(
+                function.span,
+                "borrowed return values need lifetime contracts and are not supported yet",
+            ));
+        }
+        if signatures.contains_key(&function.name) {
+            return Err(Diagnostic::new(
+                function.span,
+                format!(
+                    "function '{}' is already defined or reserved",
+                    function.name
+                ),
+            ));
+        }
+        signatures.insert(
+            function.name.clone(),
+            Signature {
+                return_type: function.return_type,
+                parameters: function
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.ty)
+                    .collect(),
+            },
+        );
+    }
+
+    match signatures.get("main") {
+        Some(signature)
+            if signature.return_type == Type::Int && signature.parameters.is_empty() => {}
+        Some(_) => {
+            let function = program
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .unwrap();
+            return Err(Diagnostic::new(
+                function.span,
+                "entry point must be 'int main(void)' or 'int main()'",
+            ));
+        }
+        None => {
+            return Err(Diagnostic::new(
+                Span {
+                    start: 0,
+                    end: 0,
+                    line: 1,
+                    column: 1,
+                },
+                "program needs an 'int main(void)' entry point",
+            ));
+        }
+    }
+
+    for function in &program.functions {
+        let mut checker = FunctionChecker {
+            signatures: &signatures,
+            scopes: vec![HashMap::new()],
+            return_type: function.return_type,
+            loans: Vec::new(),
+        };
+        for parameter in &function.parameters {
+            checker.declare(
+                &parameter.name,
+                parameter.ty,
+                State::Available,
+                parameter.span,
+            )?;
+        }
+
+        let returns = checker.statements(&function.body.statements)?;
+        if function.return_type != Type::Void && !returns {
+            return Err(Diagnostic::new(
+                function.span,
+                format!(
+                    "function '{}' must return a value on every path",
+                    function.name
+                ),
+            ));
+        }
+    }
+
+    return Ok(CheckedProgram { program });
+}
+
+struct FunctionChecker<'program> {
+    signatures: &'program HashMap<String, Signature>,
+    scopes: Scopes,
+    return_type: Type,
+    // Loans last through the enclosing call, including evaluation of later
+    // arguments. No references can be stored or returned in this first version.
+    loans: Vec<Loan>,
+}
+
+impl FunctionChecker<'_> {
+    fn statements(&mut self, statements: &[Statement]) -> Result<bool, Diagnostic> {
+        let mut returns = false;
+        for statement in statements {
+            let statement_returns = self.statement(statement)?;
+            returns = returns || statement_returns;
+        }
+        return Ok(returns);
+    }
+
+    fn block(&mut self, block: &Block) -> Result<bool, Diagnostic> {
+        self.scopes.push(HashMap::new());
+        let returns = self.statements(&block.statements)?;
+        self.scopes.pop();
+        return Ok(returns);
+    }
+
+    fn statement(&mut self, statement: &Statement) -> Result<bool, Diagnostic> {
+        match &statement.kind {
+            StatementKind::Local {
+                name,
+                ty,
+                initializer,
+            } => {
+                if ty.is_borrow() {
+                    return Err(Diagnostic::new(
+                        statement.span,
+                        "borrowed locals are not supported yet; pass borrows directly to functions",
+                    ));
+                }
+                self.declare(name, *ty, State::Uninitialized, statement.span)?;
+                self.require_type(initializer, *ty)?;
+                self.set_state(name, State::Available);
+            }
+            StatementKind::Assign { name, value } => {
+                // Assignment may reinitialize an owner that has been moved.
+                let target = self.lookup(name, statement.span)?;
+                if target.ty.is_borrow() {
+                    return Err(Diagnostic::new(
+                        statement.span,
+                        "borrow parameters cannot be rebound; assign through '*parameter' instead",
+                    ));
+                }
+                self.require_type(value, target.ty)?;
+                self.access(&self.root(name), true, statement.span)?;
+                self.set_state(name, State::Available);
+            }
+            StatementKind::Store { target, value } => {
+                let place = self.place(target)?;
+                if !place.mutable || place.ty.is_borrow() {
+                    return Err(Diagnostic::new(
+                        target.span,
+                        "cannot assign through a shared borrow or rebind a borrow",
+                    ));
+                }
+                self.require_type(value, place.ty)?;
+                // The right side may move the owner of the destination.
+                let place = self.place(target)?;
+                self.access(&place.root, true, target.span)?;
+            }
+            StatementKind::Expression(expression) => {
+                let ty = self.expression(expression)?;
+                if ty.is_borrow() {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "a borrow must be passed directly to a function",
+                    ));
+                }
+            }
+            StatementKind::Return(value) => {
+                match (self.return_type, value) {
+                    (Type::Void, None) => {}
+                    (Type::Void, Some(_)) => {
+                        return Err(Diagnostic::new(
+                            statement.span,
+                            "a void function must use 'return;' without a value",
+                        ));
+                    }
+                    (ty, Some(expression)) => self.require_type(expression, ty)?,
+                    (_, None) => {
+                        return Err(Diagnostic::new(
+                            statement.span,
+                            "a non-void function must return a value",
+                        ));
+                    }
+                }
+                return Ok(true);
+            }
+            StatementKind::Block(block) => {
+                return self.block(block);
+            }
+            StatementKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.require_type(condition, Type::Int)?;
+                let before = self.scopes.clone();
+                let then_returns = self.block(then_block)?;
+                let then_state = self.scopes.clone();
+                self.scopes = before;
+                let else_returns = match else_block {
+                    Some(block) => self.block(block)?,
+                    None => false,
+                };
+                let else_state = self.scopes.clone();
+
+                // A branch that returns doesn't contribute to the state after
+                // the if. Otherwise an owner must be available on both paths.
+                self.scopes = match (then_returns, else_returns) {
+                    (true, false) => else_state,
+                    (false, true) => then_state,
+                    _ => merge(&then_state, &else_state),
+                };
+                return Ok(then_returns && else_returns);
+            }
+            StatementKind::While { condition, body } => {
+                let before = self.scopes.clone();
+                self.require_type(condition, Type::Int)?;
+                if !same_owner_states(&before, &self.scopes) {
+                    return Err(Diagnostic::new(
+                        condition.span,
+                        "a loop condition cannot consume an outer owner",
+                    ));
+                }
+                let after_condition = self.scopes.clone();
+                let body_returns = self.block(body)?;
+                if !body_returns && !same_owner_states(&after_condition, &self.scopes) {
+                    return Err(Diagnostic::new(
+                        body.span,
+                        "a loop must restore moved outer owners before the next iteration",
+                    ));
+                }
+                // The loop may execute zero times. Every continuing iteration
+                // must preserve the availability of owners outside its body.
+                self.scopes = after_condition;
+            }
+            StatementKind::Empty => {}
+        }
+        return Ok(false);
+    }
+
+    fn expression(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        match &expression.kind {
+            ExpressionKind::Integer(value) => {
+                if *value > i64::from(i32::MAX) {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "int literals must fit signed 32-bit int",
+                    ));
+                }
+            }
+            ExpressionKind::Variable(name) => {
+                let variable = self.available(name, expression.span)?;
+                if variable.ty == Type::BoxInt {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        format!("owner '{name}' cannot be copied; use move({name}) to transfer it"),
+                    ));
+                }
+                match variable.ty {
+                    Type::IntBorrow { mutable } | Type::BoxBorrow { mutable } => {
+                        self.borrow(self.root(name), mutable, expression.span)?;
+                    }
+                    _ => self.access(&self.root(name), false, expression.span)?,
+                }
+                return Ok(variable.ty);
+            }
+            ExpressionKind::Call { name, arguments } => {
+                if self
+                    .scopes
+                    .iter()
+                    .rev()
+                    .any(|scope| scope.contains_key(name))
+                {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        format!("variable '{name}' is not callable"),
+                    ));
+                }
+                let signature = match self.signatures.get(name) {
+                    Some(signature) => signature.clone(),
+                    None => {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            format!("unknown function '{name}'"),
+                        ));
+                    }
+                };
+                if arguments.len() != signature.parameters.len() {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        format!(
+                            "function '{name}' expects {} argument(s), got {}",
+                            signature.parameters.len(),
+                            arguments.len()
+                        ),
+                    ));
+                }
+
+                if name == "move" {
+                    if let ExpressionKind::Variable(owner) = &arguments[0].kind {
+                        let variable = self.available(owner, arguments[0].span)?;
+                        if variable.ty != Type::BoxInt {
+                            return Err(Diagnostic::new(
+                                arguments[0].span,
+                                "move currently requires a BoxInt owner",
+                            ));
+                        }
+                        self.access(&self.root(owner), true, arguments[0].span)?;
+                        self.set_state(owner, State::Moved);
+                        return Ok(Type::BoxInt);
+                    }
+                    return Err(Diagnostic::new(
+                        arguments[0].span,
+                        "move requires the name of an owning variable",
+                    ));
+                }
+
+                // This ordering is also the language's evaluation order.
+                let previous_loans = self.loans.len();
+                for (argument, expected) in arguments.iter().zip(signature.parameters) {
+                    self.require_type(argument, expected)?;
+                }
+                self.loans.truncate(previous_loans);
+                return Ok(signature.return_type);
+            }
+            ExpressionKind::Unary { operator, operand } => {
+                if let UnaryOperator::Borrow { mutable } = operator {
+                    let place = self.place(operand)?;
+                    if *mutable && !place.mutable {
+                        return Err(Diagnostic::new(
+                            operand.span,
+                            "cannot create a mutable borrow through a shared borrow",
+                        ));
+                    }
+                    let ty = match place.ty {
+                        Type::Int => Type::IntBorrow { mutable: *mutable },
+                        Type::BoxInt => Type::BoxBorrow { mutable: *mutable },
+                        _ => {
+                            return Err(Diagnostic::new(
+                                operand.span,
+                                "borrows of borrows are not supported; reborrow the pointee instead",
+                            ));
+                        }
+                    };
+                    self.borrow(place.root, *mutable, expression.span)?;
+                    return Ok(ty);
+                }
+                if *operator == UnaryOperator::Dereference {
+                    let place = self.place(expression)?;
+                    self.access(&place.root, false, expression.span)?;
+                    if place.ty == Type::BoxInt {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "a borrowed owner cannot be copied or moved out; read it through another dereference",
+                        ));
+                    }
+                    return Ok(place.ty);
+                }
+                if *operator == UnaryOperator::Negate
+                    && matches!(operand.kind, ExpressionKind::Integer(2147483648))
+                {
+                    return Ok(Type::Int);
+                }
+                self.require_type(operand, Type::Int)?;
+            }
+            ExpressionKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                self.require_type(left, Type::Int)?;
+                let before_right = self.scopes.clone();
+                self.require_type(right, Type::Int)?;
+                if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
+                    // The right operand may not execute.
+                    self.scopes = merge(&before_right, &self.scopes);
+                }
+            }
+        }
+        return Ok(Type::Int);
+    }
+
+    fn require_type(&mut self, expression: &Expression, expected: Type) -> Result<(), Diagnostic> {
+        let actual = self.expression(expression)?;
+        if actual != expected {
+            return Err(Diagnostic::new(
+                expression.span,
+                format!(
+                    "expected an {} value, found {}",
+                    expected.name(),
+                    actual.name()
+                ),
+            ));
+        }
+        return Ok(());
+    }
+
+    fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
+        match &expression.kind {
+            ExpressionKind::Variable(name) => {
+                let variable = self.available(name, expression.span)?;
+                return Ok(Place {
+                    ty: variable.ty,
+                    mutable: !variable.ty.is_borrow(),
+                    root: self.root(name),
+                });
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => {
+                let place = self.place(operand)?;
+                let (ty, mutable) = match place.ty {
+                    Type::BoxInt => (Type::Int, place.mutable),
+                    Type::IntBorrow { mutable } => (Type::Int, mutable),
+                    Type::BoxBorrow { mutable } => (Type::BoxInt, mutable),
+                    _ => {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "dereference needs a BoxInt or a borrow",
+                        ));
+                    }
+                };
+                return Ok(Place {
+                    ty,
+                    mutable,
+                    root: place.root,
+                });
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "borrow or dereference target must be a named variable or its pointee",
+                ));
+            }
+        }
+    }
+
+    fn root(&self, name: &str) -> (usize, String) {
+        for (index, scope) in self.scopes.iter().enumerate().rev() {
+            if scope.contains_key(name) {
+                return (index, name.to_owned());
+            }
+        }
+        unreachable!("variable is resolved before finding its root");
+    }
+
+    fn access(
+        &self,
+        root: &(usize, String),
+        exclusive: bool,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if self
+            .loans
+            .iter()
+            .any(|loan| &loan.root == root && (exclusive || loan.mutable))
+        {
+            return Err(Diagnostic::new(
+                span,
+                format!(
+                    "conflicting access to '{}' while it is borrowed for this call",
+                    root.1
+                ),
+            ));
+        }
+        return Ok(());
+    }
+
+    fn borrow(
+        &mut self,
+        root: (usize, String),
+        mutable: bool,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.access(&root, mutable, span)?;
+        self.loans.push(Loan { root, mutable });
+        return Ok(());
+    }
+
+    fn declare(
+        &mut self,
+        name: &str,
+        ty: Type,
+        state: State,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let scope = self.scopes.last_mut().unwrap();
+        if scope.contains_key(name) {
+            return Err(Diagnostic::new(
+                span,
+                format!("variable '{name}' is already declared in this scope"),
+            ));
+        }
+        scope.insert(name.to_owned(), Variable { ty, state });
+        return Ok(());
+    }
+
+    fn lookup(&self, name: &str, span: Span) -> Result<Variable, Diagnostic> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(variable) = scope.get(name) {
+                return Ok(*variable);
+            }
+        }
+        return Err(Diagnostic::new(span, format!("unknown variable '{name}'")));
+    }
+
+    fn available(&self, name: &str, span: Span) -> Result<Variable, Diagnostic> {
+        let variable = self.lookup(name, span)?;
+        match variable.state {
+            State::Available => {
+                return Ok(variable);
+            }
+            State::Uninitialized => {
+                return Err(Diagnostic::new(
+                    span,
+                    format!("variable '{name}' is read before it is initialized"),
+                ));
+            }
+            State::Moved => {
+                return Err(Diagnostic::new(
+                    span,
+                    format!("owner '{name}' has been moved"),
+                ));
+            }
+            State::MaybeMoved => {
+                return Err(Diagnostic::new(
+                    span,
+                    format!("owner '{name}' may have been moved on another path"),
+                ));
+            }
+        }
+    }
+
+    fn set_state(&mut self, name: &str, state: State) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(variable) = scope.get_mut(name) {
+                variable.state = state;
+                return;
+            }
+        }
+        unreachable!("variable was resolved before changing its state");
+    }
+}
+
+fn merge(left: &Scopes, right: &Scopes) -> Scopes {
+    let mut result = left.clone();
+    for (scope, other) in result.iter_mut().zip(right) {
+        for (name, variable) in scope {
+            if variable.state != other[name].state {
+                variable.state = State::MaybeMoved;
+            }
+        }
+    }
+    return result;
+}
+
+fn same_owner_states(left: &Scopes, right: &Scopes) -> bool {
+    for (scope, other) in left.iter().zip(right) {
+        for (name, variable) in scope {
+            if variable.ty == Type::BoxInt && variable.state != other[name].state {
+                return false;
+            }
+        }
+    }
+    return true;
+}
