@@ -1,0 +1,10 @@
+[project]
+name = "header-bindings"
+
+[[targets]]
+name = "counter"
+kind = "executable"
+entry = "main.cr"
+
+[targets.native]
+sources = ["native.c"]

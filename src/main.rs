@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use crust::project::Project;
+mod cli_bindings;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -36,11 +37,18 @@ fn run() -> Result<ExitCode, String> {
     // args_os preserves source and project paths that aren't valid UTF-8.
     let arguments: Vec<_> = env::args_os().skip(1).collect();
     if arguments
+        .first()
+        .is_some_and(|argument| argument == "import-c")
+    {
+        return cli_bindings::run(arguments.into_iter().skip(1).collect());
+    }
+    if arguments
         .iter()
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!("Usage: crust [run|build|emit-c|check|tokens] [file.cr|crust.toml|directory]");
         println!("       crust [command] [--project <path>] [--target <name>]");
+        println!("       crust import-c <header.h> --function <name> [--output <bindings.cr>]");
         println!("Project commands discover crust.toml in the current directory or its parents.");
         println!("A source filename compiles and runs that file.");
         println!("build/run use CC, or clang on Windows and cc elsewhere.");

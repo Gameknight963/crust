@@ -13,6 +13,9 @@ ownership checking, C generation, and native compilation.
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/analysis/rename.rs` | Local and parameter rename with binding validation |
+| `src/bindings.rs` | Clang header analysis and generated binding validation |
+| `src/bindings/render.rs` | C type trees to Crust declarations |
+| `src/cli_bindings.rs` | Header binding command and output handling |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
@@ -55,6 +58,16 @@ duplicate locations from generic replay removed.
 `Analysis::rename` returns source edits for locals and explicit parameters. It
 reanalyzes edited snapshot text and compares translated reference targets to
 reject name capture. LSP clients receive a workspace edit for review and application.
+
+## C header bindings
+
+`bindings::generate` asks Clang for native declarations and structured function
+types, renders selected functions, and checks the resulting Crust declarations.
+An independent Clang type-compatibility assertion verifies each generated function
+type against the original header. Binding tests require Clang on `PATH`.
+
+The CLI writes the generated UTF-8 file after validation. See
+[C header bindings](c-bindings.md) for commands and supported declarations.
 
 ## Native compilation
 

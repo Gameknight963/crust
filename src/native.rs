@@ -61,7 +61,7 @@ pub fn compile_file_with_options(
     return Ok(());
 }
 
-fn configure_windows_toolchain(command: &mut Command) {
+pub(crate) fn configure_windows_toolchain(command: &mut Command) {
     #[cfg(windows)]
     {
         // Some Clang installations select an obsolete Visual Studio from the

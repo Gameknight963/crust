@@ -5,6 +5,7 @@ mod parser;
 mod types;
 
 pub mod analysis;
+pub mod bindings;
 pub mod diagnostic;
 pub mod lexer;
 pub mod lsp;
