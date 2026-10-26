@@ -436,6 +436,7 @@ impl Emitter<'_> {
                 name,
                 ty,
                 initializer,
+                ..
             } => {
                 let value = self.value_expression(initializer);
                 let local = self.fresh_name("local");
@@ -457,7 +458,7 @@ impl Emitter<'_> {
                     },
                 );
             }
-            StatementKind::Assign { name, value } => {
+            StatementKind::Assign { name, value, .. } => {
                 // Finish the right side first, including a possible move of the
                 // old value, before dropping the destination's previous owner.
                 let value = self.value_expression(value);
@@ -849,7 +850,9 @@ impl Emitter<'_> {
                 let temporary = self.temporary(local.ty, &local.name);
                 return Some(temporary);
             }
-            ExpressionKind::Call { name, arguments } => {
+            ExpressionKind::Call {
+                name, arguments, ..
+            } => {
                 if let Some(call) = self.method_calls.get(&expression.span)
                     && matches!(call.kind, ExpressionKind::IndirectCall { .. })
                 {
@@ -1067,7 +1070,7 @@ impl Emitter<'_> {
                     self.temporary(Type::Integer(IntType::named("size_t").unwrap()), &check);
                 return format!("({address})->crust_elements[{checked_index}]");
             }
-            ExpressionKind::Field { base, name } => {
+            ExpressionKind::Field { base, name, .. } => {
                 return format!("({}).crust_field_{name}", self.place(base));
             }
             ExpressionKind::Variable(name) => {
@@ -1097,7 +1100,7 @@ impl Emitter<'_> {
                     _ => unreachable!(),
                 };
             }
-            ExpressionKind::Field { base, name } => {
+            ExpressionKind::Field { base, name, .. } => {
                 return self
                     .types
                     .field(self.place_type(base), name, expression.span)

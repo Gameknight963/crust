@@ -34,6 +34,7 @@
 - Native-layout unions, opaque union tags, generic unions, and overlapping field-borrow checks
 - Native C integer spellings and conversion ranks, plus compatible repeated typedefs and external declarations
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
+- Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
@@ -49,16 +50,16 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 ## Editor support
 
-- Expose frontend diagnostics, source symbols, and type information through shared Rust APIs
+- Extend shared source symbols and type information to type names, interfaces, and uninstantiated templates
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Build Visual Studio integration on the same language server
 - Use `crust.toml` as the authoritative project configuration
 - Add optional MSBuild `.crproj` integration for Visual Studio
 - Add native source-level debugging through the generated C backend
 
-Initial LSP work will cover document synchronization and diagnostics. Navigation,
-completion, hover, and rename can use the shared semantic information as those
-APIs become available.
+The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
+source outlines. Completion, reference searches, and rename can extend the same
+symbol index.
 
 ## Further design
 

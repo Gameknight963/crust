@@ -4,6 +4,7 @@ mod emit_c;
 mod parser;
 mod types;
 
+pub mod analysis;
 pub mod diagnostic;
 pub mod lexer;
 pub mod lsp;
@@ -12,6 +13,20 @@ pub mod project;
 pub mod source;
 
 use diagnostic::Diagnostic;
+
+pub fn analyze(source: &str) -> Result<analysis::Analysis, Diagnostic> {
+    let tokens = lexer::tokenize(source)?;
+    let program = parser::parse(tokens)?;
+    let checked = check::check(program)?;
+    return Ok(analysis::build(
+        &checked,
+        vec![analysis::File {
+            path: None,
+            text: source.to_owned(),
+        }],
+        |span| analysis::Location { file: 0, span },
+    ));
+}
 
 pub fn check(source: &str) -> Result<(), Diagnostic> {
     let tokens = lexer::tokenize(source)?;

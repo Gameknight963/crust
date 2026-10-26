@@ -13,6 +13,7 @@ pub(crate) struct CheckedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub symbol_uses: HashMap<Span, Span>,
     pub function_values: HashMap<Span, String>,
     pub expression_types: HashMap<Span, Type>,
     // Lowered calls retain receiver-first evaluation and ordinary call rules.
@@ -42,6 +43,7 @@ enum State {
 
 #[derive(Clone, Copy)]
 struct Variable {
+    declaration: Span,
     ty: Type,
     state: State,
     reference: Option<usize>,
@@ -78,6 +80,12 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let mut analyses = HashMap::new();
     let mut signatures = HashMap::new();
     let mut native_signatures = HashMap::new();
+    let mut function_declarations = HashMap::new();
+    for function in &program.functions {
+        function_declarations
+            .entry(function.name.clone())
+            .or_insert(function.name_span);
+    }
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
         ("box_int", Type::BoxInt, vec![Type::Integer(IntType::I32)]),
@@ -289,6 +297,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            function_declarations: &function_declarations,
+            symbol_uses: &mut analysis.symbol_uses,
             signatures: &signatures,
             scopes: vec![HashMap::new()],
             return_type: function.return_type,
@@ -359,6 +369,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 }
 
 struct FunctionChecker<'program> {
+    function_declarations: &'program HashMap<String, Span>,
+    symbol_uses: &'program mut HashMap<Span, Span>,
     function_values: &'program mut HashMap<Span, String>,
     signatures: &'program HashMap<String, Signature>,
     scopes: Scopes,
@@ -434,9 +446,11 @@ impl FunctionChecker<'_> {
                 return result;
             }
             StatementKind::Local {
+                name_span,
                 name,
                 ty,
                 initializer,
+                ..
             } => {
                 if name == "this" {
                     return Err(Diagnostic::new(
@@ -444,7 +458,7 @@ impl FunctionChecker<'_> {
                         "this is reserved for the instance receiver",
                     ));
                 }
-                self.declare(name, *ty, State::Uninitialized, statement.span)?;
+                self.declare(name, *ty, State::Uninitialized, *name_span)?;
                 self.require_type(initializer, *ty)?;
                 if ty.is_borrow() {
                     let id = self.references[&initializer.span];
@@ -459,9 +473,14 @@ impl FunctionChecker<'_> {
                 }
                 self.set_state(name, State::Available);
             }
-            StatementKind::Assign { name, value } => {
+            StatementKind::Assign {
+                name,
+                name_span,
+                value,
+            } => {
                 // Assignment may reinitialize an owner that has been moved.
                 let target = self.lookup(name, statement.span)?;
+                self.symbol_uses.insert(*name_span, target.declaration);
                 if target.ty.is_borrow() {
                     return Err(Diagnostic::new(
                         statement.span,
@@ -739,10 +758,20 @@ impl FunctionChecker<'_> {
                 self.loans.truncate(previous_loans);
                 return Ok(signature.result);
             }
-            ExpressionKind::StaticReference { id, name } => {
-                return self.static_reference(*id, name, expression.span);
+            ExpressionKind::StaticReference {
+                id,
+                name,
+                name_span,
+            } => {
+                let ty = self.static_reference(*id, name, expression.span)?;
+                self.record_function_symbol(&static_method_name(*id, name), *name_span);
+                return Ok(ty);
             }
-            ExpressionKind::EnumValue { id, name } => {
+            ExpressionKind::EnumValue {
+                id,
+                name,
+                name_span,
+            } => {
                 let variant = self.types.enums[*id]
                     .variants
                     .iter()
@@ -757,6 +786,7 @@ impl FunctionChecker<'_> {
                         )
                     })?;
                 self.constants.insert(expression.span, variant.value);
+                self.symbol_uses.insert(*name_span, variant.span);
                 return Ok(Type::Enum(*id));
             }
             ExpressionKind::StringLiteral { id, .. } => return Ok(Type::Array(*id)),
@@ -849,6 +879,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Boolean(_) => return Ok(Type::Bool),
             ExpressionKind::StaticCall {
+                name_span,
                 id,
                 name,
                 arguments,
@@ -876,6 +907,7 @@ impl FunctionChecker<'_> {
                 let call = Expression {
                     span: expression.span,
                     kind: ExpressionKind::Call {
+                        name_span: *name_span,
                         name: key,
                         arguments: arguments.clone(),
                     },
@@ -885,6 +917,7 @@ impl FunctionChecker<'_> {
                 return Ok(ty);
             }
             ExpressionKind::MethodCall {
+                name_span,
                 receiver,
                 name,
                 arguments,
@@ -907,11 +940,9 @@ impl FunctionChecker<'_> {
                             span: expression.span,
                             kind: ExpressionKind::IndirectCall {
                                 callee: Box::new(Expression {
-                                    span: Span {
-                                        end: expression.span.start,
-                                        ..expression.span
-                                    },
+                                    span: receiver.span.through(*name_span),
                                     kind: ExpressionKind::Field {
+                                        name_span: *name_span,
                                         base: receiver.clone(),
                                         name: name.clone(),
                                     },
@@ -957,6 +988,7 @@ impl FunctionChecker<'_> {
                 let call = Expression {
                     span: expression.span,
                     kind: ExpressionKind::Call {
+                        name_span: *name_span,
                         name: key,
                         arguments: lowered_arguments,
                     },
@@ -998,6 +1030,7 @@ impl FunctionChecker<'_> {
                     && let Some((id, variant)) = self.types.enumerator(name)
                 {
                     self.constants.insert(expression.span, variant.value);
+                    self.symbol_uses.insert(expression.span, variant.span);
                     return Ok(Type::Enum(id));
                 }
                 if !self
@@ -1007,9 +1040,12 @@ impl FunctionChecker<'_> {
                     .any(|scope| scope.contains_key(name))
                     && self.signatures.contains_key(name)
                 {
+                    self.record_function_symbol(name, expression.span);
                     return self.function_reference(name, expression.span);
                 }
                 let variable = self.available(name, expression.span)?;
+                self.symbol_uses
+                    .insert(expression.span, variable.declaration);
                 if self.types.owns(variable.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -1032,7 +1068,11 @@ impl FunctionChecker<'_> {
                 }
                 return Ok(variable.ty);
             }
-            ExpressionKind::Call { name, arguments } => {
+            ExpressionKind::Call {
+                name,
+                name_span,
+                arguments,
+            } => {
                 if self
                     .scopes
                     .iter()
@@ -1043,10 +1083,7 @@ impl FunctionChecker<'_> {
                         span: expression.span,
                         kind: ExpressionKind::IndirectCall {
                             callee: Box::new(Expression {
-                                span: Span {
-                                    end: expression.span.start,
-                                    ..expression.span
-                                },
+                                span: *name_span,
                                 kind: ExpressionKind::Variable(name.clone()),
                             }),
                             arguments: arguments.clone(),
@@ -1072,6 +1109,7 @@ impl FunctionChecker<'_> {
                         ));
                     }
                 };
+                self.record_function_symbol(name, *name_span);
                 if arguments.len() < signature.parameters.len()
                     || (!signature.variadic && arguments.len() != signature.parameters.len())
                 {
@@ -1095,6 +1133,8 @@ impl FunctionChecker<'_> {
                 if name == "move" {
                     if let ExpressionKind::Variable(owner) = &arguments[0].kind {
                         let variable = self.available(owner, arguments[0].span)?;
+                        self.symbol_uses
+                            .insert(arguments[0].span, variable.declaration);
                         if !self.types.owns(variable.ty) {
                             if variable.ty.is_borrow() {
                                 return Err(Diagnostic::new(
@@ -1211,7 +1251,13 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Unary { operator, operand } => {
                 if *operator == UnaryOperator::Address {
-                    if let ExpressionKind::StaticReference { id, name } = &operand.kind {
+                    if let ExpressionKind::StaticReference {
+                        id,
+                        name,
+                        name_span,
+                    } = &operand.kind
+                    {
+                        self.record_function_symbol(&static_method_name(*id, name), *name_span);
                         return self.static_reference(*id, name, expression.span);
                     }
                     if let ExpressionKind::Variable(name) = &operand.kind
@@ -1222,6 +1268,7 @@ impl FunctionChecker<'_> {
                             .any(|scope| scope.contains_key(name))
                         && self.signatures.contains_key(name)
                     {
+                        self.record_function_symbol(name, operand.span);
                         return self.function_reference(name, expression.span);
                     }
                     self.require_unsafe(expression.span, "creating a raw pointer")?;
@@ -1517,6 +1564,23 @@ impl FunctionChecker<'_> {
         return Ok(self.types.pointer_to(function_type, true));
     }
 
+    fn record_function_symbol(&mut self, name: &str, span: Span) {
+        if let Some(declaration) = self.function_declarations.get(name) {
+            self.symbol_uses.insert(span, *declaration);
+        }
+    }
+
+    fn record_field_symbol(&mut self, ty: Type, name: &str, span: Span) {
+        if let Type::Struct(id) = ty
+            && let Some(field) = self.types.structs[id]
+                .fields
+                .iter()
+                .find(|field| field.name == name)
+        {
+            self.symbol_uses.insert(span, field.span);
+        }
+    }
+
     fn variadic_arguments(&mut self, arguments: &[Expression]) -> Result<(), Diagnostic> {
         for argument in arguments {
             let ty = self.expression(argument)?;
@@ -1664,7 +1728,7 @@ impl FunctionChecker<'_> {
         }
         match &expression.kind {
             ExpressionKind::Storage { .. } => return Ok(Type::Void),
-            ExpressionKind::StaticReference { id, name } => {
+            ExpressionKind::StaticReference { id, name, .. } => {
                 return self.static_reference(*id, name, expression.span);
             }
             ExpressionKind::IndirectCall { callee, .. } => {
@@ -1689,7 +1753,7 @@ impl FunctionChecker<'_> {
                 operator: UnaryOperator::Address,
                 operand,
             } => {
-                if let ExpressionKind::StaticReference { id, name } = &operand.kind {
+                if let ExpressionKind::StaticReference { id, name, .. } = &operand.kind {
                     return self.static_reference(*id, name, expression.span);
                 }
                 if let ExpressionKind::Variable(name) = &operand.kind
@@ -1760,7 +1824,7 @@ impl FunctionChecker<'_> {
                 }
                 return Ok(self.available(name, expression.span)?.ty);
             }
-            ExpressionKind::Field { base, name } => {
+            ExpressionKind::Field { base, name, .. } => {
                 let ty = self.receiver_type(base)?;
                 return self.field_type(ty, name, expression.span);
             }
@@ -1813,7 +1877,9 @@ impl FunctionChecker<'_> {
                         Diagnostic::new(expression.span, format!("unknown static method '{name}'"))
                     });
             }
-            ExpressionKind::Call { name, arguments } if name == "move" && arguments.len() == 1 => {
+            ExpressionKind::Call {
+                name, arguments, ..
+            } if name == "move" && arguments.len() == 1 => {
                 return self.receiver_type(&arguments[0]);
             }
             ExpressionKind::Call { name, .. } => {
@@ -1964,6 +2030,7 @@ impl FunctionChecker<'_> {
                 ));
             }
             let ty = self.field_type(Type::Struct(id), &field.name, field.span)?;
+            self.record_field_symbol(Type::Struct(id), &field.name, field.name_span);
             self.require_type(&field.value, ty)?;
         }
         for field in &declared {
@@ -2025,9 +2092,14 @@ impl FunctionChecker<'_> {
                     ..place
                 });
             }
-            ExpressionKind::Field { base, name } => {
+            ExpressionKind::Field {
+                base,
+                name,
+                name_span,
+            } => {
                 let place = self.checked_place(base)?;
                 let ty = self.field_type(place.ty, name, expression.span)?;
+                self.record_field_symbol(place.ty, name, *name_span);
                 let projection = if matches!(place.ty, Type::Struct(id) if self.types.structs[id].is_union)
                 {
                     "*"
@@ -2042,7 +2114,15 @@ impl FunctionChecker<'_> {
                     ..place
                 });
             }
-            ExpressionKind::Variable(_) => return self.place(expression),
+            ExpressionKind::Variable(name) => {
+                let place = self.place(expression)?;
+                let declaration = self.lookup(name, expression.span)?.declaration;
+                self.symbol_uses.insert(expression.span, declaration);
+                self.expression_types
+                    .entry(expression.span)
+                    .or_insert(place.ty);
+                return Ok(place);
+            }
             ExpressionKind::Unary {
                 operator: UnaryOperator::Dereference,
                 operand,
@@ -2262,6 +2342,7 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
+                declaration: span,
                 ty,
                 state,
                 reference: None,

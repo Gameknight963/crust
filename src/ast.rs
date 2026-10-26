@@ -296,6 +296,8 @@ pub struct PointerType {
 
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
+    pub name_span: Span,
+    pub header_span: Span,
     pub id: usize,
     pub underlying: IntType,
     pub variants: Vec<EnumVariant>,
@@ -318,6 +320,8 @@ pub struct ArrayType {
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
+    pub name_span: Span,
+    pub header_span: Span,
     pub id: usize,
     pub fields: Vec<Field>,
     pub has_destructor: bool,
@@ -326,6 +330,7 @@ pub struct StructDefinition {
 
 #[derive(Debug, Clone)]
 pub struct Field {
+    pub declaration_span: Span,
     pub private: bool,
     pub name: String,
     pub ty: Type,
@@ -334,6 +339,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub name_span: Span,
     pub link_name: Option<String>,
     pub variadic: bool,
     pub requires_unsafe: bool,
@@ -367,6 +373,8 @@ impl Function {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
+    pub declaration_span: Span,
+    pub synthetic: bool,
     pub name: String,
     pub ty: Type,
     pub span: Span,
@@ -388,11 +396,14 @@ pub struct Statement {
 pub enum StatementKind {
     Unsafe(Block),
     Local {
+        name_span: Span,
+        declaration_span: Span,
         name: String,
         ty: Type,
         initializer: Expression,
     },
     Assign {
+        name_span: Span,
         name: String,
         value: Expression,
     },
@@ -451,6 +462,7 @@ pub enum ExpressionKind {
         value: Option<Box<Expression>>,
     },
     StaticReference {
+        name_span: Span,
         id: usize,
         name: String,
     },
@@ -459,6 +471,7 @@ pub enum ExpressionKind {
         arguments: Vec<Expression>,
     },
     EnumValue {
+        name_span: Span,
         id: usize,
         name: String,
     },
@@ -483,11 +496,13 @@ pub enum ExpressionKind {
     SizeofValue(Box<Expression>),
     Boolean(bool),
     StaticCall {
+        name_span: Span,
         id: usize,
         name: String,
         arguments: Vec<Expression>,
     },
     MethodCall {
+        name_span: Span,
         receiver: Box<Expression>,
         name: String,
         arguments: Vec<Expression>,
@@ -495,6 +510,7 @@ pub enum ExpressionKind {
     Integer(u64),
     Variable(String),
     Field {
+        name_span: Span,
         base: Box<Expression>,
         name: String,
     },
@@ -503,6 +519,7 @@ pub enum ExpressionKind {
         fields: Vec<FieldInitializer>,
     },
     Call {
+        name_span: Span,
         name: String,
         arguments: Vec<Expression>,
     },
@@ -519,6 +536,7 @@ pub enum ExpressionKind {
 
 #[derive(Debug, Clone)]
 pub struct FieldInitializer {
+    pub name_span: Span,
     pub name: String,
     pub value: Expression,
     pub span: Span,

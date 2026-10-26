@@ -663,7 +663,7 @@ impl Parser {
         } else {
             IntType::I32
         };
-        self.expect(Token::LeftBrace, "expected '{' before enum values")?;
+        let body_start = self.expect(Token::LeftBrace, "expected '{' before enum values")?;
         let mut variants = Vec::new();
         let mut next = 0i128;
         while !self.at(&Token::RightBrace) {
@@ -703,6 +703,11 @@ impl Parser {
         self.expect(Token::RightBrace, "expected '}' after enum values")?;
         let end = self.expect(Token::Semicolon, "expected ';' after enum definition")?;
         return Ok(EnumDefinition {
+            name_span: span,
+            header_span: Span {
+                end: body_start.start,
+                ..start
+            },
             id,
             underlying,
             variants,
@@ -715,7 +720,7 @@ impl Parser {
         let start = token.span;
         let (name, span) = self.identifier()?;
         let id = self.tagged_struct_id(name.clone(), span, token.kind == Token::Union)?;
-        return self.struct_body(id, &name, start);
+        return self.struct_body(id, &name, start, span);
     }
 
     fn struct_body(
@@ -723,13 +728,15 @@ impl Parser {
         id: usize,
         source_name: &str,
         start: Span,
+        name_span: Span,
     ) -> Result<StructDefinition, Diagnostic> {
         let previous_owner = self.current_struct;
         self.current_struct = Some(id);
-        self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
+        let body_start = self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
         let mut fields = Vec::new();
         let mut has_destructor = false;
         while !self.at(&Token::RightBrace) {
+            let member_start = self.current().span;
             if self.at(&Token::EndOfFile) {
                 return Err(Diagnostic::new(
                     self.current().span,
@@ -764,6 +771,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    name_span,
                     link_name: None,
                     variadic: false,
                     requires_unsafe: false,
@@ -771,12 +779,14 @@ impl Parser {
                     name: destructor_name(id),
                     return_type: Type::Void,
                     parameters: vec![Parameter {
+                        declaration_span: name_span,
+                        synthetic: true,
                         name: String::from("this"),
                         ty: Type::Borrow {
                             pointee: Pointee::Struct(id),
                             mutable: true,
                         },
-                        span: start,
+                        span: name_span,
                     }],
                     span: start.through(body.span),
                     body,
@@ -801,8 +811,8 @@ impl Parser {
                 };
                 let mut method = self.function_body(
                     ty,
-                    key,
-                    span,
+                    (key, span),
+                    member_start,
                     Some(id),
                     is_static,
                     FunctionDeclaration::Definition,
@@ -821,8 +831,13 @@ impl Parser {
                 ));
             }
             let ty = self.array_suffix(ty)?;
+            let declaration_span = Span {
+                end: self.current().span.start,
+                ..member_start
+            };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                declaration_span,
                 name,
                 ty,
                 span,
@@ -833,6 +848,11 @@ impl Parser {
         self.current_struct = previous_owner;
         let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
         return Ok(StructDefinition {
+            name_span,
+            header_span: Span {
+                end: body_start.start,
+                ..start
+            },
             id,
             fields,
             has_destructor,
@@ -846,7 +866,7 @@ impl Parser {
         let external = self.consume(&Token::Extern);
         let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix || external;
         let return_type = self.type_name()?;
-        let (mut name, _) = self.identifier()?;
+        let (mut name, name_span) = self.identifier()?;
         if self.at(&Token::Less) {
             self.skip_type_parameters()?;
             name =
@@ -859,8 +879,14 @@ impl Parser {
         } else {
             FunctionDeclaration::Definition
         };
-        let mut function =
-            self.function_body(return_type, name, start, None, false, declaration)?;
+        let mut function = self.function_body(
+            return_type,
+            (name, name_span),
+            start,
+            None,
+            false,
+            declaration,
+        )?;
         function.requires_unsafe = requires_unsafe;
         return Ok(function);
     }
@@ -868,12 +894,13 @@ impl Parser {
     fn function_body(
         &mut self,
         return_type: Type,
-        name: String,
+        name: (String, Span),
         start: Span,
         owner: Option<usize>,
         is_static: bool,
         declaration: FunctionDeclaration,
     ) -> Result<Function, Diagnostic> {
+        let (name, name_span) = name;
         let external = declaration == FunctionDeclaration::External;
         let prototype = declaration != FunctionDeclaration::Definition;
         let mut link_name = external.then(|| name.clone());
@@ -895,6 +922,7 @@ impl Parser {
                     variadic = true;
                     break;
                 }
+                let parameter_start = self.current().span;
                 let ty = self.type_name()?;
                 if ty == Type::Void {
                     return Err(Diagnostic::new(
@@ -902,15 +930,29 @@ impl Parser {
                         "a named parameter cannot have type void",
                     ));
                 }
-                let (name, span) = if prototype
+                let (name, span, synthetic) = if prototype
                     && matches!(self.current().kind, Token::Comma | Token::RightParen)
                 {
-                    (format!("arg_{}", parameters.len()), self.current().span)
+                    (
+                        format!("arg_{}", parameters.len()),
+                        self.current().span,
+                        true,
+                    )
                 } else {
-                    self.identifier()?
+                    let (name, span) = self.identifier()?;
+                    (name, span, false)
                 };
                 let ty = self.array_suffix(ty)?;
-                parameters.push(Parameter { name, ty, span });
+                parameters.push(Parameter {
+                    name,
+                    ty,
+                    span,
+                    synthetic,
+                    declaration_span: Span {
+                        end: self.current().span.start,
+                        ..parameter_start
+                    },
+                });
                 if !self.consume(&Token::Comma) {
                     break;
                 }
@@ -940,12 +982,14 @@ impl Parser {
                 parameters.insert(
                     0,
                     Parameter {
+                        declaration_span: name_span,
+                        synthetic: true,
                         name: String::from("this"),
                         ty: Type::Borrow {
                             pointee: Pointee::Struct(id),
                             mutable: !shared,
                         },
-                        span: start,
+                        span: name_span,
                     },
                 );
             }
@@ -992,6 +1036,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            name_span,
             link_name,
             variadic,
             requires_unsafe: external,
@@ -1275,8 +1320,12 @@ impl Parser {
                     "a local variable cannot have type void",
                 ));
             }
-            let (name, _) = self.identifier()?;
+            let (name, name_span) = self.identifier()?;
             let ty = self.array_suffix(ty)?;
+            let declaration_span = Span {
+                end: self.current().span.start,
+                ..start
+            };
             self.value_scopes.last_mut().unwrap().insert(name.clone());
             self.expect(
                 Token::Equal,
@@ -1284,6 +1333,8 @@ impl Parser {
             )?;
             let initializer = self.initializer()?;
             kind = StatementKind::Local {
+                name_span,
+                declaration_span,
                 name,
                 ty,
                 initializer,
@@ -1317,7 +1368,11 @@ impl Parser {
         if self.consume(&Token::Equal) {
             let value = self.initializer()?;
             if let ExpressionKind::Variable(name) = target.kind {
-                return Ok(StatementKind::Assign { name, value });
+                return Ok(StatementKind::Assign {
+                    name,
+                    name_span: target.span,
+                    value,
+                });
             }
             return Ok(StatementKind::Store { target, value });
         }
@@ -1492,6 +1547,7 @@ impl Parser {
                 expression = Expression {
                     span: expression.span.through(end),
                     kind: ExpressionKind::MethodCall {
+                        name_span: span,
                         receiver: Box::new(expression),
                         name,
                         arguments,
@@ -1502,6 +1558,7 @@ impl Parser {
             expression = Expression {
                 span: expression.span.through(span),
                 kind: ExpressionKind::Field {
+                    name_span: span,
                     base: Box::new(expression),
                     name,
                 },
@@ -1561,6 +1618,7 @@ impl Parser {
             self.expect(Token::Equal, "expected '=' after the field name")?;
             let value = self.initializer()?;
             fields.push(FieldInitializer {
+                name_span: span,
                 name,
                 span: span.through(value.span),
                 value,
@@ -1651,7 +1709,11 @@ impl Parser {
                             let (arguments, end) = self.arguments()?;
                             return Ok(Expression {
                                 span: token.span.through(end),
-                                kind: ExpressionKind::Call { name, arguments },
+                                kind: ExpressionKind::Call {
+                                    name,
+                                    name_span: token.span,
+                                    arguments,
+                                },
                             });
                         }
                         return Ok(Expression {
@@ -1676,7 +1738,11 @@ impl Parser {
                         let (name, end) = self.identifier()?;
                         return Ok(Expression {
                             span: token.span.through(end),
-                            kind: ExpressionKind::EnumValue { id, name },
+                            kind: ExpressionKind::EnumValue {
+                                id,
+                                name,
+                                name_span: end,
+                            },
                         });
                     }
                     let Type::Struct(id) = ty else {
@@ -1685,17 +1751,22 @@ impl Parser {
                             "static calls require a struct type",
                         ));
                     };
-                    let (name, _) = self.identifier()?;
+                    let (name, name_span) = self.identifier()?;
                     if !self.consume(&Token::LeftParen) {
                         return Ok(Expression {
                             span: token.span.through(self.tokens[self.position - 1].span),
-                            kind: ExpressionKind::StaticReference { id, name },
+                            kind: ExpressionKind::StaticReference {
+                                id,
+                                name,
+                                name_span,
+                            },
                         });
                     }
                     let (arguments, end) = self.arguments()?;
                     return Ok(Expression {
                         span: token.span.through(end),
                         kind: ExpressionKind::StaticCall {
+                            name_span,
                             id,
                             name,
                             arguments,
@@ -1711,7 +1782,11 @@ impl Parser {
                 let (arguments, end) = self.arguments()?;
                 return Ok(Expression {
                     span: token.span.through(end),
-                    kind: ExpressionKind::Call { name, arguments },
+                    kind: ExpressionKind::Call {
+                        name,
+                        name_span: token.span,
+                        arguments,
+                    },
                 });
             }
             Token::LeftParen => {

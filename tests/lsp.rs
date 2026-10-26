@@ -42,6 +42,9 @@ impl Server {
         let capabilities = &initialized.result.unwrap()["capabilities"];
         assert_eq!(capabilities["positionEncoding"], "utf-16");
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
+        assert_eq!(capabilities["hoverProvider"], true);
+        assert_eq!(capabilities["definitionProvider"], true);
+        assert_eq!(capabilities["documentSymbolProvider"], true);
         server.notify("initialized", json!({}));
         return server;
     }
@@ -386,5 +389,157 @@ fn diagnostics_for_closed_dependencies_clear_when_the_import_is_removed() {
     let result = server.diagnostics();
     assert!(result["uri"].as_str().unwrap().ends_with("helper.cr"));
     assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}
+
+fn point(source: &str, needle: &str) -> Value {
+    let prefix = &source[..source.find(needle).unwrap()];
+    return json!({ "line": prefix.bytes().filter(|byte| *byte == b'\n').count(), "character": prefix.rsplit('\n').next().unwrap().encode_utf16().count() });
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let mut uri = if path.starts_with('/') {
+        "file://".to_owned()
+    } else {
+        "file:///".to_owned()
+    };
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    return uri;
+}
+
+#[test]
+fn hover_definition_and_document_symbols_use_resolved_bindings_and_utf16_positions() {
+    let source = "// 🦀\r\nint answer(int input) { int value = input; { int value = 7; print(value); } return value; }\r\nint main() { return answer(42); }";
+    let mut server = Server::start();
+    let uri = "untitled:semantic.cr";
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "value);")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(hover["contents"]["value"], "```crust\nint value\n```");
+    let definition = server
+        .request(
+            "textDocument/definition",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "value);")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(definition[0]["uri"], uri);
+    assert_eq!(definition[0]["range"]["start"], point(source, "value = 7"));
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "answer(42)")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        hover["contents"]["value"],
+        "```crust\nint answer(int input)\n```"
+    );
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "42")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(hover["contents"]["value"], "```crust\nint\n```");
+    let symbols = server
+        .request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(symbols.as_array().unwrap().len(), 2);
+    assert_eq!(symbols[0]["name"], "answer");
+    assert_eq!(symbols[0]["kind"], 12);
+    assert_eq!(symbols[1]["name"], "main");
+    server.stop();
+}
+
+#[test]
+fn navigation_and_hover_follow_unsaved_imports_and_report_closed_target_files() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp semantic ü")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("crust.toml"),
+        "[project]\nname='example'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n",
+    )
+    .unwrap();
+    let source = "import \"helper.cr\"; int main() { return answer(42); }";
+    let helper = "// 🦀\r\nint answer(int input) { return input; }";
+    std::fs::write(root.join("main.cr"), source).unwrap();
+    std::fs::write(root.join("helper.cr"), helper).unwrap();
+    let main_uri = file_uri(&root.join("main.cr"));
+    let helper_uri = file_uri(&root.join("helper.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&main_uri, 1, source)["diagnostics"], json!([]));
+    let query = json!({"textDocument": {"uri": main_uri}, "position": point(source, "answer(42)")});
+    let result = server
+        .request("textDocument/definition", query.clone())
+        .result
+        .unwrap();
+    assert_eq!(result[0]["uri"], helper_uri);
+    assert_eq!(result[0]["range"]["start"], point(helper, "answer(int"));
+    let unsaved = "// changed\n// 🦀\nint answer(int renamed) { return renamed; }";
+    assert_eq!(
+        server.open(&helper_uri, 1, unsaved)["diagnostics"],
+        json!([])
+    );
+    let result = server
+        .request("textDocument/definition", query.clone())
+        .result
+        .unwrap();
+    assert_eq!(result[0]["range"]["start"], point(unsaved, "answer(int"));
+    let result = server.request("textDocument/hover", query).result.unwrap();
+    assert_eq!(
+        result["contents"]["value"],
+        "```crust\nint answer(int renamed)\n```"
+    );
+    server.stop();
+}
+
+#[test]
+fn semantic_requests_validate_parameters_and_recover_after_compiler_errors() {
+    let mut server = Server::start();
+    let uri = "untitled:invalid-semantic.cr";
+    let broken = "int main() { return missing; }";
+    server.open(uri, 1, broken);
+    let query = json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 4}});
+    let response = server.request("textDocument/hover", query.clone());
+    assert!(response.error.is_none());
+    assert!(response.result.unwrap_or(Value::Null).is_null());
+    assert_eq!(
+        server
+            .request("textDocument/hover", json!({}))
+            .error
+            .unwrap()
+            .code,
+        -32602
+    );
+    server.change(uri, 2, "int main() { return 0; }");
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    assert!(
+        !server
+            .request("textDocument/hover", query)
+            .result
+            .unwrap()
+            .is_null()
+    );
     server.stop();
 }

@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+mod semantic;
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -64,6 +65,9 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
         json!({
             "capabilities": {
                 "positionEncoding": "utf-16",
+                "hoverProvider": true,
+                "definitionProvider": true,
+                "documentSymbolProvider": true,
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
             "serverInfo": { "name": "crust-lsp", "version": env!("CARGO_PKG_VERSION") }
@@ -92,6 +96,18 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                             ErrorCode::InvalidParams as i32,
                             String::from("shutdown takes no parameters"),
                         )
+                    }
+                } else if matches!(
+                    request.method.as_str(),
+                    "textDocument/hover"
+                        | "textDocument/definition"
+                        | "textDocument/documentSymbol"
+                ) {
+                    match semantic::request(&request.method, request.params, &documents) {
+                        Ok(result) => Response::new_ok(request.id, result),
+                        Err(message) => {
+                            Response::new_err(request.id, ErrorCode::InvalidParams as i32, message)
+                        }
                     }
                 } else {
                     Response::new_err(
@@ -208,48 +224,39 @@ fn diagnostic_json(source: &str, diagnostic: crate::diagnostic::Diagnostic) -> V
     });
 }
 
-fn publish_all(
-    connection: &Connection,
+struct Sources {
+    paths: HashMap<PathBuf, String>,
+    graphs: Vec<crate::source::SourceSet>,
+    errors: Vec<crate::source::SourceError>,
+}
+
+fn source_text(
+    path: &Path,
+    paths: &HashMap<PathBuf, String>,
     documents: &HashMap<String, Document>,
-    published: &mut HashMap<String, Value>,
-    active: &str,
-) -> ServerResult<()> {
+) -> std::io::Result<String> {
+    if let Some(uri) = paths.get(path) {
+        return Ok(documents[uri].text.clone());
+    }
+    return std::fs::read_to_string(path);
+}
+
+fn load_sources(documents: &HashMap<String, Document>) -> Sources {
     let paths: HashMap<_, _> = documents
         .keys()
         .filter_map(|uri| uri_path(uri).map(|path| (path, uri.clone())))
         .collect();
     let read = |path: &Path| {
-        if let Some(uri) = paths.get(path) {
-            return Ok(documents[uri].text.clone());
-        }
-        return std::fs::read_to_string(path);
+        return source_text(path, &paths, documents);
     };
-    let mut diagnostics: HashMap<String, Vec<Value>> = documents
-        .keys()
-        .map(|uri| (uri.clone(), Vec::new()))
-        .collect();
     let mut graphs = Vec::new();
-    for (uri, document) in documents {
+    let mut errors = Vec::new();
+    for uri in documents.keys() {
         if let Some(path) = uri_path(uri) {
             match crate::source::SourceSet::load_with(&path, read) {
-                Ok(sources) => graphs.push((uri.clone(), path, sources)),
-                Err(error) => {
-                    let target = paths
-                        .get(&error.path)
-                        .cloned()
-                        .unwrap_or_else(|| path_uri(&error.path));
-                    let text = read(&error.path).unwrap_or_default();
-                    diagnostics
-                        .entry(target)
-                        .or_default()
-                        .push(diagnostic_json(&text, error.diagnostic));
-                }
+                Ok(sources) => graphs.push(sources),
+                Err(error) => errors.push(error),
             }
-        } else if let Err(error) = crate::check(&document.text) {
-            diagnostics
-                .get_mut(uri)
-                .unwrap()
-                .push(diagnostic_json(&document.text, error));
         }
     }
     let manifests: HashSet<_> = paths
@@ -266,7 +273,10 @@ fn publish_all(
             continue;
         };
         for target in project.targets {
-            if graphs.iter().any(|(_, path, _)| *path == target.entry) {
+            if graphs
+                .iter()
+                .any(|sources| sources.files()[0].path == target.entry)
+            {
                 continue;
             }
             if let Ok(sources) = crate::source::SourceSet::load_with(&target.entry, read)
@@ -275,20 +285,64 @@ fn publish_all(
                     .iter()
                     .any(|file| paths.contains_key(&file.path))
             {
-                graphs.push((path_uri(&target.entry), target.entry, sources));
+                graphs.push(sources);
             }
         }
     }
     // Analyze entries before their open dependencies, including import cycles.
     graphs.sort_by(|a, b| {
-        b.2.files()
+        b.files()
             .len()
-            .cmp(&a.2.files().len())
-            .then_with(|| a.0.cmp(&b.0))
+            .cmp(&a.files().len())
+            .then_with(|| a.files()[0].path.cmp(&b.files()[0].path))
     });
+    return Sources {
+        paths,
+        graphs,
+        errors,
+    };
+}
+
+fn publish_all(
+    connection: &Connection,
+    documents: &HashMap<String, Document>,
+    published: &mut HashMap<String, Value>,
+    active: &str,
+) -> ServerResult<()> {
+    let Sources {
+        paths,
+        graphs,
+        errors,
+    } = load_sources(documents);
+    let mut diagnostics: HashMap<String, Vec<Value>> = documents
+        .keys()
+        .map(|uri| (uri.clone(), Vec::new()))
+        .collect();
+    for (uri, document) in documents {
+        if uri_path(uri).is_none()
+            && let Err(error) = crate::check(&document.text)
+        {
+            diagnostics
+                .get_mut(uri)
+                .unwrap()
+                .push(diagnostic_json(&document.text, error));
+        }
+    }
+    for error in errors {
+        let target = paths
+            .get(&error.path)
+            .cloned()
+            .unwrap_or_else(|| path_uri(&error.path));
+        let text = source_text(&error.path, &paths, documents).unwrap_or_default();
+        let values = diagnostics.entry(target).or_default();
+        let value = diagnostic_json(&text, error.diagnostic);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
     let mut covered = HashSet::new();
-    for (_, path, sources) in graphs {
-        if covered.contains(&path) {
+    for sources in graphs {
+        if covered.contains(&sources.files()[0].path) {
             continue;
         }
         covered.extend(sources.files().iter().map(|file| file.path.clone()));

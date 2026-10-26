@@ -20,6 +20,14 @@ update when a dependency changes or an import is removed.
 Positions use UTF-16 code units. Document versions prevent stale updates from
 replacing newer text.
 
+The server also provides:
+
+- Hover for source declarations and checked expression types
+- Go to definition for functions, methods, fields, enum members, parameters, and locals
+- Source outlines for structs, unions, enums, fields, functions, and methods
+
+Semantic requests use successfully checked programs and the current unsaved text.
+
 ## VS Code
 
 The extension lives in [editors/vscode](../editors/vscode/).
@@ -59,6 +67,6 @@ to stderr.
 
 ## Further work
 
-- Shared symbols and type information for hover, completion, and navigation
+- Completion, reference searches, and rename through the shared symbol index
 - Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

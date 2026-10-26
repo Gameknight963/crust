@@ -91,6 +91,33 @@ impl SourceSet {
         return Ok(crate::emit_c::generate(&checked));
     }
 
+    pub fn analyze(&self) -> Result<crate::analysis::Analysis, SourceError> {
+        let program =
+            crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
+        let checked = crate::check::check(program).map_err(|error| self.locate(error))?;
+        let files = self
+            .files
+            .iter()
+            .map(|file| crate::analysis::File {
+                path: Some(file.path.clone()),
+                text: file.text.clone(),
+            })
+            .collect();
+        return Ok(crate::analysis::build(&checked, files, |mut span| {
+            let file = self
+                .files
+                .iter()
+                .rposition(|file| span.start >= file.offset)
+                .unwrap();
+            span.start -= self.files[file].offset;
+            span.end = span
+                .end
+                .saturating_sub(self.files[file].offset)
+                .min(self.files[file].text.len());
+            crate::analysis::Location { file, span }
+        }));
+    }
+
     fn locate(&self, mut diagnostic: Diagnostic) -> SourceError {
         let file = self
             .files

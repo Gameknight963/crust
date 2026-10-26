@@ -11,6 +11,7 @@ ownership checking, C generation, and native compilation.
 | `src/lib.rs` | Frontend and source-to-C APIs |
 | `src/lexer.rs` | Tokens and scanning |
 | `src/diagnostic.rs` | Source locations and diagnostics |
+| `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
@@ -23,6 +24,7 @@ ownership checking, C generation, and native compilation.
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
+| `src/lsp/semantic.rs` | Hover, definition, document symbols, and request positions |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -36,6 +38,11 @@ to the original path and byte range.
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.
+
+`crust::analyze` and `SourceSet::analyze` return source snapshots with declarations,
+resolved references, and expression types. Locations identify a file index and a
+file-local byte span. Generic instances share their original declarations, and
+ambiguous concrete types in replayed bodies are omitted from type queries.
 
 ## Native compilation
 

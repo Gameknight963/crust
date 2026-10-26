@@ -456,7 +456,8 @@ impl Parser {
         }
         self.generics.struct_instances.insert(key, id);
         let context = self.enter_template(&template, arguments.clone(), template.body);
-        let definition = self.struct_body(id, name, template.span);
+        let definition =
+            self.struct_body(id, name, self.tokens[template.start].span, template.span);
         self.leave_template(context);
         self.generics.struct_definitions.push(definition?);
         self.instantiate_constraints(&template, &arguments, span)?;
@@ -560,7 +561,7 @@ impl Parser {
             };
             let mut function = self.function_body(
                 result,
-                key,
+                (key, span),
                 start,
                 Some(id),
                 is_static,
