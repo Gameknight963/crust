@@ -179,7 +179,6 @@ fn rejects_invalid_aliases_and_unknown_types() {
         "typedef int; int main() { return 0; }",
         "typedef int A",
         "typedef void Nothing; int main() { Nothing x = print(1); return 0; }",
-        "typedef int^ Ref; int main() { int n = 1; Ref r = ^n; return 0; }",
         "Unknown f() { return 0; } int main() { return 0; }",
         "typedef int Self; int main() { return 0; }",
     ] {

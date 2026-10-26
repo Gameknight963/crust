@@ -88,7 +88,6 @@ fn rejects_mutation_through_shared_borrows_and_escaping_references() {
             "void set(int^ a) { *a = 1; } void bad(const int^ a) { set(^*a); }",
             "mutable borrow through a shared borrow",
         ),
-        ("void bad(int^ a) { int^ saved = a; }", "borrowed locals"),
         (
             "const int^ bad(void) { int a = 1; return ^const a; }",
             "lifetime contracts",

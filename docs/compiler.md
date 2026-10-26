@@ -38,6 +38,9 @@ ownership checking, C generation, and native compilation.
 ## Ownership and cleanup
 
 - A borrow records its pointee type and access permission in a shared type representation
+- Local reference bindings retain a loan ID and source root until their block ends
+- Reborrow loans record their parent, allowing access through that ancestry while checking conflicts with sibling and child loans
+- Call argument loans are temporary, and scope exit releases local-reference loans
 - Named owning structs have separate initialized-value flags in generated functions
 - A move clears the source's flag, and reassignment restores it
 - Cleanup checks the flag before destroying a named struct

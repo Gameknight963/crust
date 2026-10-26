@@ -34,6 +34,7 @@ enum State {
 struct Variable {
     ty: Type,
     state: State,
+    reference: Option<usize>,
 }
 
 type Scopes = Vec<HashMap<String, Variable>>;
@@ -42,11 +43,15 @@ struct Place {
     ty: Type,
     mutable: bool,
     root: (usize, String),
+    via: Option<usize>,
 }
 
 struct Loan {
+    id: usize,
     root: (usize, String),
     mutable: bool,
+    parent: Option<usize>,
+    scope: Option<usize>,
 }
 
 struct LoopContext {
@@ -166,6 +171,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             scopes: vec![HashMap::new()],
             return_type: function.return_type,
             loans: Vec::new(),
+            next_loan: 0,
+            references: HashMap::new(),
             types: &types,
             expression_types: &mut expression_types,
             method_calls: &mut method_calls,
@@ -218,9 +225,11 @@ struct FunctionChecker<'program> {
     signatures: &'program HashMap<String, Signature>,
     scopes: Scopes,
     return_type: Type,
-    // Loans last through the enclosing call, including evaluation of later
-    // arguments. No references can be stored or returned in this first version.
+    // Argument loans last through the call. Local references retain their
+    // loans until the binding's block ends, including their reborrow ancestry.
     loans: Vec<Loan>,
+    next_loan: usize,
+    references: HashMap<Span, usize>,
     types: &'program Types,
     expression_types: &'program mut HashMap<Span, Type>,
     method_calls: &'program mut HashMap<Span, Expression>,
@@ -243,6 +252,8 @@ impl FunctionChecker<'_> {
     fn block(&mut self, block: &Block) -> Result<bool, Diagnostic> {
         self.scopes.push(HashMap::new());
         let returns = self.statements(&block.statements)?;
+        let scope = self.scopes.len() - 1;
+        self.loans.retain(|loan| loan.scope != Some(scope));
         self.scopes.pop();
         return Ok(returns);
     }
@@ -260,14 +271,23 @@ impl FunctionChecker<'_> {
                         "this is reserved for the instance receiver",
                     ));
                 }
-                if ty.is_borrow() {
-                    return Err(Diagnostic::new(
-                        statement.span,
-                        "borrowed locals are not supported yet; pass borrows directly to functions",
-                    ));
-                }
                 self.declare(name, *ty, State::Uninitialized, statement.span)?;
                 self.require_type(initializer, *ty)?;
+                if ty.is_borrow() {
+                    let id = self.references[&initializer.span];
+                    let scope = self.scopes.len() - 1;
+                    self.loans
+                        .iter_mut()
+                        .find(|loan| loan.id == id)
+                        .expect("borrow initializer creates a loan")
+                        .scope = Some(scope);
+                    self.scopes
+                        .last_mut()
+                        .unwrap()
+                        .get_mut(name)
+                        .unwrap()
+                        .reference = Some(id);
+                }
                 self.set_state(name, State::Available);
             }
             StatementKind::Assign { name, value } => {
@@ -276,11 +296,11 @@ impl FunctionChecker<'_> {
                 if target.ty.is_borrow() {
                     return Err(Diagnostic::new(
                         statement.span,
-                        "borrow parameters cannot be rebound; assign through '*parameter' instead",
+                        "borrow bindings cannot be rebound; assign through the pointee instead",
                     ));
                 }
                 self.require_type(value, target.ty)?;
-                self.access(&self.root(name), true, statement.span)?;
+                self.access(&self.root(name), true, None, statement.span)?;
                 self.set_state(name, State::Available);
             }
             StatementKind::CompoundAssign { target, value, .. } => {
@@ -294,14 +314,14 @@ impl FunctionChecker<'_> {
                 let previous_loans = self.loans.len();
                 // Reads such as n += n are allowed. Prevent mutation or moves
                 // that could invalidate a captured destination during the RHS.
-                self.borrow(place.root.clone(), false, target.span)?;
+                self.borrow(place.root.clone(), false, place.via, target.span)?;
                 let actual = self.expression(value)?;
                 let common = self
                     .integer(place.ty, target.span)?
                     .common(self.integer(actual, value.span)?);
                 self.convert(value, actual, Type::Integer(common))?;
                 self.loans.truncate(previous_loans);
-                self.access(&place.root, true, target.span)?;
+                self.access(&place.root, true, place.via, target.span)?;
             }
             StatementKind::Store { target, value } => {
                 let place = self.place(target)?;
@@ -314,14 +334,14 @@ impl FunctionChecker<'_> {
                 self.require_type(value, place.ty)?;
                 // The right side may move the owner of the destination.
                 let place = self.checked_place(target)?;
-                self.access(&place.root, true, target.span)?;
+                self.access(&place.root, true, place.via, target.span)?;
             }
             StatementKind::Expression(expression) => {
                 let ty = self.expression(expression)?;
                 if ty.is_borrow() {
                     return Err(Diagnostic::new(
                         expression.span,
-                        "a borrow must be passed directly to a function",
+                        "a borrow must initialize a local or be passed directly to a function",
                     ));
                 }
             }
@@ -601,7 +621,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
                 let place = self.checked_place(expression)?;
-                self.access(&place.root, false, expression.span)?;
+                self.access(&place.root, false, place.via, expression.span)?;
                 if self.types.owns(place.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -621,9 +641,11 @@ impl FunctionChecker<'_> {
                 }
                 match variable.ty {
                     Type::Borrow { mutable, .. } => {
-                        self.borrow(self.root(name), mutable, expression.span)?;
+                        let place = self.place(expression)?;
+                        let id = self.borrow(place.root, mutable, place.via, expression.span)?;
+                        self.references.insert(expression.span, id);
                     }
-                    _ => self.access(&self.root(name), false, expression.span)?,
+                    _ => self.access(&self.root(name), false, None, expression.span)?,
                 }
                 return Ok(variable.ty);
             }
@@ -668,7 +690,7 @@ impl FunctionChecker<'_> {
                                 "move requires an owning value",
                             ));
                         }
-                        self.access(&self.root(owner), true, arguments[0].span)?;
+                        self.access(&self.root(owner), true, None, arguments[0].span)?;
                         self.set_state(owner, State::Moved);
                         return Ok(variable.ty);
                     }
@@ -711,12 +733,13 @@ impl FunctionChecker<'_> {
                             "borrows of borrows are not supported; reborrow the pointee instead",
                         )
                     })?;
-                    self.borrow(place.root, *mutable, expression.span)?;
+                    let id = self.borrow(place.root, *mutable, place.via, expression.span)?;
+                    self.references.insert(expression.span, id);
                     return Ok(ty);
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.checked_place(expression)?;
-                    self.access(&place.root, false, expression.span)?;
+                    self.access(&place.root, false, place.via, expression.span)?;
                     if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -990,7 +1013,7 @@ impl FunctionChecker<'_> {
                     return Err(Diagnostic::new(base.span, "indexing requires an array"));
                 };
                 let previous_loans = self.loans.len();
-                self.borrow(base_place.root.clone(), false, base.span)?;
+                self.borrow(base_place.root.clone(), false, base_place.via, base.span)?;
                 let index_type = self.expression(index)?;
                 self.integer(index_type, index.span)?;
                 if let Some(value) = constant_integer(index)
@@ -1033,14 +1056,26 @@ impl FunctionChecker<'_> {
                     ty,
                     mutable: place.mutable,
                     root: place.root,
+                    via: place.via,
                 });
             }
             ExpressionKind::Variable(name) => {
                 let variable = self.available(name, expression.span)?;
+                let root = if let Some(id) = variable.reference {
+                    self.loans
+                        .iter()
+                        .find(|loan| loan.id == id)
+                        .expect("local reference has a live loan")
+                        .root
+                        .clone()
+                } else {
+                    self.root(name)
+                };
                 return Ok(Place {
                     ty: variable.ty,
                     mutable: !variable.ty.is_borrow(),
-                    root: self.root(name),
+                    root,
+                    via: variable.reference,
                 });
             }
             ExpressionKind::Unary {
@@ -1062,6 +1097,7 @@ impl FunctionChecker<'_> {
                     ty,
                     mutable,
                     root: place.root,
+                    via: place.via,
                 });
             }
             _ => {
@@ -1086,22 +1122,28 @@ impl FunctionChecker<'_> {
         &self,
         root: &(usize, String),
         exclusive: bool,
+        via: Option<usize>,
         span: Span,
     ) -> Result<(), Diagnostic> {
         if self.unevaluated {
             return Ok(());
         }
-        if self
-            .loans
-            .iter()
-            .any(|loan| &loan.root == root && (exclusive || loan.mutable))
-        {
+        let mut authorized = Vec::new();
+        let mut current = via;
+        while let Some(id) = current {
+            authorized.push(id);
+            current = self
+                .loans
+                .iter()
+                .find(|loan| loan.id == id)
+                .and_then(|loan| loan.parent);
+        }
+        if self.loans.iter().any(|loan| {
+            &loan.root == root && !authorized.contains(&loan.id) && (exclusive || loan.mutable)
+        }) {
             return Err(Diagnostic::new(
                 span,
-                format!(
-                    "conflicting access to '{}' while it is borrowed for this call",
-                    root.1
-                ),
+                format!("conflicting access to '{}' while it is borrowed", root.1),
             ));
         }
         return Ok(());
@@ -1111,14 +1153,23 @@ impl FunctionChecker<'_> {
         &mut self,
         root: (usize, String),
         mutable: bool,
+        parent: Option<usize>,
         span: Span,
-    ) -> Result<(), Diagnostic> {
+    ) -> Result<usize, Diagnostic> {
         if self.unevaluated {
-            return Ok(());
+            return Ok(usize::MAX);
         }
-        self.access(&root, mutable, span)?;
-        self.loans.push(Loan { root, mutable });
-        return Ok(());
+        self.access(&root, mutable, parent, span)?;
+        let id = self.next_loan;
+        self.next_loan += 1;
+        self.loans.push(Loan {
+            id,
+            root,
+            mutable,
+            parent,
+            scope: None,
+        });
+        return Ok(id);
     }
 
     fn declare(
@@ -1135,7 +1186,14 @@ impl FunctionChecker<'_> {
                 format!("variable '{name}' is already declared in this scope"),
             ));
         }
-        scope.insert(name.to_owned(), Variable { ty, state });
+        scope.insert(
+            name.to_owned(),
+            Variable {
+                ty,
+                state,
+                reference: None,
+            },
+        );
         return Ok(());
     }
 

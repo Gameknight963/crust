@@ -263,14 +263,42 @@ int main() {
 - Multiple shared borrows may coexist
 - Exclusive borrows prevent conflicting reads, writes, moves, and borrows
 - Borrow permissions apply through fields and owning pointees
-- Borrows remain active through the call, including later argument evaluation
+- Argument borrows remain active through the call, including later argument evaluation
 - Field borrows currently lock the whole parent
 - Borrow parameters can be forwarded or reborrowed for nested calls
 - Parameters require matching borrow types. Use `^const *reference` to explicitly create a shared reborrow
-- Borrow parameters keep their binding and permit writes through mutable pointees
-- Borrows currently live in function parameters and temporary call arguments
+- Borrow parameters and local references keep their binding and permit writes through mutable pointees
+- Borrows live in function parameters, local references, and temporary call arguments
 
-Borrowed locals, fields, and return values require future lifetime rules.
+### Local references
+
+```c
+int number = 40;
+{
+    int^ value = ^number;
+    *value += 1;
+    {
+        const int^ view = ^const *value;
+        print(*view);
+    }
+    *value += 1;
+}
+print(number);
+```
+
+- A reference's borrow lasts until its binding's block ends
+- Local references can borrow stack values, owner slots, pointees, fields, and array elements
+- Initializing a reference from another reference creates a reborrow
+- A mutable reborrow blocks conflicting use of its parent reference until the inner block ends
+- Shared reborrows permit reads and block mutation through their parent
+- Leaving an inner block restores access through the parent reference
+- Calls temporarily reborrow a local reference and release that call's borrow on return
+- A live reference prevents moves and replacement of its source owner
+- Reference bindings cannot be rebound
+
+Borrows lock the whole parent value and remain active to the end of the block,
+including after their last use. Borrowed fields and return values require further
+lifetime contracts.
 
 ## Methods
 
