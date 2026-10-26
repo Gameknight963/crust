@@ -120,9 +120,22 @@ impl SourceSet {
     }
 
     pub fn analyze(&self) -> Result<crate::analysis::Analysis, SourceError> {
+        return self.analyze_inner(false);
+    }
+
+    pub(crate) fn analyze_completion(&self) -> Result<crate::analysis::Analysis, SourceError> {
+        return self.analyze_inner(true);
+    }
+
+    fn analyze_inner(&self, completion: bool) -> Result<crate::analysis::Analysis, SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
-        let checked = crate::check::check(program).map_err(|error| self.locate(error))?;
+        let checked = if completion {
+            crate::check::analyze_completion(program)
+        } else {
+            crate::check::check(program).map(|checked| checked.into_analysis())
+        }
+        .map_err(|error| self.locate(error))?;
         let files = self
             .files
             .iter()

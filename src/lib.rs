@@ -16,9 +16,21 @@ pub mod source;
 use diagnostic::Diagnostic;
 
 pub fn analyze(source: &str) -> Result<analysis::Analysis, Diagnostic> {
+    return analyze_inner(source, false);
+}
+
+pub(crate) fn analyze_completion(source: &str) -> Result<analysis::Analysis, Diagnostic> {
+    return analyze_inner(source, true);
+}
+
+fn analyze_inner(source: &str, completion: bool) -> Result<analysis::Analysis, Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
-    let checked = check::check(program)?;
+    let checked = if completion {
+        check::analyze_completion(program)?
+    } else {
+        check::check(program)?.into_analysis()
+    };
     return Ok(analysis::build(
         &checked,
         vec![analysis::File {

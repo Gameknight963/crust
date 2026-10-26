@@ -1,12 +1,27 @@
 use super::semantic::{Context, PositionParams, offset};
 use super::*;
-use crate::analysis::SymbolKind;
+use crate::analysis::{MemberAccess, SymbolKind};
 use crate::lexer::{Token, tokenize};
 
 struct Site {
     start: usize,
     end: usize,
     cursor: usize,
+    member: Option<(usize, MemberAccess)>,
+}
+
+#[derive(Deserialize)]
+struct CompletionParams {
+    #[serde(flatten)]
+    position: PositionParams,
+    context: Option<CompletionContext>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompletionContext {
+    trigger_kind: u8,
+    trigger_character: Option<String>,
 }
 
 fn site(text: &str, cursor: usize) -> Option<Site> {
@@ -42,30 +57,47 @@ fn site(text: &str, cursor: usize) -> Option<Site> {
     }
     let previous = tokens
         .iter()
+        .enumerate()
         .rev()
-        .find(|token| token.kind != Token::EndOfFile && token.span.end <= start);
-    if previous
-        .is_some_and(|token| matches!(token.kind, Token::Dot | Token::Arrow | Token::ColonColon))
-    {
-        return None;
-    }
-    return Some(Site { start, end, cursor });
+        .find(|(_, token)| token.kind != Token::EndOfFile && token.span.end <= start);
+    let member = previous.and_then(|(index, token)| {
+        let access = match token.kind {
+            Token::Dot => MemberAccess::Value,
+            Token::Arrow => MemberAccess::Dereference,
+            Token::ColonColon => MemberAccess::Type,
+            _ => return None,
+        };
+        return index
+            .checked_sub(1)
+            .map(|index| (tokens[index].span.end - 1, access));
+    });
+    return Some(Site {
+        start,
+        end,
+        cursor,
+        member,
+    });
 }
 
 fn context(uri: &str, site: &Site, documents: &HashMap<String, Document>) -> Option<Context> {
-    if let Some(context) = Context::load(uri, documents) {
+    if let Some(context) = Context::load_completion(uri, documents) {
         return Some(context);
     }
     // Repair just the word being completed, keeping byte offsets stable when
     // it has enough space. This snapshot is used only for completion requests.
-    for replacement in ["0", "int", "0;"] {
+    let replacements: &[&str] = if site.member.is_some() {
+        &["__crust_completion", "__crust_completion;"]
+    } else {
+        &["0", "int", "0;"]
+    };
+    for replacement in replacements {
         let mut documents = documents.clone();
         let document = documents.get_mut(uri)?;
         let padding = " ".repeat((site.end - site.start).saturating_sub(replacement.len()));
         document
             .text
             .replace_range(site.start..site.end, &format!("{replacement}{padding}"));
-        if let Some(context) = Context::load(uri, &documents) {
+        if let Some(context) = Context::load_completion(uri, &documents) {
             return Some(context);
         }
     }
@@ -86,7 +118,17 @@ fn kind(kind: SymbolKind) -> u8 {
     };
 }
 
-pub(super) fn complete(params: PositionParams, documents: &HashMap<String, Document>) -> Value {
+pub(super) fn request(
+    params: Value,
+    documents: &HashMap<String, Document>,
+) -> Result<Value, super::semantic::RequestError> {
+    let params: CompletionParams = serde_json::from_value(params)?;
+    return Ok(complete(params, documents));
+}
+
+fn complete(params: CompletionParams, documents: &HashMap<String, Document>) -> Value {
+    let trigger = params.context;
+    let params = params.position;
     let Some(document) = documents.get(&params.text_document.uri) else {
         return Value::Array(Vec::new());
     };
@@ -96,11 +138,23 @@ pub(super) fn complete(params: PositionParams, documents: &HashMap<String, Docum
     let Some(site) = site(&document.text, cursor) else {
         return Value::Array(Vec::new());
     };
+    if trigger.is_some_and(|trigger| {
+        trigger.trigger_kind == 2 && trigger.trigger_character.is_some() && site.member.is_none()
+    }) {
+        return Value::Array(Vec::new());
+    }
     let prefix = &document.text[site.start..site.cursor];
     let range = json!({ "start": position(&document.text, site.start), "end": position(&document.text, site.end) });
     let mut items = std::collections::BTreeMap::new();
     if let Some(context) = context(&params.text_document.uri, &site, documents) {
-        for symbol in context.analysis.completions_at(context.file, site.start) {
+        let symbols = if let Some((offset, access)) = site.member {
+            context
+                .analysis
+                .member_completions_at(context.file, offset, access)
+        } else {
+            context.analysis.completions_at(context.file, site.start)
+        };
+        for symbol in symbols {
             if symbol.name.starts_with(prefix) {
                 items.insert(
                     symbol.name.clone(),
@@ -111,6 +165,9 @@ pub(super) fn complete(params: PositionParams, documents: &HashMap<String, Docum
                 );
             }
         }
+    }
+    if site.member.is_some() {
+        return Value::Array(items.into_values().collect());
     }
     for name in [
         "int",

@@ -522,6 +522,7 @@ impl Parser {
             for _ in 0..stars {
                 ty = self.pointer_type(ty, true);
             }
+            self.type_annotations.push((span, ty));
             return Ok((name, ty));
         }
         let (name, span) = self.identifier()?;
@@ -534,6 +535,7 @@ impl Parser {
                 "a calling convention requires a function type",
             ));
         }
+        self.type_annotations.push((span, ty));
         return Ok((name, ty));
     }
 
@@ -2033,11 +2035,16 @@ impl Parser {
                     generic_type = Some(self.named_type(&name, token.span)?);
                 }
                 if self.consume(&Token::ColonColon) {
+                    let qualifier_span = Span {
+                        end: self.tokens[self.position - 1].span.start,
+                        ..token.span
+                    };
                     let ty = if let Some(ty) = generic_type {
                         ty
                     } else {
                         self.named_type(&name, token.span)?
                     };
+                    self.type_annotations.push((qualifier_span, ty));
                     if let Type::Enum(id) = ty {
                         let (name, end) = self.identifier()?;
                         return Ok(Expression {

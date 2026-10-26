@@ -28,6 +28,7 @@ The server also provides:
 - Find All References for resolved bindings across the analyzed target's imports
 - Rename for locals and explicit parameters, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
+- Member completion for fields, instance methods, static methods, and enum values
 
 Semantic requests use the current unsaved text and checked compiler analysis.
 Reference searches include reads, writes, and calls. Compatible repeated
@@ -39,6 +40,12 @@ Completion respects lexical scopes, shadowing, and declaration order. Suggestion
 replace the full identifier under the cursor. For a partial word, the server tries
 a temporary repair of that word to obtain scope information. Keywords and built-in
 names remain available when the program has other errors.
+
+Member suggestions follow the receiver's resolved type, including typedefs and
+generic instances. `::` offers enum values and static methods. `.` and `->` offer
+fields and instance methods, with private fields visible inside their struct's
+methods. Completion can use type information gathered before an unfinished
+member produces a body error.
 
 ## VS Code
 
@@ -79,6 +86,6 @@ to stderr.
 
 ## Further work
 
-- Member completion and rename for additional symbol kinds through the shared symbol index
+- Rename for additional symbol kinds through the shared symbol index
 - Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

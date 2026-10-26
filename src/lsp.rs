@@ -75,7 +75,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "referencesProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
-                "completionProvider": { "resolveProvider": false },
+                "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">"] },
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
             "serverInfo": { "name": "crust-lsp", "version": env!("CARGO_PKG_VERSION") }

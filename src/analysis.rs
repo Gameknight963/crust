@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::ast::{Block, SourceDeclarationKind, Statement, StatementKind, Type, TypeDeclaration};
-use crate::check::CheckedProgram;
+use crate::check::AnalyzedProgram;
 use crate::diagnostic::Span;
 mod completion;
+mod members;
 mod rename;
+pub use members::MemberAccess;
 
 #[derive(Debug, Clone)]
 pub struct TextEdit {
@@ -72,6 +74,7 @@ pub struct Analysis {
     pub references: Vec<Reference>,
     pub types: Vec<TypeInfo>,
     completion_scopes: Vec<completion::Scope>,
+    members: members::Index,
 }
 
 fn contains(location: Location, file: usize, offset: usize, include_end: bool) -> bool {
@@ -249,7 +252,7 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
 }
 
 pub(crate) fn build(
-    checked: &CheckedProgram,
+    checked: &AnalyzedProgram,
     files: Vec<File>,
     locate: impl Fn(Span) -> Location,
 ) -> Analysis {
@@ -261,6 +264,7 @@ pub(crate) fn build(
             references: Vec::new(),
             types: Vec::new(),
             completion_scopes: completion::scopes(checked, &locate),
+            members: members::Index::build(checked, &locate),
         },
         locate: &locate,
     };

@@ -108,7 +108,7 @@ fn block_scopes(block: &Block, locate: &impl Fn(Span) -> Location, scopes: &mut 
     });
 }
 
-pub(super) fn scopes(checked: &CheckedProgram, locate: &impl Fn(Span) -> Location) -> Vec<Scope> {
+pub(super) fn scopes(checked: &AnalyzedProgram, locate: &impl Fn(Span) -> Location) -> Vec<Scope> {
     let mut scopes = Vec::new();
     for function in &checked.program.functions {
         let range = locate(function.body.span);

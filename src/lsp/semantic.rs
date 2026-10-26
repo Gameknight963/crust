@@ -74,10 +74,30 @@ pub(super) struct Context {
 
 impl Context {
     pub(super) fn load(uri: &str, documents: &HashMap<String, Document>) -> Option<Self> {
+        return Self::load_inner(uri, documents, false);
+    }
+
+    pub(super) fn load_completion(
+        uri: &str,
+        documents: &HashMap<String, Document>,
+    ) -> Option<Self> {
+        return Self::load_inner(uri, documents, true);
+    }
+
+    fn load_inner(
+        uri: &str,
+        documents: &HashMap<String, Document>,
+        completion: bool,
+    ) -> Option<Self> {
         let document = documents.get(uri)?;
         let Some(path) = uri_path(uri) else {
             return Some(Self {
-                analysis: crate::analyze(&document.text).ok()?,
+                analysis: if completion {
+                    crate::analyze_completion(&document.text)
+                } else {
+                    crate::analyze(&document.text)
+                }
+                .ok()?,
                 file: 0,
                 uris: HashMap::new(),
                 uri: uri.to_owned(),
@@ -85,8 +105,15 @@ impl Context {
         };
         let sources = load_sources(documents);
         for graph in sources.graphs {
+            let analyze = || {
+                if completion {
+                    graph.analyze_completion()
+                } else {
+                    graph.analyze()
+                }
+            };
             if let Some(file) = graph.files().iter().position(|file| file.path == path)
-                && let Ok(analysis) = graph.analyze()
+                && let Ok(analysis) = analyze()
             {
                 return Some(Self {
                     analysis,
@@ -208,8 +235,7 @@ pub(super) fn request(
     document_changes: bool,
 ) -> Result<Value, RequestError> {
     if method == "textDocument/completion" {
-        let params: PositionParams = serde_json::from_value(params)?;
-        return Ok(super::completion::complete(params, documents));
+        return super::completion::request(params, documents);
     }
     if method == "textDocument/documentSymbol" {
         let params: DocumentParams = serde_json::from_value(params)?;

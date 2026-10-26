@@ -1,6 +1,97 @@
 use crust::analysis::{Analysis, SymbolKind};
 
 #[test]
+fn member_completion_resolves_types_aliases_static_members_borrows_and_private_access() {
+    use crust::analysis::MemberAccess;
+    let source = r#"
+        enum Status { Ready, Failed };
+        typedef Status State;
+        struct Item {
+            private int hidden;
+            int value;
+            static Self create() { return (Self){ .hidden = 1, .value = 2 }; }
+            int get() const { return this->hidden; }
+        };
+        typedef Item Named;
+        int main() {
+            Item item = Named::create();
+            print(item.get());
+            const Item^ reference = ^const item;
+            print(reference->get());
+            print(State::Ready == Status::Ready);
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let names = |needle: &str, length: usize, access| {
+        return analysis
+            .member_completions_at(0, source.find(needle).unwrap() + length - 1, access)
+            .iter()
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>();
+    };
+    assert_eq!(names("Named::", 5, MemberAccess::Type), ["create"]);
+    assert_eq!(names("item.get", 4, MemberAccess::Value), ["get", "value"]);
+    assert_eq!(
+        names("reference->", 9, MemberAccess::Dereference),
+        ["get", "value"]
+    );
+    assert_eq!(
+        names("this->hidden", 4, MemberAccess::Dereference),
+        ["get", "hidden", "value"]
+    );
+    assert_eq!(names("State::", 5, MemberAccess::Type), ["Failed", "Ready"]);
+}
+
+#[test]
+fn member_completion_keeps_concrete_generic_types_and_chained_receivers() {
+    use crust::analysis::MemberAccess;
+    let source = r#"
+        struct Cell<T> {
+            T value;
+            static Self create(T value) { return (Self){ .value = value }; }
+            T get() const { return this->value; }
+        };
+        struct Holder { Cell<int> cell; };
+        int main() {
+            Holder holder = { .cell = Cell<int>::create(1) };
+            Cell<char> letter = Cell<char>::create('a');
+            print(holder.cell.get()); print(letter.get());
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    for (needle, length, access, expected) in [
+        ("Cell<int>::create", 9, MemberAccess::Type, vec!["create"]),
+        ("Cell<char>::create", 10, MemberAccess::Type, vec!["create"]),
+        (
+            "holder.cell.get",
+            11,
+            MemberAccess::Value,
+            vec!["get", "value"],
+        ),
+        ("letter.get", 6, MemberAccess::Value, vec!["get", "value"]),
+        (
+            "this->value",
+            4,
+            MemberAccess::Dereference,
+            vec!["get", "value"],
+        ),
+    ] {
+        let symbols =
+            analysis.member_completions_at(0, source.find(needle).unwrap() + length - 1, access);
+        assert_eq!(
+            symbols
+                .iter()
+                .map(|symbol| symbol.name.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{needle}"
+        );
+    }
+}
+
+#[test]
 fn completion_respects_block_scopes_declaration_order_shadowing_and_for_lifetimes() {
     let source = r#"
         extern int external_value;

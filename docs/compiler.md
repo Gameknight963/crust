@@ -14,6 +14,7 @@ ownership checking, C generation, and native compilation.
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/analysis/rename.rs` | Local and parameter rename with binding validation |
 | `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
+| `src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
 | `src/bindings.rs` | Clang header analysis and generated binding validation |
 | `src/bindings/enums.rs` | Native enum discovery, integer representation, and constant probes |
 | `src/bindings/render.rs` | C type trees to Crust declarations |
@@ -72,6 +73,16 @@ functions, and generic parameters stay within their source declaration.
 The LSP filters names by the typed prefix and emits UTF-16 replacement ranges.
 Incomplete words can be replaced in a temporary analysis snapshot without
 changing the editor document or its published diagnostics.
+
+`Analysis::member_completions_at` selects members through resolved receiver types
+and the access operator. Replayed generic bodies offer source members common to
+their concrete receivers. Receiver probes retain type information independently
+of expression conversions and code generation.
+
+Completion analysis retains function information gathered before a body error.
+This produces an `AnalyzedProgram`. Native emission accepts a `CheckedProgram`,
+which is constructed after full validation. Other semantic requests continue to
+require a successfully checked program.
 
 ## C header bindings
 

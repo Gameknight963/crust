@@ -6,6 +6,24 @@ use crate::types::Types;
 
 // Code generation accepts only a program that has passed this checker.
 pub(crate) struct CheckedProgram {
+    analysis: AnalyzedProgram,
+}
+
+impl CheckedProgram {
+    pub fn into_analysis(self) -> AnalyzedProgram {
+        return self.analysis;
+    }
+}
+
+impl std::ops::Deref for CheckedProgram {
+    type Target = AnalyzedProgram;
+
+    fn deref(&self) -> &Self::Target {
+        return &self.analysis;
+    }
+}
+
+pub(crate) struct AnalyzedProgram {
     pub program: Program,
     pub types: Types,
     pub analyses: HashMap<String, FunctionAnalysis>,
@@ -13,6 +31,7 @@ pub(crate) struct CheckedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub receiver_types: HashMap<Span, Type>,
     pub symbol_uses: HashMap<Span, Span>,
     pub function_values: HashMap<Span, String>,
     pub expression_types: HashMap<Span, Type>,
@@ -78,7 +97,17 @@ struct LoopContext {
     continues: Vec<(Scopes, Span)>,
 }
 
-pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> {
+pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
+    return Ok(CheckedProgram {
+        analysis: analyze(program, false)?,
+    });
+}
+
+pub(crate) fn analyze_completion(program: Program) -> Result<AnalyzedProgram, Diagnostic> {
+    return analyze(program, true);
+}
+
+fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Diagnostic> {
     if program.native_headers.is_empty()
         && let Some(definition) = program
             .enums
@@ -402,6 +431,8 @@ pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> 
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            completion,
+            receiver_types: &mut analysis.receiver_types,
             function_declarations: &function_declarations,
             symbol_uses: &mut analysis.symbol_uses,
             signatures: &signatures,
@@ -459,8 +490,12 @@ pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> 
             )?;
         }
 
-        let returns = checker.statements(&function.body.statements)?;
-        if function.return_type != Type::Void && !returns {
+        let returns = match checker.statements(&function.body.statements) {
+            Ok(returns) => returns,
+            Err(_) if completion => false,
+            Err(error) => return Err(error),
+        };
+        if !completion && function.return_type != Type::Void && !returns {
             return Err(Diagnostic::new(
                 function.span,
                 format!(
@@ -472,7 +507,7 @@ pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> 
         analyses.insert(function.name.clone(), analysis);
     }
 
-    return Ok(CheckedProgram {
+    return Ok(AnalyzedProgram {
         program,
         types,
         analyses,
@@ -480,6 +515,8 @@ pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> 
 }
 
 struct FunctionChecker<'program> {
+    completion: bool,
+    receiver_types: &'program mut HashMap<Span, Type>,
     global_symbols: &'program HashMap<String, String>,
     function_declarations: &'program HashMap<String, Span>,
     symbol_uses: &'program mut HashMap<Span, Span>,
@@ -1863,6 +1900,12 @@ impl FunctionChecker<'_> {
     // Resolve the receiver's type without evaluating it. In particular, probing
     // move(value).method() must not move value before checking the actual call.
     fn receiver_type(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        let ty = self.probe_receiver_type(expression)?;
+        self.receiver_types.insert(expression.span, ty);
+        return Ok(ty);
+    }
+
+    fn probe_receiver_type(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         if let Some(value) = constant_integer(expression) {
             return Ok(Type::Integer(if IntType::I32.fits(value) {
                 IntType::I32
@@ -2198,6 +2241,22 @@ impl FunctionChecker<'_> {
     }
 
     fn checked_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
+        let place = match self.check_place(expression) {
+            Ok(place) => place,
+            Err(error) => {
+                if self.completion
+                    && let ExpressionKind::Field { base, .. } = &expression.kind
+                {
+                    let _ = self.receiver_type(base);
+                }
+                return Err(error);
+            }
+        };
+        self.receiver_types.insert(expression.span, place.ty);
+        return Ok(place);
+    }
+
+    fn check_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
                 let place = if base.is_place() {

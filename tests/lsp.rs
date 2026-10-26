@@ -52,6 +52,10 @@ impl Server {
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
         assert_eq!(capabilities["completionProvider"]["resolveProvider"], false);
+        assert_eq!(
+            capabilities["completionProvider"]["triggerCharacters"],
+            json!([".", ":", ">"])
+        );
         server.notify("initialized", json!({}));
         return server;
     }
@@ -400,7 +404,11 @@ fn diagnostics_for_closed_dependencies_clear_when_the_import_is_removed() {
 }
 
 fn point(source: &str, needle: &str) -> Value {
-    let prefix = &source[..source.find(needle).unwrap()];
+    return at(source, source.find(needle).unwrap());
+}
+
+fn at(source: &str, offset: usize) -> Value {
+    let prefix = &source[..offset];
     return json!({ "line": prefix.bytes().filter(|byte| *byte == b'\n').count(), "character": prefix.rsplit('\n').next().unwrap().encode_utf16().count() });
 }
 
@@ -481,12 +489,12 @@ fn completion_recovers_partial_expressions_and_unfinished_statements() {
 }
 
 #[test]
-fn completion_ignores_comments_strings_and_qualified_member_sites() {
+fn completion_ignores_comments_strings_and_invalid_positions() {
     let source = "struct Item { int value; }; int main() { Item item = { .value = 1 }; /* comment */ print(\"string\"); // line\n print(item.value); return 0; }";
     let uri = "untitled:completion-sites.cr";
     let mut server = Server::start();
     assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
-    for needle in ["mment", "ring", "ne\n", "value);"] {
+    for needle in ["mment", "ring", "ne\n"] {
         assert!(
             complete(&mut server, uri, point(source, needle)).is_empty(),
             "{needle}"
@@ -531,6 +539,114 @@ fn completion_uses_imported_declarations_and_current_unsaved_dependency_text() {
             .iter()
             .any(|item| item["label"] == "imported" || item["label"] == "argument")
     );
+    server.stop();
+}
+
+#[test]
+fn member_completion_handles_incomplete_fields_methods_enum_values_and_native_pointers() {
+    let definitions = r#"
+        enum Status { Ready, Failed };
+        typedef Status State;
+        struct Item {
+            private int hidden;
+            int value;
+            static Self create() { return (Self){ .hidden = 1, .value = 2 }; }
+            int get() const { return this->hidden; }
+        };
+        struct Holder { Item item; };
+    "#;
+    let uri = "untitled:member-completion.cr";
+    let mut server = Server::start();
+    for (version, (body, needle, expected)) in [
+        ("Item item = Item::create(); item.; return 0;", "item.", vec!["get", "value"]),
+        ("Item item = Item::create(); item.va; return 0;", "item.va", vec!["value"]),
+        ("Item::; return 0;", "Item::", vec!["create"]),
+        ("Status::; return 0;", "Status::", vec!["Failed", "Ready"]),
+        ("State::; return 0;", "State::", vec!["Failed", "Ready"]),
+        ("Item item = Item::create(); const Item^ reference = ^const item; reference->; return 0;", "reference->", vec!["get", "value"]),
+        ("Item item = Item::create(); unsafe { Item* raw = &item; raw->; } return 0;", "raw->", vec!["get", "value"]),
+        ("Holder holder = { .item = Item::create() }; holder.item.; return 0;", "holder.item.", vec!["get", "value"]),
+        ("Item::create().; return 0;", "Item::create().", vec!["get", "value"]),
+    ].into_iter().enumerate() {
+        let source = format!("{definitions} int main() {{ {body} }}");
+        if version == 0 {
+            server.open(uri, 1, &source);
+        } else {
+            server.change(uri, version as i32 + 1, &source);
+            server.diagnostics();
+        }
+        assert!(crust::check(&source).is_err());
+        assert!(crust::compile(&source).is_err());
+        let cursor = source.rfind(needle).unwrap() + needle.len();
+        let items = complete(&mut server, uri, at(&source, cursor));
+        assert_eq!(items.iter().map(|item| item["label"].as_str().unwrap()).collect::<Vec<_>>(), expected, "{needle}");
+    }
+    server.stop();
+}
+
+#[test]
+fn member_completion_preserves_private_method_context_and_generic_instantiations() {
+    let mut server = Server::start();
+    let uri = "untitled:private-generic-completion.cr";
+    let source = "struct Item { private int hidden; int get() const { return this->; } }; int main() { return 0; }";
+    server.open(uri, 1, source);
+    let cursor = source.find("this->").unwrap() + "this->".len();
+    let items = complete(&mut server, uri, at(source, cursor));
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["label"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["get", "hidden"]
+    );
+    let source = "struct Cell<T> { T value; static Self create(T value) { return (Self){ .value = value }; } T get() const { return this->value; } }; int main() { Cell<int>::; return 0; }";
+    server.change(uri, 2, source);
+    server.diagnostics();
+    let cursor = source.find("Cell<int>::").unwrap() + "Cell<int>::".len();
+    let items = complete(&mut server, uri, at(source, cursor));
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["label"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["create"]
+    );
+    server.stop();
+}
+
+#[test]
+fn completion_triggers_distinguish_member_operators_from_comparisons_and_single_colons() {
+    let source = "enum Status { Ready }; struct Item { int value; }; int main() { Item item = { .value = 1 }; const Item^ reference = ^const item; print(reference->value); print(item.value); print((int)Status::Ready); if (1 > 0) { print(1); } return 0; }";
+    let uri = "untitled:trigger-completion.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    for (needle, trigger, expected) in [
+        ("reference->", ">", vec!["value"]),
+        ("item.", ".", vec!["value"]),
+        ("Status::", ":", vec!["Ready"]),
+        ("Status:", ":", vec![]),
+        ("1 >", ">", vec![]),
+    ] {
+        let cursor = source.find(needle).unwrap() + needle.len();
+        let response = server.request(
+            "textDocument/completion",
+            json!({
+                "textDocument": {"uri": uri}, "position": at(source, cursor),
+                "context": {"triggerKind": 2, "triggerCharacter": trigger}
+            }),
+        );
+        assert!(response.error.is_none());
+        let result = response.result.unwrap();
+        let items = result.as_array().unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item["label"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected,
+            "{needle}"
+        );
+    }
     server.stop();
 }
 
