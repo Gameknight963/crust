@@ -27,6 +27,8 @@ ownership checking, C generation, and native compilation.
 
 - Generated C uses C11
 - Enums lower to distinct generated typedef names with their declared integer representation
+- Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
+- External declarations and calls retain their C symbol names
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename
@@ -61,6 +63,8 @@ ownership checking, C generation, and native compilation.
 - `BoxInt` uses a null pointer as its internal moved-value flag
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters
+- Unsafe blocks lower to ordinary C blocks with the same cleanup rules
+- Field privacy is checked in the frontend and preserves the C field layout
 
 ## Diagnostics
 

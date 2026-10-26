@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use crate::ast::{ArrayType, EnumDefinition, EnumVariant, Field, IntType, Program, Type};
+use crate::ast::{
+    ArrayType, EnumDefinition, EnumVariant, Field, IntType, PointerType, Program, Type,
+};
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
@@ -11,6 +13,7 @@ pub struct StructInfo {
 }
 
 pub struct Types {
+    pub pointers: Vec<PointerType>,
     pub enums: Vec<EnumDefinition>,
     pub enum_names: Vec<String>,
     pub arrays: Vec<ArrayType>,
@@ -112,6 +115,7 @@ impl Types {
         }
 
         let mut types = Types {
+            pointers: program.pointers.clone(),
             enums,
             enum_names: program
                 .enum_names
@@ -228,6 +232,22 @@ impl Types {
         };
     }
 
+    pub fn pointer_to(&mut self, pointee: Type, mutable: bool) -> Type {
+        let pointer = PointerType { pointee, mutable };
+        let id = if let Some(id) = self
+            .pointers
+            .iter()
+            .position(|existing| *existing == pointer)
+        {
+            id
+        } else {
+            let id = self.pointers.len();
+            self.pointers.push(pointer);
+            id
+        };
+        return Type::Pointer(id);
+    }
+
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
             Type::Integer(IntType::I32) => String::from("int"),
@@ -237,6 +257,15 @@ impl Types {
             Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!("struct {}", self.structs[id].name),
             Type::Enum(id) => format!("enum {}", self.enum_names[id]),
+            Type::Pointer(id) => format!(
+                "{}{}*",
+                if self.pointers[id].mutable {
+                    ""
+                } else {
+                    "const "
+                },
+                self.describe(self.pointers[id].pointee)
+            ),
             Type::Array(id) => format!(
                 "{}[{}]",
                 self.describe(self.arrays[id].element),

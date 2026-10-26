@@ -121,6 +121,7 @@ pub enum Type {
     Struct(usize),
     Array(usize),
     Enum(usize),
+    Pointer(usize),
     Borrow { pointee: Pointee, mutable: bool },
 }
 
@@ -132,6 +133,7 @@ pub enum Pointee {
     Struct(usize),
     Array(usize),
     Enum(usize),
+    Pointer(usize),
 }
 
 impl Pointee {
@@ -143,6 +145,7 @@ impl Pointee {
             Pointee::Struct(id) => Type::Struct(id),
             Pointee::Array(id) => Type::Array(id),
             Pointee::Enum(id) => Type::Enum(id),
+            Pointee::Pointer(id) => Type::Pointer(id),
         };
     }
 }
@@ -160,6 +163,7 @@ impl Type {
             Type::Struct(id) => Pointee::Struct(id),
             Type::Array(id) => Pointee::Array(id),
             Type::Enum(id) => Pointee::Enum(id),
+            Type::Pointer(id) => Pointee::Pointer(id),
             _ => return None,
         };
         return Some(Type::Borrow { pointee, mutable });
@@ -176,12 +180,19 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub pointers: Vec<PointerType>,
     pub enum_names: Vec<(String, Span)>,
     pub enums: Vec<EnumDefinition>,
     pub arrays: Vec<ArrayType>,
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PointerType {
+    pub pointee: Type,
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +227,7 @@ pub struct StructDefinition {
 
 #[derive(Debug, Clone)]
 pub struct Field {
+    pub private: bool,
     pub name: String,
     pub ty: Type,
     pub span: Span,
@@ -223,6 +235,7 @@ pub struct Field {
 
 #[derive(Debug)]
 pub struct Function {
+    pub external: bool,
     pub name: String,
     pub return_type: Type,
     pub parameters: Vec<Parameter>,
@@ -268,6 +281,7 @@ pub struct Statement {
 
 #[derive(Debug, Clone)]
 pub enum StatementKind {
+    Unsafe(Block),
     Local {
         name: String,
         ty: Type,
@@ -380,6 +394,7 @@ pub struct FieldInitializer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
+    Address,
     Plus,
     Negate,
     Not,

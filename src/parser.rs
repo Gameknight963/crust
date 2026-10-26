@@ -16,6 +16,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         value_scopes: vec![HashSet::new()],
         arrays: Vec::new(),
         enum_names: Vec::new(),
+        pointers: Vec::new(),
     };
     parser.collect_type_names()?;
     let mut functions = Vec::new();
@@ -49,6 +50,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     functions.append(&mut parser.methods);
     return Ok(Program {
+        pointers: parser.pointers,
         enum_names: parser.enum_names,
         enums,
         arrays: parser.arrays,
@@ -59,6 +61,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 }
 
 struct Parser {
+    pointers: Vec<PointerType>,
     enum_names: Vec<(String, Span)>,
     arrays: Vec<ArrayType>,
     tokens: Vec<SpannedToken>,
@@ -293,6 +296,23 @@ impl Parser {
         ) {
             return true;
         }
+        if self.next_at(&Token::Star) {
+            let mut position = self.position + 1;
+            while self
+                .tokens
+                .get(position)
+                .is_some_and(|token| matches!(token.kind, Token::Star | Token::Const))
+            {
+                position += 1;
+            }
+            return matches!(
+                self.tokens.get(position).map(|token| &token.kind),
+                Some(Token::Identifier(_))
+            ) && self
+                .tokens
+                .get(position + 1)
+                .is_some_and(|token| matches!(token.kind, Token::Equal | Token::LeftBracket));
+        }
         // A type name may also be a value name. Keep `Count ^ other` available
         // as an XOR expression, while recognizing initialized borrow locals.
         return self.next_at(&Token::Caret)
@@ -430,6 +450,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    external: false,
                     name: destructor_name(id),
                     return_type: Type::Void,
                     parameters: vec![Parameter {
@@ -446,16 +467,20 @@ impl Parser {
                 has_destructor = true;
                 continue;
             }
+            let private = self.consume(&Token::Private);
             let is_static = self.consume(&Token::Static);
             let ty = self.type_name()?;
             let (name, span) = self.identifier()?;
             if self.at(&Token::LeftParen) {
+                if private {
+                    return Err(Diagnostic::new(span, "private currently applies to fields"));
+                }
                 let key = if is_static {
                     static_method_name(id, &name)
                 } else {
                     method_name(id, &name)
                 };
-                let method = self.function_body(ty, key, span, Some(id), is_static)?;
+                let method = self.function_body(ty, key, span, Some(id), is_static, false)?;
                 self.methods.push(method);
                 continue;
             }
@@ -464,7 +489,12 @@ impl Parser {
             }
             let ty = self.array_suffix(ty)?;
             self.expect(Token::Semicolon, "expected ';' after the field")?;
-            fields.push(Field { name, ty, span });
+            fields.push(Field {
+                name,
+                ty,
+                span,
+                private,
+            });
         }
         self.advance();
         self.current_struct = None;
@@ -479,9 +509,10 @@ impl Parser {
 
     fn function(&mut self) -> Result<Function, Diagnostic> {
         let start = self.current().span;
+        let external = self.consume(&Token::Extern);
         let return_type = self.type_name()?;
         let (name, _) = self.identifier()?;
-        return self.function_body(return_type, name, start, None, false);
+        return self.function_body(return_type, name, start, None, false, external);
     }
 
     fn function_body(
@@ -491,6 +522,7 @@ impl Parser {
         start: Span,
         owner: Option<usize>,
         is_static: bool,
+        external: bool,
     ) -> Result<Function, Diagnostic> {
         self.expect(Token::LeftParen, "expected '(' after the function name")?;
         let mut parameters = Vec::new();
@@ -506,7 +538,13 @@ impl Parser {
                         "a named parameter cannot have type void",
                     ));
                 }
-                let (name, span) = self.identifier()?;
+                let (name, span) = if external
+                    && matches!(self.current().kind, Token::Comma | Token::RightParen)
+                {
+                    (format!("arg_{}", parameters.len()), self.current().span)
+                } else {
+                    self.identifier()?
+                };
                 let ty = self.array_suffix(ty)?;
                 parameters.push(Parameter { name, ty, span });
                 if !self.consume(&Token::Comma) {
@@ -559,10 +597,22 @@ impl Parser {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
         );
-        let body = self.block()?;
+        let body = if external {
+            let span = self.expect(
+                Token::Semicolon,
+                "expected ';' after external function declaration",
+            )?;
+            Block {
+                statements: Vec::new(),
+                span,
+            }
+        } else {
+            self.block()?
+        };
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            external,
             name,
             return_type,
             parameters,
@@ -572,7 +622,7 @@ impl Parser {
     }
 
     fn type_name(&mut self) -> Result<Type, Diagnostic> {
-        let shared = self.consume(&Token::Const);
+        let mut shared = self.consume(&Token::Const);
         let token = self.advance();
         let base = match token.kind {
             Token::Int => Type::Integer(IntType::I32),
@@ -595,6 +645,32 @@ impl Parser {
                 ));
             }
         };
+        let mut base = self.array_suffix(base)?;
+        while self.consume(&Token::Star) {
+            if base.is_borrow() {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "raw pointers cannot point to borrow bindings",
+                ));
+            }
+            let pointer = PointerType {
+                pointee: base,
+                mutable: !shared,
+            };
+            let id = if let Some(id) = self
+                .pointers
+                .iter()
+                .position(|existing| *existing == pointer)
+            {
+                id
+            } else {
+                let id = self.pointers.len();
+                self.pointers.push(pointer);
+                id
+            };
+            base = Type::Pointer(id);
+            shared = self.consume(&Token::Const);
+        }
         let base = self.array_suffix(base)?;
         if self.consume(&Token::Caret) {
             return base
@@ -676,6 +752,14 @@ impl Parser {
 
     fn statement(&mut self) -> Result<Statement, Diagnostic> {
         let start = self.current().span;
+
+        if self.consume(&Token::Unsafe) {
+            let block = self.block()?;
+            return Ok(Statement {
+                span: start.through(block.span),
+                kind: StatementKind::Unsafe(block),
+            });
+        }
 
         if self.at(&Token::LeftBrace) {
             let block = self.block()?;
@@ -936,6 +1020,7 @@ impl Parser {
             self.position = saved;
         }
         let operator = match self.current().kind {
+            Token::Ampersand => Some(UnaryOperator::Address),
             Token::Plus => Some(UnaryOperator::Plus),
             Token::Minus => Some(UnaryOperator::Negate),
             Token::Bang => Some(UnaryOperator::Not),

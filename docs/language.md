@@ -240,7 +240,9 @@ int main() {
 - Named initializers specify every field exactly once and evaluate in written order
 - Nested brace initializers and `(struct Item){ ... }` compound literals are supported
 - `item.id` accesses a field, and `borrowed_item->id` accesses one through a borrow
-- Fields are public
+- Fields are public by default
+- `private` fields can be read, written, borrowed, and initialized by methods, static factories, and destructors of their own struct
+- Private fields protect the invariants used by safe wrappers around raw pointers
 - Structs with copyable fields are copyable unless they define a destructor
 - Owning fields and custom destructors make the enclosing struct move-only
 - Ownership transfers use whole-struct moves
@@ -438,6 +440,44 @@ int main() {
 - Static and instance methods share the struct's member-name space
 - Static factories can return owning values, including values with destructors
 
+## Raw pointers and C calls
+
+```c
+extern int puts(const char* text);
+
+int main() {
+    char text[6] = "Crust";
+    unsafe {
+        puts(&text[0]);
+    }
+    return 0;
+}
+```
+
+- `T*` is a mutable raw pointer, and `const T*` points to a read-only value
+- Raw pointers support copying, fields, arrays, parameters, returns, null tests, and equality comparisons
+- Integer literal zero converts to a null pointer
+- `&place` creates a raw pointer inside an `unsafe` block
+- Raw pointer dereferencing, casts, and external C calls require `unsafe`
+- Pointers can be cast to other raw pointer types, booleans, or pointer-sized integers
+- Borrows can be explicitly cast to raw pointers inside `unsafe`
+- An implicit pointer conversion can add read-only permission or convert to a compatible `void*`
+- `void*` requires a typed cast before dereferencing
+- Raw pointers use ordinary value semantics and explicit resource management
+- `unsafe` blocks retain ordinary scope cleanup, ownership moves, and borrow checking
+- Unevaluated `sizeof` expressions check types without accessing raw memory or calling C
+
+Unsafe code is responsible for pointer validity, alignment, aliasing, and resource
+lifetimes. External declarations must match the linked C function's ABI.
+
+`extern` declares a C function under its native symbol name. Parameters can be
+named or unnamed. Signatures use C values and raw pointers. Arrays cross the
+boundary by pointer. The [C owner example](../examples/c_owner.cr) uses `malloc`
+and `free` behind private fields, checked getters, and a destructor.
+
+For a shared borrow of a raw pointer binding, use a typedef such as
+`typedef int* IntPointer;` followed by `const IntPointer^`.
+
 ## Destructors
 
 ```c
@@ -462,7 +502,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `BoxInt`, `typedef`, `static`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

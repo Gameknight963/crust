@@ -18,6 +18,7 @@ pub(crate) struct CheckedProgram {
 
 #[derive(Clone)]
 struct Signature {
+    external: bool,
     return_type: Type,
     parameters: Vec<Type>,
     return_borrow: Option<usize>,
@@ -65,7 +66,7 @@ struct LoopContext {
 }
 
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
-    let types = Types::build(&program)?;
+    let mut types = Types::build(&program)?;
     let mut expression_types = HashMap::new();
     let mut method_calls = HashMap::new();
     let mut conversions = HashMap::new();
@@ -79,6 +80,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             name.to_owned(),
             Signature {
+                external: false,
                 return_type,
                 parameters,
                 return_borrow: None,
@@ -88,6 +90,21 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     // Signatures are known before bodies, allowing forward calls and recursion.
     for function in &program.functions {
+        if function.external
+            && (function.return_type.is_borrow()
+                || types.owns(function.return_type)
+                || matches!(function.return_type, Type::Array(_))
+                || function.parameters.iter().any(|parameter| {
+                    parameter.ty.is_borrow()
+                        || types.owns(parameter.ty)
+                        || matches!(parameter.ty, Type::Array(_))
+                }))
+        {
+            return Err(Diagnostic::new(
+                function.span,
+                "external functions require C values and raw pointers; pass arrays by pointer",
+            ));
+        }
         if types.enumerator(&function.name).is_some() {
             return Err(Diagnostic::new(
                 function.span,
@@ -156,6 +173,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             function.name.clone(),
             Signature {
+                external: function.external,
                 return_type: function.return_type,
                 return_borrow,
                 parameters: function
@@ -170,6 +188,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     match signatures.get("main") {
         Some(signature)
             if signature.return_type == Type::Integer(IntType::I32)
+                && !signature.external
                 && signature.parameters.is_empty() => {}
         Some(_) => {
             let function = program
@@ -196,6 +215,9 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     }
 
     for function in &program.functions {
+        if function.external {
+            continue;
+        }
         let mut checker = FunctionChecker {
             signatures: &signatures,
             scopes: vec![HashMap::new()],
@@ -206,13 +228,26 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             loans: Vec::new(),
             next_loan: 0,
             references: HashMap::new(),
-            types: &types,
+            types: &mut types,
             expression_types: &mut expression_types,
             method_calls: &mut method_calls,
             loops: Vec::new(),
             conversions: &mut conversions,
             constants: &mut constants,
             unevaluated: false,
+            unsafe_depth: 0,
+            current_struct: if let Some(method) = function
+                .name
+                .strip_prefix('@')
+                .or_else(|| function.name.strip_prefix('#'))
+            {
+                Some(method.split_once('_').unwrap().0.parse().unwrap())
+            } else {
+                function
+                    .name
+                    .strip_prefix('~')
+                    .map(|id| id.parse().unwrap())
+            },
         };
         for (index, parameter) in function.parameters.iter().enumerate() {
             if parameter.name == "this"
@@ -264,13 +299,15 @@ struct FunctionChecker<'program> {
     loans: Vec<Loan>,
     next_loan: usize,
     references: HashMap<Span, usize>,
-    types: &'program Types,
+    types: &'program mut Types,
     expression_types: &'program mut HashMap<Span, Type>,
     method_calls: &'program mut HashMap<Span, Expression>,
     loops: Vec<LoopContext>,
     conversions: &'program mut HashMap<Span, Type>,
     constants: &'program mut HashMap<Span, i128>,
     unevaluated: bool,
+    unsafe_depth: usize,
+    current_struct: Option<usize>,
 }
 
 impl FunctionChecker<'_> {
@@ -320,6 +357,12 @@ impl FunctionChecker<'_> {
 
     fn statement_inner(&mut self, statement: &Statement) -> Result<bool, Diagnostic> {
         match &statement.kind {
+            StatementKind::Unsafe(block) => {
+                self.unsafe_depth += 1;
+                let result = self.block(block);
+                self.unsafe_depth -= 1;
+                return result;
+            }
             StatementKind::Local {
                 name,
                 ty,
@@ -589,6 +632,21 @@ impl FunctionChecker<'_> {
                     self.loans.truncate(previous_loans);
                     return Ok(Type::Void);
                 }
+                if matches!(ty, Type::Pointer(_)) {
+                    self.require_unsafe(expression.span, "raw pointer casts")?;
+                    let actual = self.expression(operand)?;
+                    if !matches!(actual, Type::Pointer(_) | Type::Borrow { .. })
+                        && !matches!(actual, Type::Integer(kind) if kind.bits() as u32 == usize::BITS)
+                        && constant_integer(operand) != Some(0)
+                    {
+                        return Err(Diagnostic::new(
+                            operand.span,
+                            "raw pointer casts require a pointer, borrow, pointer-sized integer, or zero",
+                        ));
+                    }
+                    self.conversions.insert(operand.span, *ty);
+                    return Ok(*ty);
+                }
                 if self.types.integer_representation(*ty).is_none() {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -606,6 +664,19 @@ impl FunctionChecker<'_> {
                     }
                 } else {
                     let actual = self.expression(operand)?;
+                    if matches!(actual, Type::Pointer(_)) {
+                        self.require_unsafe(expression.span, "raw pointer casts")?;
+                        if *ty != Type::Bool
+                            && !matches!(ty, Type::Integer(kind) if kind.bits() as u32 == usize::BITS)
+                        {
+                            return Err(Diagnostic::new(
+                                expression.span,
+                                "a raw pointer can be cast to bool or a pointer-sized integer",
+                            ));
+                        }
+                        self.conversions.insert(operand.span, *ty);
+                        return Ok(*ty);
+                    }
                     if self.types.integer_representation(actual).is_none() {
                         return Err(Diagnostic::new(
                             operand.span,
@@ -815,6 +886,10 @@ impl FunctionChecker<'_> {
                     ));
                 }
 
+                if signature.external {
+                    self.require_unsafe(expression.span, "calling an external C function")?;
+                }
+
                 if name == "move" {
                     if let ExpressionKind::Variable(owner) = &arguments[0].kind {
                         let variable = self.available(owner, arguments[0].span)?;
@@ -893,6 +968,24 @@ impl FunctionChecker<'_> {
                 return Ok(signature.return_type);
             }
             ExpressionKind::Unary { operator, operand } => {
+                if *operator == UnaryOperator::Address {
+                    self.require_unsafe(expression.span, "creating a raw pointer")?;
+                    let place = self.checked_place(operand)?;
+                    if place.ty.is_borrow() {
+                        return Err(Diagnostic::new(
+                            operand.span,
+                            "raw pointers cannot point to borrow bindings",
+                        ));
+                    }
+                    self.access(
+                        &place.root,
+                        &place.fields,
+                        false,
+                        place.via,
+                        expression.span,
+                    )?;
+                    return Ok(self.types.pointer_to(place.ty, place.mutable));
+                }
                 if let UnaryOperator::Borrow { mutable } = operator {
                     let place = self.checked_place(operand)?;
                     if *mutable && !place.mutable {
@@ -935,6 +1028,9 @@ impl FunctionChecker<'_> {
                     return Ok(place.ty);
                 }
                 let actual = self.expression(operand)?;
+                if *operator == UnaryOperator::Not && matches!(actual, Type::Pointer(_)) {
+                    return Ok(Type::Integer(IntType::I32));
+                }
                 let kind = self.integer(actual, operand.span)?.promoted();
                 if *operator == UnaryOperator::Not {
                     return Ok(Type::Integer(IntType::I32));
@@ -948,6 +1044,51 @@ impl FunctionChecker<'_> {
                 right,
             } => {
                 let left_type = self.expression(left)?;
+                if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
+                    self.scalar_condition(left_type, left.span)?;
+                    let before_right = self.scopes.clone();
+                    let right_type = self.expression(right)?;
+                    self.scalar_condition(right_type, right.span)?;
+                    self.scopes = merge(&before_right, &self.scopes);
+                    return Ok(Type::Integer(IntType::I32));
+                }
+                if matches!(left_type, Type::Pointer(_)) {
+                    let right_type = self.expression(right)?;
+                    if !matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "raw pointers currently support equality comparisons",
+                        ));
+                    }
+                    let common = if let (Type::Pointer(left_id), Type::Pointer(right_id)) =
+                        (left_type, right_type)
+                    {
+                        let a = self.types.pointers[left_id];
+                        let b = self.types.pointers[right_id];
+                        if a.pointee != b.pointee
+                            && a.pointee != Type::Void
+                            && b.pointee != Type::Void
+                        {
+                            return Err(Diagnostic::new(
+                                expression.span,
+                                "pointer comparisons require compatible pointee types",
+                            ));
+                        }
+                        self.types.pointer_to(
+                            if a.pointee == Type::Void || b.pointee == Type::Void {
+                                Type::Void
+                            } else {
+                                a.pointee
+                            },
+                            a.mutable && b.mutable,
+                        )
+                    } else {
+                        left_type
+                    };
+                    self.convert(left, left_type, common)?;
+                    self.convert(right, right_type, common)?;
+                    return Ok(Type::Integer(IntType::I32));
+                }
                 if matches!(left_type, Type::Enum(_)) {
                     let right_type = self.expression(right)?;
                     if left_type != right_type
@@ -969,14 +1110,18 @@ impl FunctionChecker<'_> {
                     return Ok(Type::Integer(IntType::I32));
                 }
                 let left_kind = self.integer(left_type, left.span)?;
-                let before_right = self.scopes.clone();
                 let right_type = self.expression(right)?;
-                let right_kind = self.integer(right_type, right.span)?;
-                if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
-                    // The right operand may not execute.
-                    self.scopes = merge(&before_right, &self.scopes);
+                if matches!(right_type, Type::Pointer(_)) {
+                    if !matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "raw pointers currently support equality comparisons",
+                        ));
+                    }
+                    self.convert(left, left_type, right_type)?;
                     return Ok(Type::Integer(IntType::I32));
                 }
+                let right_kind = self.integer(right_type, right.span)?;
                 let common = left_kind.common(right_kind);
                 self.convert(left, left_type, Type::Integer(common))?;
                 self.convert(right, right_type, Type::Integer(common))?;
@@ -1061,6 +1206,20 @@ impl FunctionChecker<'_> {
         if actual == expected {
             return Ok(());
         }
+        if let Type::Pointer(target) = expected {
+            let compatible = if let Type::Pointer(source) = actual {
+                let source = self.types.pointers[source];
+                let target = self.types.pointers[target];
+                (source.pointee == target.pointee || target.pointee == Type::Void)
+                    && (source.mutable || !target.mutable)
+            } else {
+                constant_integer(expression) == Some(0)
+            };
+            if compatible {
+                self.conversions.insert(expression.span, expected);
+                return Ok(());
+            }
+        }
         if actual.integer().is_some() && expected.integer().is_some() {
             self.conversions.insert(expression.span, expected);
             return Ok(());
@@ -1089,8 +1248,25 @@ impl FunctionChecker<'_> {
 
     fn condition(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
         let ty = self.expression(expression)?;
-        self.integer(ty, expression.span)?;
+        self.scalar_condition(ty, expression.span)?;
         self.release_temporaries();
+        return Ok(());
+    }
+
+    fn scalar_condition(&self, ty: Type, span: Span) -> Result<(), Diagnostic> {
+        if !matches!(ty, Type::Pointer(_)) {
+            self.integer(ty, span)?;
+        }
+        return Ok(());
+    }
+
+    fn require_unsafe(&self, span: Span, operation: &str) -> Result<(), Diagnostic> {
+        if self.unsafe_depth == 0 && !self.unevaluated {
+            return Err(Diagnostic::new(
+                span,
+                format!("{operation} requires an unsafe block"),
+            ));
+        }
         return Ok(());
     }
 
@@ -1098,11 +1274,10 @@ impl FunctionChecker<'_> {
     // move(value).method() must not move value before checking the actual call.
     fn receiver_type(&self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Cast { ty, .. } => return Ok(*ty),
             ExpressionKind::Variable(name) => return Ok(self.available(name, expression.span)?.ty),
             ExpressionKind::Field { base, name } => {
-                return self
-                    .types
-                    .field(self.receiver_type(base)?, name, expression.span);
+                return self.field_type(self.receiver_type(base)?, name, expression.span);
             }
             ExpressionKind::Index { base, .. } => {
                 let Type::Array(id) = self.receiver_type(base)? else {
@@ -1117,6 +1292,7 @@ impl FunctionChecker<'_> {
                 return match self.receiver_type(operand)? {
                     Type::BoxInt => Ok(Type::Integer(IntType::I32)),
                     Type::Borrow { pointee, .. } => Ok(pointee.ty()),
+                    Type::Pointer(id) => Ok(self.types.pointers[id].pointee),
                     _ => Err(Diagnostic::new(
                         expression.span,
                         "dereference needs a BoxInt or a borrow",
@@ -1222,9 +1398,7 @@ impl FunctionChecker<'_> {
                     format!("field '{}' is initialized more than once", field.name),
                 ));
             }
-            let ty = self
-                .types
-                .field(Type::Struct(id), &field.name, field.span)?;
+            let ty = self.field_type(Type::Struct(id), &field.name, field.span)?;
             self.require_type(&field.value, ty)?;
         }
         for field in &declared {
@@ -1270,7 +1444,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Field { base, name } => {
                 let place = self.checked_place(base)?;
-                let ty = self.types.field(place.ty, name, expression.span)?;
+                let ty = self.field_type(place.ty, name, expression.span)?;
                 let mut fields = place.fields;
                 fields.push(name.clone());
                 return Ok(Place {
@@ -1287,18 +1461,19 @@ impl FunctionChecker<'_> {
                 let place = if is_place(operand) {
                     self.checked_place(operand)?
                 } else {
-                    if !self.receiver_type(operand)?.is_borrow() {
+                    let operand_type = self.receiver_type(operand)?;
+                    if !operand_type.is_borrow() && !matches!(operand_type, Type::Pointer(_)) {
                         return Err(Diagnostic::new(
                             operand.span,
                             "dereference of a temporary requires a returned borrow",
                         ));
                     }
                     let ty = self.expression(operand)?;
-                    if self.unevaluated {
+                    if self.unevaluated || matches!(ty, Type::Pointer(_)) {
                         Place {
                             ty,
                             mutable: false,
-                            root: (0, String::new()),
+                            root: (self.scopes.len(), format!("@{}", operand.span.start)),
                             fields: Vec::new(),
                             via: None,
                         }
@@ -1321,6 +1496,17 @@ impl FunctionChecker<'_> {
                 let (ty, mutable) = match place.ty {
                     Type::BoxInt => (Type::Integer(IntType::I32), place.mutable),
                     Type::Borrow { pointee, mutable } => (pointee.ty(), mutable),
+                    Type::Pointer(id) => {
+                        self.require_unsafe(expression.span, "dereferencing a raw pointer")?;
+                        let pointer = self.types.pointers[id];
+                        if pointer.pointee == Type::Void {
+                            return Err(Diagnostic::new(
+                                expression.span,
+                                "void pointers must be cast before dereferencing",
+                            ));
+                        }
+                        (pointer.pointee, pointer.mutable)
+                    }
                     _ => {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -1341,6 +1527,26 @@ impl FunctionChecker<'_> {
                 ));
             }
         }
+    }
+
+    fn field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
+        let field_type = self.types.field(ty, name, span)?;
+        if let Type::Struct(id) = ty
+            && self.current_struct != Some(id)
+            && self.types.structs[id]
+                .fields
+                .iter()
+                .any(|field| field.name == name && field.private)
+        {
+            return Err(Diagnostic::new(
+                span,
+                format!(
+                    "field '{name}' is private to struct '{}'",
+                    self.types.structs[id].name
+                ),
+            ));
+        }
+        return Ok(field_type);
     }
 
     fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {

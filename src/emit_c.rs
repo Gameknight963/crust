@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::check::CheckedProgram;
@@ -23,6 +23,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         conversions: &checked.conversions,
         constants: &checked.constants,
         loops: Vec::new(),
+        external_names: program
+            .functions
+            .iter()
+            .filter(|function| function.external)
+            .map(|function| function.name.clone())
+            .collect(),
     };
     emitter
         .return_types
@@ -47,12 +53,28 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             definition.id
         ));
     }
+    for id in 0..checked.types.structs.len() {
+        emitter.line(&format!("struct crust_struct_{id};"));
+    }
+    for id in 0..checked.types.arrays.len() {
+        emitter.line(&format!("struct crust_array_{id};"));
+    }
+    for (id, pointer) in checked.types.pointers.iter().enumerate() {
+        emitter.line(&format!(
+            "typedef {}{} *crust_ptr_{id};",
+            c_type(pointer.pointee),
+            if pointer.mutable { "" } else { " const" }
+        ));
+    }
     emitter.struct_definitions();
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
     }
     emitter.drop_functions();
     for function in &program.functions {
+        if function.external {
+            continue;
+        }
         emitter.line("");
         emitter.line(&header(function));
         let mut scope = Scope::default();
@@ -105,6 +127,7 @@ fn c_type(ty: Type) -> String {
         Type::Struct(id) => format!("struct crust_struct_{id}"),
         Type::Array(id) => format!("struct crust_array_{id}"),
         Type::Enum(id) => format!("crust_enum_{id}"),
+        Type::Pointer(id) => format!("crust_ptr_{id}"),
         Type::Borrow { pointee, mutable } => format!(
             "{}{} *",
             c_type(pointee.ty()),
@@ -130,7 +153,14 @@ fn header(function: &Function) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    return format!("{result} {}({parameters})", function_name(&function.name));
+    return format!(
+        "{result} {}({parameters})",
+        if function.external {
+            function.name.clone()
+        } else {
+            function_name(&function.name)
+        }
+    );
 }
 
 #[derive(Clone)]
@@ -167,6 +197,7 @@ struct Emitter<'checked> {
     conversions: &'checked HashMap<Span, Type>,
     constants: &'checked HashMap<Span, i128>,
     loops: Vec<LoopContext>,
+    external_names: HashSet<String>,
 }
 
 struct LoopContext {
@@ -321,6 +352,7 @@ impl Emitter<'_> {
 
     fn statement(&mut self, statement: &Statement) {
         match &statement.kind {
+            StatementKind::Unsafe(block) => self.block(block),
             StatementKind::Local {
                 name,
                 ty,
@@ -484,6 +516,9 @@ impl Emitter<'_> {
             return value;
         }
         let cast = format!("({})({value})", c_type(to));
+        if matches!(from, Type::Pointer(_)) || matches!(to, Type::Pointer(_)) {
+            return self.temporary(to, &cast);
+        }
         if from == Type::Bool || to == Type::Bool {
             return self.temporary(to, &cast);
         }
@@ -728,6 +763,8 @@ impl Emitter<'_> {
                         IntType::U32 | IntType::U64 => String::from("crust_rt_print_u64"),
                         _ => function_name(name),
                     }
+                } else if self.external_names.contains(name) {
+                    name.clone()
                 } else {
                     function_name(name)
                 };
@@ -741,6 +778,12 @@ impl Emitter<'_> {
                 return Some(value);
             }
             ExpressionKind::Unary { operator, operand } => {
+                if *operator == UnaryOperator::Address {
+                    let place = self.place(operand);
+                    return Some(
+                        self.temporary(self.expression_type(expression), &format!("&({place})")),
+                    );
+                }
                 if let UnaryOperator::Borrow { mutable } = operator {
                     let ty = self
                         .place_type(operand)
@@ -776,6 +819,7 @@ impl Emitter<'_> {
                         )
                     }
                     UnaryOperator::Dereference => unreachable!(),
+                    UnaryOperator::Address => unreachable!(),
                     UnaryOperator::Borrow { .. } => unreachable!(),
                 };
                 let temporary = self.temporary(self.expression_type(expression), &operation);
@@ -803,15 +847,20 @@ impl Emitter<'_> {
                     self.line("}");
                     return Some(result);
                 }
-                let kind = self
-                    .types
-                    .integer_representation(self.expression_type(left))
-                    .unwrap()
-                    .common(
-                        self.types
-                            .integer_representation(self.expression_type(right))
-                            .unwrap(),
-                    );
+                let kind = if matches!(self.expression_type(left), Type::Pointer(_))
+                    || matches!(self.expression_type(right), Type::Pointer(_))
+                {
+                    IntType::I32
+                } else {
+                    self.types
+                        .integer_representation(self.expression_type(left))
+                        .unwrap()
+                        .common(
+                            self.types
+                                .integer_representation(self.expression_type(right))
+                                .unwrap(),
+                        )
+                };
                 let right = self.value_expression(right);
                 let operation =
                     self.operation(*operator, kind, &left_value, &right, expression.span);
@@ -904,6 +953,7 @@ impl Emitter<'_> {
                 return match self.place_type(operand) {
                     Type::BoxInt => Type::Integer(IntType::I32),
                     Type::Borrow { pointee, .. } => pointee.ty(),
+                    Type::Pointer(id) => self.types.pointers[id].pointee,
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
             }
@@ -923,6 +973,7 @@ impl Emitter<'_> {
             } => {
                 return match self.place_type(operand) {
                     Type::Borrow { mutable, .. } => mutable,
+                    Type::Pointer(id) => self.types.pointers[id].mutable,
                     Type::BoxInt => self.place_mutable(operand),
                     _ => unreachable!(),
                 };

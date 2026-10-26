@@ -28,6 +28,8 @@ Crust supports structs, typedefs, static and instance methods, shared and exclus
 
 Fixed-size arrays support checked indexing and resource cleanup. String literals
 use UTF-8 byte arrays.
+The [C owner example](examples/c_owner.cr) wraps C allocation with private fields,
+checked borrows, and a destructor.
 
 ## Getting started
 
