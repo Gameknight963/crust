@@ -120,13 +120,16 @@ impl Types {
 
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
+            Type::Int => String::from("int"),
+            Type::Bool => String::from("bool"),
+            Type::Void => String::from("void"),
+            Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!("struct {}", self.structs[id].name),
-            Type::StructBorrow { id, mutable } => format!(
-                "{}struct {}^",
+            Type::Borrow { pointee, mutable } => format!(
+                "{}{}^",
                 if mutable { "" } else { "const " },
-                self.structs[id].name
+                self.describe(pointee.ty())
             ),
-            _ => ty.name().to_owned(),
         };
     }
 

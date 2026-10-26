@@ -3,44 +3,46 @@ use crate::diagnostic::Span;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Int,
+    Bool,
     Void,
     BoxInt,
-    IntBorrow { mutable: bool },
-    BoxBorrow { mutable: bool },
     Struct(usize),
-    StructBorrow { id: usize, mutable: bool },
+    Borrow { pointee: Pointee, mutable: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pointee {
+    Int,
+    Bool,
+    BoxInt,
+    Struct(usize),
+}
+
+impl Pointee {
+    pub fn ty(self) -> Type {
+        return match self {
+            Pointee::Int => Type::Int,
+            Pointee::Bool => Type::Bool,
+            Pointee::BoxInt => Type::BoxInt,
+            Pointee::Struct(id) => Type::Struct(id),
+        };
+    }
 }
 
 impl Type {
-    pub fn name(self) -> &'static str {
-        return match self {
-            Type::Int => "int",
-            Type::Void => "void",
-            Type::BoxInt => "BoxInt",
-            Type::IntBorrow { mutable: true } => "int^",
-            Type::IntBorrow { mutable: false } => "const int^",
-            Type::BoxBorrow { mutable: true } => "BoxInt^",
-            Type::BoxBorrow { mutable: false } => "const BoxInt^",
-            Type::Struct(_) => "struct",
-            Type::StructBorrow { mutable: true, .. } => "struct^",
-            Type::StructBorrow { mutable: false, .. } => "const struct^",
-        };
-    }
-
     pub fn is_borrow(self) -> bool {
-        return matches!(
-            self,
-            Type::IntBorrow { .. } | Type::BoxBorrow { .. } | Type::StructBorrow { .. }
-        );
+        return matches!(self, Type::Borrow { .. });
     }
 
     pub fn borrowed(self, mutable: bool) -> Option<Type> {
-        return match self {
-            Type::Int => Some(Type::IntBorrow { mutable }),
-            Type::BoxInt => Some(Type::BoxBorrow { mutable }),
-            Type::Struct(id) => Some(Type::StructBorrow { id, mutable }),
-            _ => None,
+        let pointee = match self {
+            Type::Int => Pointee::Int,
+            Type::Bool => Pointee::Bool,
+            Type::BoxInt => Pointee::BoxInt,
+            Type::Struct(id) => Pointee::Struct(id),
+            _ => return None,
         };
+        return Some(Type::Borrow { pointee, mutable });
     }
 }
 
@@ -157,6 +159,7 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Boolean(bool),
     StaticCall {
         id: usize,
         name: String,

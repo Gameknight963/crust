@@ -434,6 +434,7 @@ impl FunctionChecker<'_> {
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Boolean(_) => return Ok(Type::Bool),
             ExpressionKind::StaticCall {
                 id,
                 name,
@@ -500,7 +501,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 let receiver = match signature.parameters[0] {
-                    Type::StructBorrow { mutable, .. } => Expression {
+                    Type::Borrow { mutable, .. } => Expression {
                         span: receiver.span,
                         kind: ExpressionKind::Unary {
                             operator: UnaryOperator::Borrow { mutable },
@@ -554,9 +555,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 match variable.ty {
-                    Type::IntBorrow { mutable }
-                    | Type::BoxBorrow { mutable }
-                    | Type::StructBorrow { mutable, .. } => {
+                    Type::Borrow { mutable, .. } => {
                         self.borrow(self.root(name), mutable, expression.span)?;
                     }
                     _ => self.access(&self.root(name), false, expression.span)?,
@@ -684,7 +683,11 @@ impl FunctionChecker<'_> {
         } else {
             self.expression(expression)?
         };
-        if actual != expected {
+        let scalar_conversion = matches!(
+            (actual, expected),
+            (Type::Int, Type::Bool) | (Type::Bool, Type::Int)
+        );
+        if actual != expected && !scalar_conversion {
             return Err(Diagnostic::new(
                 expression.span,
                 format!(
@@ -808,9 +811,7 @@ impl FunctionChecker<'_> {
                 let place = self.place(operand)?;
                 let (ty, mutable) = match place.ty {
                     Type::BoxInt => (Type::Int, place.mutable),
-                    Type::IntBorrow { mutable } => (Type::Int, mutable),
-                    Type::BoxBorrow { mutable } => (Type::BoxInt, mutable),
-                    Type::StructBorrow { id, mutable } => (Type::Struct(id), mutable),
+                    Type::Borrow { pointee, mutable } => (pointee.ty(), mutable),
                     _ => {
                         return Err(Diagnostic::new(
                             expression.span,

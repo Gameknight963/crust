@@ -7,13 +7,14 @@
 - Instance methods, value receivers, and destructors
 - Bare struct names, basic typedefs, and static methods
 - For loops, break/continue cleanup, and compound assignments
+- Boolean values, scalar conversions, and a common borrow representation
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Expand basic types with booleans, integer widths, unsigned and pointer-sized integers, and checked conversions
+1. Expand basic types with integer widths, unsigned and pointer-sized integers, and checked conversions
 2. Add arrays, indexing, character and string literals, and enums
 3. Extend borrows to locals and returns tied to an input or receiver. Define temporary lifetimes and disjoint field access
 4. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking

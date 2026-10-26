@@ -7,6 +7,9 @@ pub type LexError = Diagnostic;
 pub enum Token {
     // Keywords.
     Int,
+    Bool,
+    True,
+    False,
     Void,
     Return,
     If,
@@ -156,6 +159,9 @@ impl Lexer<'_> {
 
         return match name {
             "int" => Token::Int,
+            "bool" => Token::Bool,
+            "true" => Token::True,
+            "false" => Token::False,
             "void" => Token::Void,
             "return" => Token::Return,
             "if" => Token::If,

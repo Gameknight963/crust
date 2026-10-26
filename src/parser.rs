@@ -287,7 +287,10 @@ impl Parser {
                     return_type: Type::Void,
                     parameters: vec![Parameter {
                         name: String::from("this"),
-                        ty: Type::StructBorrow { id, mutable: true },
+                        ty: Type::Borrow {
+                            pointee: Pointee::Struct(id),
+                            mutable: true,
+                        },
                         span: start,
                     }],
                     span: start.through(body.span),
@@ -387,8 +390,8 @@ impl Parser {
                     0,
                     Parameter {
                         name: String::from("this"),
-                        ty: Type::StructBorrow {
-                            id,
+                        ty: Type::Borrow {
+                            pointee: Pointee::Struct(id),
                             mutable: !shared,
                         },
                         span: start,
@@ -417,6 +420,7 @@ impl Parser {
         let token = self.advance();
         let base = match token.kind {
             Token::Int => Type::Int,
+            Token::Bool => Type::Bool,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
             Token::Struct => {
@@ -427,7 +431,7 @@ impl Parser {
             _ => {
                 return Err(Diagnostic::new(
                     token.span,
-                    "expected a type: 'int', 'void', 'BoxInt', or 'struct Name'",
+                    "expected a type: 'int', 'bool', 'void', 'BoxInt', or a type name",
                 ));
             }
         };
@@ -570,6 +574,7 @@ impl Parser {
 
         let kind;
         if self.at(&Token::Int)
+            || self.at(&Token::Bool)
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Struct)
@@ -801,6 +806,12 @@ impl Parser {
     fn primary(&mut self) -> Result<Expression, Diagnostic> {
         let token = self.advance();
         match token.kind {
+            Token::True | Token::False => {
+                return Ok(Expression {
+                    span: token.span,
+                    kind: ExpressionKind::Boolean(token.kind == Token::True),
+                });
+            }
             Token::IntegerLiteral(value) => {
                 return Ok(Expression {
                     kind: ExpressionKind::Integer(value),

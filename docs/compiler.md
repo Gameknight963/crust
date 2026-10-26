@@ -35,6 +35,7 @@ ownership checking, C generation, and native compilation.
 
 ## Ownership and cleanup
 
+- A borrow records its pointee type and access permission in a shared type representation
 - Named owning structs have separate initialized-value flags in generated functions
 - A move clears the source's flag, and reassignment restores it
 - Cleanup checks the flag before destroying a named struct

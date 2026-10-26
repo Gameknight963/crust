@@ -2,7 +2,7 @@
 
 ## Functions and control flow
 
-- Types: `int`, `void`, `BoxInt`, struct names, and typedef names
+- Types: `int`, `bool`, `void`, `BoxInt`, struct names, and typedef names
 - Functions support named parameters, forward calls, and recursion
 - The entry point is `int main()` or `int main(void)`
 - Local declarations require initializers
@@ -39,6 +39,21 @@ or return. Header variables are scoped to the loop.
 Compound assignments capture their destination before evaluating the right side.
 The right side can read the destination, while mutation or moves of its parent
 are rejected until assignment completes.
+
+## Booleans
+
+```c
+bool enabled = true;
+bool empty = false;
+```
+
+- `bool` stores false or true, represented numerically as zero or one
+- Conversion from `int` treats zero as false and nonzero values as true
+- Conversion to `int` yields zero or one
+- Arithmetic promotes boolean operands to `int`
+- Comparisons and logical operators produce the existing integer zero/one results
+- Boolean values support locals, parameters, returns, fields, typedefs, and borrows
+- Borrow types match exactly, including their pointee type and access permission
 
 ## Ownership
 
@@ -250,7 +265,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `BoxInt`, `typedef`, `static`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `BoxInt`, `typedef`, `static`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
