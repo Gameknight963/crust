@@ -1,8 +1,9 @@
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{SpannedToken, Token};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 mod generics;
+mod integers;
 
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
@@ -13,6 +14,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         current_struct: None,
         methods: Vec::new(),
         aliases: HashMap::new(),
+        repeated_aliases: Vec::new(),
         resolved_aliases: HashMap::new(),
         resolving_aliases: HashSet::new(),
         value_scopes: vec![HashSet::new()],
@@ -105,6 +107,7 @@ struct Parser {
     current_struct: Option<usize>,
     methods: Vec<Function>,
     aliases: HashMap<String, Alias>,
+    repeated_aliases: Vec<(String, Alias)>,
     resolved_aliases: HashMap<String, Type>,
     resolving_aliases: HashSet<String>,
     value_scopes: Vec<HashSet<String>>,
@@ -219,21 +222,17 @@ impl Parser {
                 if name == "Self" || name == "this" {
                     return Err(Diagnostic::new(span, "Self and this are reserved names"));
                 }
-                if self
-                    .aliases
-                    .insert(
-                        name.clone(),
-                        Alias {
-                            position: start,
-                            span,
-                        },
-                    )
-                    .is_some()
-                {
-                    return Err(Diagnostic::new(
-                        span,
-                        format!("typedef '{name}' is already defined"),
-                    ));
+                let alias = Alias {
+                    position: start,
+                    span,
+                };
+                match self.aliases.entry(name) {
+                    Entry::Occupied(entry) => {
+                        self.repeated_aliases.push((entry.key().clone(), alias))
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert(alias);
+                    }
                 }
                 position = end + 1;
                 continue;
@@ -275,6 +274,15 @@ impl Parser {
         for (_, name) in aliases {
             self.alias_type(&name)?;
         }
+        for (name, alias) in self.repeated_aliases.clone() {
+            let (_, ty) = self.read_alias(alias)?;
+            if ty != self.resolved_aliases[&name] {
+                return Err(Diagnostic::new(
+                    alias.span,
+                    format!("conflicting typedef declarations for '{name}'"),
+                ));
+            }
+        }
         return Ok(());
     }
 
@@ -289,6 +297,16 @@ impl Parser {
                 format!("cyclic typedef involving '{name}'"),
             ));
         }
+        let (parsed_name, ty) = self.read_alias(alias)?;
+        if parsed_name != name {
+            return Err(Diagnostic::new(alias.span, "expected 'typedef type Name;'"));
+        }
+        self.resolving_aliases.remove(name);
+        self.resolved_aliases.insert(name.to_owned(), ty);
+        return Ok(ty);
+    }
+
+    fn read_alias(&mut self, alias: Alias) -> Result<(String, Type), Diagnostic> {
         let previous = self.position;
         self.position = alias.position;
         let bindings = std::mem::take(&mut self.generics.bindings);
@@ -298,17 +316,8 @@ impl Parser {
         self.generics.bindings = bindings;
         self.current_struct = owner;
         self.pending_greater = pending;
-        let (parsed_name, ty) = result?;
-        if parsed_name != name {
-            return Err(Diagnostic::new(
-                self.current().span,
-                "expected 'typedef type Name;'",
-            ));
-        }
         self.position = previous;
-        self.resolving_aliases.remove(name);
-        self.resolved_aliases.insert(name.to_owned(), ty);
-        return Ok(ty);
+        return result;
     }
 
     fn typedef_type(&mut self) -> Result<(String, Type), Diagnostic> {
@@ -454,6 +463,11 @@ impl Parser {
     fn type_in_expression(&self) -> bool {
         return match &self.current().kind {
             Token::Int
+            | Token::Char
+            | Token::Signed
+            | Token::Unsigned
+            | Token::Short
+            | Token::Long
             | Token::Bool
             | Token::Void
             | Token::BoxInt
@@ -891,7 +905,12 @@ impl Parser {
         let mut shared = self.consume(&Token::Const);
         let token = self.advance();
         let base = match token.kind {
-            Token::Int => Type::Integer(IntType::I32),
+            Token::Int
+            | Token::Char
+            | Token::Signed
+            | Token::Unsigned
+            | Token::Short
+            | Token::Long => self.integer_type(token.clone())?,
             Token::Bool => Type::Bool,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
@@ -1134,6 +1153,10 @@ impl Parser {
 
         let kind;
         if self.at(&Token::Int)
+            || matches!(
+                self.current().kind,
+                Token::Char | Token::Signed | Token::Unsigned | Token::Short | Token::Long
+            )
             || self.at(&Token::Bool)
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)

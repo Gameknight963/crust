@@ -21,7 +21,7 @@ pub(crate) struct FunctionAnalysis {
     pub constants: HashMap<Span, i128>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Signature {
     variadic: bool,
     requires_unsafe: bool,
@@ -181,27 +181,34 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         } else {
             None
         };
-        if signatures.contains_key(&function.name) {
+        let signature = Signature {
+            variadic: function.variadic,
+            requires_unsafe: function.requires_unsafe,
+            external: function.external,
+            return_type: function.return_type,
+            return_borrow,
+            parameters: function
+                .parameters
+                .iter()
+                .map(|parameter| parameter.ty)
+                .collect(),
+        };
+        if let Some(previous) = signatures.get(&function.name) {
+            if previous.external && signature.external {
+                if previous == &signature {
+                    continue;
+                }
+                return Err(Diagnostic::new(
+                    function.span,
+                    format!("conflicting C declarations for '{}'", function.name),
+                ));
+            }
             return Err(Diagnostic::new(
                 function.span,
                 format!("{} is already defined or reserved", function.description()),
             ));
         }
-        signatures.insert(
-            function.name.clone(),
-            Signature {
-                variadic: function.variadic,
-                requires_unsafe: function.requires_unsafe,
-                external: function.external,
-                return_type: function.return_type,
-                return_borrow,
-                parameters: function
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.ty)
-                    .collect(),
-            },
-        );
+        signatures.insert(function.name.clone(), signature);
     }
 
     for constraint in &program.interface_checks {

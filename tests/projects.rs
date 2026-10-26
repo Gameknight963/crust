@@ -538,6 +538,54 @@ fn native_unions_match_value_pointer_layout_and_opaque_tag_abis() {
 }
 
 #[test]
+fn native_integer_types_survive_variadic_calls_and_repeated_imported_declarations() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nsources=['native.c']\n");
+    fixture.write("native.c", r#"
+        #include <stdarg.h>
+        #include <stddef.h>
+        long read_long(int ignored, ...) { va_list args; va_start(args, ignored); long result = va_arg(args, long); va_end(args); return result; }
+        unsigned long read_ulong(int ignored, ...) { va_list args; va_start(args, ignored); unsigned long result = va_arg(args, unsigned long); va_end(args); return result; }
+        long long read_wide(int ignored, ...) { va_list args; va_start(args, ignored); long long result = va_arg(args, long long); va_end(args); return result; }
+        unsigned long long read_uwide(int ignored, ...) { va_list args; va_start(args, ignored); unsigned long long result = va_arg(args, unsigned long long); va_end(args); return result; }
+        size_t native_long_size(void) { return sizeof(long); }
+    "#);
+    fixture.write(
+        "a.cr",
+        "typedef long Native; extern long read_long(int, ...);",
+    );
+    fixture.write(
+        "b.cr",
+        "typedef long Native; extern Native read_long(int ignored, ...);",
+    );
+    fixture.write("main.cr", r#"
+        import "a.cr"; import "b.cr";
+        extern unsigned long read_ulong(int ignored, ...);
+        extern long long read_wide(int ignored, ...);
+        extern unsigned long long read_uwide(int ignored, ...);
+        extern size_t native_long_size();
+        int main() {
+            Native value = -2147483647; unsigned long bits = ~(unsigned long)0;
+            long long wide = -9223372036854775807; unsigned long long largest = 18446744073709551615;
+            unsafe {
+                print(read_long(0, value)); print(read_ulong(0, bits) == bits);
+                print(read_wide(0, wide)); print(read_uwide(0, largest));
+                print(sizeof(long) == native_long_size());
+                print(read_ulong(0, (int)1 + (unsigned long)2));
+                print(read_ulong(0, (unsigned long)((unsigned)1 + (long)2)));
+            }
+            return 0;
+        }
+    "#);
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(
+        text(&output),
+        "-2147483647\n1\n-9223372036854775807\n18446744073709551615\n1\n3\n3\n"
+    );
+}
+
+#[test]
 fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     let fixture = Fixture::new();
     for arguments in [

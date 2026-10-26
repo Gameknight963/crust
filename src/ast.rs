@@ -11,6 +11,10 @@ pub enum IntType {
     U16,
     U32,
     U64,
+    Long,
+    ULong,
+    LongLong,
+    ULongLong,
 }
 
 impl IntType {
@@ -20,6 +24,8 @@ impl IntType {
             Self::I16 | Self::U16 => 16,
             Self::I32 | Self::U32 => 32,
             Self::I64 | Self::U64 => 64,
+            Self::Long | Self::ULong => (std::mem::size_of::<std::ffi::c_long>() * 8) as u8,
+            Self::LongLong | Self::ULongLong => 64,
         };
     }
 
@@ -27,7 +33,10 @@ impl IntType {
         if self == Self::Char {
             return std::ffi::c_char::MIN != 0;
         }
-        return matches!(self, Self::I8 | Self::I16 | Self::I32 | Self::I64);
+        return matches!(
+            self,
+            Self::I8 | Self::I16 | Self::I32 | Self::I64 | Self::Long | Self::LongLong
+        );
     }
 
     pub fn minimum(self) -> i128 {
@@ -58,13 +67,71 @@ impl IntType {
         let a = self.promoted();
         let b = other.promoted();
         if a.signed() == b.signed() {
-            return if a.bits() >= b.bits() { a } else { b };
+            return if a.rank() >= b.rank() { a } else { b };
         }
         let (signed, unsigned) = if a.signed() { (a, b) } else { (b, a) };
-        return if signed.bits() > unsigned.bits() {
+        return if unsigned.rank() >= signed.rank() {
+            unsigned
+        } else if signed.bits() > unsigned.bits() {
             signed
         } else {
-            unsigned
+            signed.unsigned()
+        };
+    }
+
+    pub fn native_long() -> IntType {
+        return if std::mem::size_of::<std::ffi::c_long>() == 8 && !cfg!(target_vendor = "apple") {
+            Self::I64
+        } else {
+            Self::Long
+        };
+    }
+
+    pub fn native_long_long() -> IntType {
+        return if Self::native_long() == Self::I64 {
+            Self::LongLong
+        } else {
+            Self::I64
+        };
+    }
+
+    pub fn unsigned(self) -> IntType {
+        return match self {
+            Self::Char | Self::I8 => Self::U8,
+            Self::I16 => Self::U16,
+            Self::I32 => Self::U32,
+            Self::I64 => Self::U64,
+            Self::Long => Self::ULong,
+            Self::LongLong => Self::ULongLong,
+            _ => self,
+        };
+    }
+
+    fn rank(self) -> u8 {
+        return match self {
+            Self::Char | Self::I8 | Self::U8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 => 3,
+            Self::Long | Self::ULong => 4,
+            Self::LongLong | Self::ULongLong => 5,
+            Self::I64 | Self::U64 => {
+                if Self::native_long() == Self::I64 {
+                    4
+                } else {
+                    5
+                }
+            }
+        };
+    }
+
+    pub fn runtime_prefix(self) -> &'static str {
+        let promoted = self.promoted();
+        return match (promoted.signed(), promoted.bits()) {
+            (true, 32) => "",
+            (true, 64) => "i64_",
+            (false, 32) => "u32_",
+            (false, 64) => "u64_",
+            _ => unreachable!("promoted integer representation"),
         };
     }
 
@@ -79,6 +146,10 @@ impl IntType {
             Self::U16 => "uint16_t",
             Self::U32 => "uint32_t",
             Self::U64 => "uint64_t",
+            Self::Long => "long",
+            Self::ULong => "unsigned long",
+            Self::LongLong => "long long",
+            Self::ULongLong => "unsigned long long",
         };
     }
 
@@ -95,14 +166,22 @@ impl IntType {
             "uint64_t" => Self::U64,
             "size_t" | "uintptr_t" => {
                 if usize::BITS == 64 {
-                    Self::U64
+                    if std::mem::size_of::<std::ffi::c_long>() == 8 {
+                        Self::native_long().unsigned()
+                    } else {
+                        Self::U64
+                    }
                 } else {
                     Self::U32
                 }
             }
             "ptrdiff_t" | "intptr_t" => {
                 if usize::BITS == 64 {
-                    Self::I64
+                    if std::mem::size_of::<std::ffi::c_long>() == 8 {
+                        Self::native_long()
+                    } else {
+                        Self::I64
+                    }
                 } else {
                     Self::I32
                 }
@@ -487,4 +566,65 @@ pub fn destructor_name(id: usize) -> String {
 
 pub fn static_method_name(id: usize, name: &str) -> String {
     return format!("#{id}_{name}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_conversion_ranks_match_the_native_c_compiler() {
+        let types = [
+            ("char", IntType::Char),
+            ("signed char", IntType::I8),
+            ("unsigned char", IntType::U8),
+            ("short", IntType::I16),
+            ("unsigned short", IntType::U16),
+            ("int", IntType::I32),
+            ("unsigned int", IntType::U32),
+            ("long", IntType::native_long()),
+            ("unsigned long", IntType::native_long().unsigned()),
+            ("long long", IntType::native_long_long()),
+            ("unsigned long long", IntType::native_long_long().unsigned()),
+            ("int64_t", IntType::I64),
+            ("uint64_t", IntType::U64),
+        ];
+        let mut source =
+            String::from("#include <stdio.h>\n#include <stdint.h>\nint main(void) {\n");
+        let mut expected = Vec::new();
+        for (left_name, left) in types {
+            for (right_name, right) in types {
+                source.push_str(&format!("printf(\"%d\\n\", _Generic((({left_name})0 + ({right_name})0), int: 3, unsigned int: -3, long: 4, unsigned long: -4, long long: 5, unsigned long long: -5));\n"));
+                let kind = left.common(right);
+                expected.push((
+                    left_name,
+                    right_name,
+                    i16::from(kind.rank()) * if kind.signed() { 1 } else { -1 },
+                ));
+            }
+        }
+        source.push_str("return 0; }\n");
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/integer-promotion-tests")
+            .join(std::process::id().to_string());
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("promotions.c");
+        let executable = directory.join(format!("promotions{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&path, source).unwrap();
+        crate::native::compile_file(&path, &executable).unwrap();
+        let output = std::process::Command::new(executable).output().unwrap();
+        assert!(output.status.success());
+        let actual: Vec<i16> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| line.parse().unwrap())
+            .collect();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, (left, right, expected)) in actual.into_iter().zip(expected) {
+            assert_eq!(
+                actual, expected,
+                "usual arithmetic conversion for {left} + {right}"
+            );
+        }
+    }
 }

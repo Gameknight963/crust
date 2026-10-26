@@ -132,7 +132,13 @@ for a struct satisfying both instance and static requirements.
 | Names | Representation |
 | --- | --- |
 | `int`, `int32_t` | Signed 32-bit |
+| `signed`, `signed int` | Signed 32-bit |
+| `unsigned`, `unsigned int` | Unsigned 32-bit |
 | `char` | Native C character type with the host's signedness |
+| `signed char`, `unsigned char` | Signed or unsigned 8-bit |
+| `short`, `short int`, `unsigned short` | Signed or unsigned 16-bit |
+| `long`, `unsigned long` | Native C long integer type |
+| `long long`, `unsigned long long` | Native C 64-bit long long integer type |
 | `int8_t`, `int16_t`, `int64_t` | Signed 8-, 16-, and 64-bit |
 | `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` | Unsigned 8-, 16-, 32-, and 64-bit |
 | `size_t`, `uintptr_t` | Unsigned pointer-sized integer |
@@ -141,8 +147,10 @@ for a struct satisfying both instance and static requirements.
 - Unsuffixed integer literals use `int`, then `int64_t`, then `uint64_t`, according to their value
 - A literal assigned or passed directly to an integer type must fit that type
 - Boolean and 8- or 16-bit operands promote to `int` before arithmetic
-- Operands with the same signedness use the wider promoted type
-- Mixed signed and unsigned operands use the signed type if it is wider, otherwise the unsigned type
+- Integer conversion ranks follow C: `int`, then `long`, then `long long`, with fixed-width names using their native typedef's rank
+- Operands with the same signedness use the higher-ranked promoted type
+- Mixed signed and unsigned operands use the unsigned type if its rank is at least the signed type's rank
+- Otherwise they use the signed type if it represents the unsigned range, or the unsigned counterpart of that signed type
 - Integer conversions check that the value fits, including conversions for mixed arithmetic
 - Unsigned arithmetic wraps within the promoted result type
 - Compound assignments check conversion of the result back to the destination type
@@ -169,6 +177,9 @@ The expression is checked without being evaluated or moving its owners.
 Pointer-sized names follow the compiler host. Generated C checks that the native
 compiler uses the same pointer width.
 `char` uses the host C ABI, and generated C also checks its signedness.
+Native integer widths and typedef identities are checked against the compiler's
+host ABI. Specifiers can use C ordering, such as `unsigned long int` or
+`long unsigned int`. `long` retains its C type when it has the same width as `int`.
 
 ## Arrays
 
@@ -368,7 +379,7 @@ typedef const Count^ ReadCount;
 
 - Typedefs introduce names for existing types and preserve their ownership rules
 - Declarations are resolved across the whole file, including forward references
-- Cyclic and duplicate typedefs produce diagnostics
+- Identical typedef declarations can repeat, and cyclic or conflicting declarations produce diagnostics
 - A typedef takes precedence over an automatically introduced struct type name
 - `struct Name` always selects the struct tag when a typedef has the same name
 - Type names and value names have separate lookup rules
@@ -579,6 +590,8 @@ int main() {
 
 Unsafe code is responsible for pointer validity, alignment, aliasing, and resource
 lifetimes. External declarations must match the linked C function's ABI.
+Matching `extern` declarations can repeat across imported files. Parameter names
+can differ, and conflicting types or variadic signatures produce diagnostics.
 
 Functions and methods can declare an unsafe caller contract:
 
@@ -754,7 +767,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

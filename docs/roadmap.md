@@ -32,6 +32,7 @@
 - Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
 - Variadic C declarations and callbacks with default integer argument promotions
 - Native-layout unions, opaque union tags, generic unions, and overlapping field-borrow checks
+- Native C integer spellings and conversion ranks, plus compatible repeated typedefs and external declarations
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup

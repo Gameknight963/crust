@@ -14,6 +14,7 @@ ownership checking, C generation, and native compilation.
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
+| `src/parser/integers.rs` | C integer type specifiers |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
@@ -60,6 +61,7 @@ to the original path and byte range.
 - Toolchain environment changes apply to the child compiler process
 - Pointer-sized types follow the Rust host, with a generated C assertion checking native pointer width
 - `char` follows the host C signedness, with a generated assertion checking the selected C compiler
+- Native integer spellings retain C type identity and conversion rank, and generated assertions check the host's integer widths and standard typedefs
 - `run` forwards the low eight bits of the native program's exit code
 
 ## Ownership and cleanup

@@ -173,7 +173,7 @@ fn rejects_invalid_aliases_and_unknown_types() {
         "typedef Missing A; int main() { return 0; }",
         "typedef A A; int main() { return 0; }",
         "typedef B A; typedef A B; int main() { return 0; }",
-        "typedef int A; typedef int A; int main() { return 0; }",
+        "typedef int A; typedef char A; int main() { return 0; }",
         "typedef; int main() { return 0; }",
         "typedef A; int main() { return 0; }",
         "typedef int; int main() { return 0; }",
