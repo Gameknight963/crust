@@ -11,16 +11,22 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Fixture {
-        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
-            .join("project-tests")
-            .join(format!(
+            .join("project-tests");
+        fs::create_dir_all(&root).unwrap();
+        loop {
+            let directory = root.join(format!(
                 "project ü {} {}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-        fs::create_dir_all(&directory).unwrap();
-        return Fixture { directory };
+            match fs::create_dir(&directory) {
+                Ok(()) => return Fixture { directory },
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("could not create project fixture: {error}"),
+            }
+        }
     }
 
     fn write(&self, path: &str, contents: &str) {

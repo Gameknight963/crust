@@ -13,6 +13,7 @@ ownership checking, C generation, and native compilation.
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/analysis/rename.rs` | Local and parameter rename with binding validation |
+| `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
 | `src/bindings.rs` | Clang header analysis and generated binding validation |
 | `src/bindings/enums.rs` | Native enum discovery, integer representation, and constant probes |
 | `src/bindings/render.rs` | C type trees to Crust declarations |
@@ -33,6 +34,7 @@ ownership checking, C generation, and native compilation.
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
+| `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -63,6 +65,13 @@ duplicate locations from generic replay removed.
 `Analysis::rename` returns source edits for locals and explicit parameters. It
 reanalyzes edited snapshot text and compares translated reference targets to
 reject name capture. LSP clients receive a workspace edit for review and application.
+
+`Analysis::completions_at` returns visible declarations at a source position.
+Block scopes retain local declaration boundaries, parameters belong to their
+functions, and generic parameters stay within their source declaration.
+The LSP filters names by the typed prefix and emits UTF-16 replacement ranges.
+Incomplete words can be replaced in a temporary analysis snapshot without
+changing the editor document or its published diagnostics.
 
 ## C header bindings
 

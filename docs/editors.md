@@ -27,12 +27,18 @@ The server also provides:
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 - Find All References for resolved bindings across the analyzed target's imports
 - Rename for locals and explicit parameters, with checks for name capture
+- Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 
-Semantic requests use successfully checked programs and the current unsaved text.
+Semantic requests use the current unsaved text and checked compiler analysis.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.
 Rename rechecks the edited source and preserves existing identifier bindings.
 Clients supporting versioned edits receive the current open-document version.
+
+Completion respects lexical scopes, shadowing, and declaration order. Suggestions
+replace the full identifier under the cursor. For a partial word, the server tries
+a temporary repair of that word to obtain scope information. Keywords and built-in
+names remain available when the program has other errors.
 
 ## VS Code
 
@@ -73,6 +79,6 @@ to stderr.
 
 ## Further work
 
-- Completion and rename for additional symbol kinds through the shared symbol index
+- Member completion and rename for additional symbol kinds through the shared symbol index
 - Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

@@ -51,6 +51,7 @@ impl Server {
         assert_eq!(capabilities["referencesProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
+        assert_eq!(capabilities["completionProvider"]["resolveProvider"], false);
         server.notify("initialized", json!({}));
         return server;
     }
@@ -401,6 +402,136 @@ fn diagnostics_for_closed_dependencies_clear_when_the_import_is_removed() {
 fn point(source: &str, needle: &str) -> Value {
     let prefix = &source[..source.find(needle).unwrap()];
     return json!({ "line": prefix.bytes().filter(|byte| *byte == b'\n').count(), "character": prefix.rsplit('\n').next().unwrap().encode_utf16().count() });
+}
+
+fn complete(server: &mut Server, uri: &str, position: Value) -> Vec<Value> {
+    let response = server.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri }, "position": position
+        }),
+    );
+    assert!(response.error.is_none(), "{:?}", response.error);
+    return response.result.unwrap().as_array().unwrap().clone();
+}
+
+#[test]
+fn completion_filters_prefixes_and_replaces_the_full_identifier_with_utf16_ranges() {
+    let source = "int helper(int input) { return input; }\nint main() { /* 🦀 */ int value = 1; { int value = 2; print(value); int later = 3; } return 0; }";
+    let uri = "untitled:completion.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let start = point(source, "value);");
+    let mut middle = start.clone();
+    middle["character"] = json!(start["character"].as_u64().unwrap() + 2);
+    let items = complete(&mut server, uri, middle);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["label"], "value");
+    assert_eq!(items[0]["kind"], 6);
+    assert_eq!(items[0]["textEdit"]["range"]["start"], start);
+    let mut end = start.clone();
+    end["character"] = json!(start["character"].as_u64().unwrap() + 5);
+    assert_eq!(items[0]["textEdit"]["range"]["end"], end);
+    assert_eq!(items[0]["textEdit"]["newText"], "value");
+    let items = complete(&mut server, uri, point(source, "print(value)"));
+    assert!(items.iter().any(|item| item["label"] == "helper"));
+    assert!(items.iter().any(|item| item["label"] == "value"));
+    assert!(
+        !items
+            .iter()
+            .any(|item| item["label"] == "later" || item["label"] == "input")
+    );
+    server.stop();
+}
+
+#[test]
+fn completion_recovers_partial_expressions_and_unfinished_statements() {
+    let uri = "untitled:partial-completion.cr";
+    let mut server = Server::start();
+    let source = "int main() { int value = 1; valu; return 0; }";
+    assert_ne!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let mut cursor = point(source, "valu;");
+    cursor["character"] = json!(cursor["character"].as_u64().unwrap() + 4);
+    let items = complete(&mut server, uri, cursor);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["label"], "value");
+
+    let source = "int main() { int value = 1; val return 0; }";
+    server.change(uri, 2, source);
+    assert_ne!(server.diagnostics()["diagnostics"], json!([]));
+    let mut cursor = point(source, "val return");
+    cursor["character"] = json!(cursor["character"].as_u64().unwrap() + 3);
+    let items = complete(&mut server, uri, cursor);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["label"], "value");
+    assert_eq!(items[0]["kind"], 6);
+    let source = "int main() { missing; pri; return 0; }";
+    server.change(uri, 3, source);
+    assert_ne!(server.diagnostics()["diagnostics"], json!([]));
+    let mut cursor = point(source, "pri;");
+    cursor["character"] = json!(cursor["character"].as_u64().unwrap() + 3);
+    let items = complete(&mut server, uri, cursor);
+    assert!(
+        items
+            .iter()
+            .any(|item| item["label"] == "print" && item["kind"] == 3)
+    );
+    assert!(items.iter().any(|item| item["label"] == "private"));
+    server.stop();
+}
+
+#[test]
+fn completion_ignores_comments_strings_and_qualified_member_sites() {
+    let source = "struct Item { int value; }; int main() { Item item = { .value = 1 }; /* comment */ print(\"string\"); // line\n print(item.value); return 0; }";
+    let uri = "untitled:completion-sites.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    for needle in ["mment", "ring", "ne\n", "value);"] {
+        assert!(
+            complete(&mut server, uri, point(source, needle)).is_empty(),
+            "{needle}"
+        );
+    }
+    let response = server.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": {"uri": uri}, "position": {"line": "invalid", "character": 0}
+        }),
+    );
+    assert_eq!(response.error.unwrap().code, -32602);
+    assert!(complete(&mut server, uri, json!({"line": 1000, "character": 0})).is_empty());
+    server.stop();
+}
+
+#[test]
+fn completion_uses_imported_declarations_and_current_unsaved_dependency_text() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-completion-imports")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let helper = root.join("helper.cr");
+    std::fs::write(&helper, "int imported(int parameter) { return parameter; }").unwrap();
+    let source = "import \"helper.cr\"; int main() { return 0; }";
+    let uri = file_uri(&root.join("main.cr"));
+    let helper_uri = file_uri(&helper);
+    let mut server = Server::start();
+    server.open(&uri, 1, source);
+    let items = complete(&mut server, &uri, point(source, "return 0"));
+    assert!(items.iter().any(|item| item["label"] == "imported"));
+    assert!(!items.iter().any(|item| item["label"] == "parameter"));
+    server.open(
+        &helper_uri,
+        1,
+        "int updated(int argument) { return argument; }",
+    );
+    let items = complete(&mut server, &uri, point(source, "return 0"));
+    assert!(items.iter().any(|item| item["label"] == "updated"));
+    assert!(
+        !items
+            .iter()
+            .any(|item| item["label"] == "imported" || item["label"] == "argument")
+    );
+    server.stop();
 }
 
 fn file_uri(path: &std::path::Path) -> String {

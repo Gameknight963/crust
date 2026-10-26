@@ -2,6 +2,7 @@
 
 - Compiler diagnostics for unsaved Crust files
 - Syntax highlighting, bracket pairs, and comment commands
+- Scope completion, hover, navigation, references, and local rename
 - Shared language server for VS Code and other LSP editors
 
 ## Setup

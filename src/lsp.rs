@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+mod completion;
 mod semantic;
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -23,6 +24,7 @@ struct OpenDocument {
     text: String,
 }
 
+#[derive(Clone)]
 struct Document {
     version: i32,
     text: String,
@@ -73,6 +75,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "referencesProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
+                "completionProvider": { "resolveProvider": false },
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
             "serverInfo": { "name": "crust-lsp", "version": env!("CARGO_PKG_VERSION") }
@@ -110,6 +113,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/prepareRename"
                         | "textDocument/rename"
                         | "textDocument/documentSymbol"
+                        | "textDocument/completion"
                 ) {
                     match semantic::request(
                         &request.method,

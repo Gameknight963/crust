@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::ast::{Block, SourceDeclarationKind, Statement, StatementKind, Type, TypeDeclaration};
 use crate::check::CheckedProgram;
 use crate::diagnostic::Span;
+mod completion;
 mod rename;
 
 #[derive(Debug, Clone)]
@@ -70,6 +71,7 @@ pub struct Analysis {
     pub symbols: Vec<Symbol>,
     pub references: Vec<Reference>,
     pub types: Vec<TypeInfo>,
+    completion_scopes: Vec<completion::Scope>,
 }
 
 fn contains(location: Location, file: usize, offset: usize, include_end: bool) -> bool {
@@ -258,6 +260,7 @@ pub(crate) fn build(
             symbols: Vec::new(),
             references: Vec::new(),
             types: Vec::new(),
+            completion_scopes: completion::scopes(checked, &locate),
         },
         locate: &locate,
     };

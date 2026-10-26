@@ -1,6 +1,95 @@
 use crust::analysis::{Analysis, SymbolKind};
 
 #[test]
+fn completion_respects_block_scopes_declaration_order_shadowing_and_for_lifetimes() {
+    let source = r#"
+        extern int external_value;
+        int helper(int argument) { return argument; }
+        int main() {
+            int value = 1;
+            { int copy = value + 1; int value = 2; print(value); int later = 3; }
+            for (int index = 0; index < 1; index += 1) { print(index); }
+            print(value);
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let candidates = |offset| analysis.completions_at(0, offset);
+    assert!(analysis.completions_at(1, 0).is_empty());
+    assert!(analysis.completions_at(0, source.len() + 1).is_empty());
+    let initializer = candidates(source.find("value + 1").unwrap());
+    assert_eq!(
+        initializer
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 1").unwrap()
+    );
+    let inner = candidates(source.find("print(value)").unwrap());
+    assert_eq!(
+        inner
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 2").unwrap()
+    );
+    assert!(
+        !inner
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "later" | "argument" | "index"))
+    );
+    assert!(inner.iter().any(|symbol| symbol.name == "external_value"));
+    assert!(inner.iter().any(|symbol| symbol.name == "helper"));
+    assert!(
+        candidates(source.find("print(index)").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "index")
+    );
+    let outer = candidates(source.rfind("print(value)").unwrap());
+    assert!(
+        !outer
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "index" | "later" | "argument"))
+    );
+    assert_eq!(
+        outer
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 1").unwrap()
+    );
+    assert!(
+        candidates(source.find("return argument").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "argument")
+    );
+}
+
+#[test]
+fn completion_keeps_generic_parameters_within_their_source_declarations() {
+    let source = "T identity<T>(T value) { return value; } int main() { return identity<int>(1); }";
+    let analysis = crust::analyze(source).unwrap();
+    let generic = analysis.completions_at(0, source.find("return value").unwrap());
+    assert!(generic.iter().any(|symbol| symbol.name == "T"));
+    assert!(generic.iter().any(|symbol| symbol.name == "value"));
+    let main = analysis.completions_at(0, source.find("return identity").unwrap());
+    assert!(
+        !main
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "T" | "value"))
+    );
+}
+
+#[test]
 fn reference_search_groups_redeclarations_and_preserves_lexical_bindings() {
     let source = r#"
         typedef int Count;

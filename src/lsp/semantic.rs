@@ -40,9 +40,9 @@ struct DocumentParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PositionParams {
-    text_document: DocumentId,
-    position: Position,
+pub(super) struct PositionParams {
+    pub(super) text_document: DocumentId,
+    pub(super) position: Position,
 }
 
 #[derive(Deserialize)]
@@ -60,20 +60,20 @@ struct ReferenceContext {
 }
 
 #[derive(Deserialize)]
-struct Position {
+pub(super) struct Position {
     line: usize,
     character: usize,
 }
 
-struct Context {
-    analysis: Analysis,
-    file: usize,
+pub(super) struct Context {
+    pub(super) analysis: Analysis,
+    pub(super) file: usize,
     uris: HashMap<PathBuf, String>,
     uri: String,
 }
 
 impl Context {
-    fn load(uri: &str, documents: &HashMap<String, Document>) -> Option<Self> {
+    pub(super) fn load(uri: &str, documents: &HashMap<String, Document>) -> Option<Self> {
         let document = documents.get(uri)?;
         let Some(path) = uri_path(uri) else {
             return Some(Self {
@@ -207,6 +207,10 @@ pub(super) fn request(
     documents: &HashMap<String, Document>,
     document_changes: bool,
 ) -> Result<Value, RequestError> {
+    if method == "textDocument/completion" {
+        let params: PositionParams = serde_json::from_value(params)?;
+        return Ok(super::completion::complete(params, documents));
+    }
     if method == "textDocument/documentSymbol" {
         let params: DocumentParams = serde_json::from_value(params)?;
         return Ok(Context::load(&params.text_document.uri, documents)
@@ -278,7 +282,7 @@ fn code_block(text: &str) -> String {
     return format!("{fence}crust\n{text}\n{fence}");
 }
 
-fn offset(text: &str, target: &Position) -> Option<usize> {
+pub(super) fn offset(text: &str, target: &Position) -> Option<usize> {
     let (mut line, mut character, mut offset) = (0, 0, 0);
     while offset < text.len() {
         if line == target.line && character == target.character {
