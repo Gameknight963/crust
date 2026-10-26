@@ -687,3 +687,79 @@ fn cli_selects_named_enums_and_writes_relative_native_header_references() {
     assert!(text.contains("extern enum Kind"));
     crust::check(&format!("{text} int main() {{ return 0; }}")).unwrap();
 }
+
+#[test]
+fn adjusted_array_parameters_preserve_pointee_const_and_accept_restrict_callback_contracts() {
+    let path = header(
+        "typedef void CopyFour(int destination[restrict static 4], const int source[static const 4]); int inspect(int destination[restrict static 4], const int source[static const 4], CopyFour* copy);",
+    );
+    let bindings = generate(&path, &options(&["inspect"])).unwrap();
+    assert!(bindings.contains("const int*"));
+    let source = format!(
+        r#"
+        {bindings}
+        unsafe void copy_four(int* destination, const int* source) {{
+            for (int i = 0; i < 4; i += 1) {{ destination[i] = source[i]; }}
+        }}
+        int main() {{
+            int destination[4] = {{ 0, 0, 0, 0 }};
+            int source[4] = {{ 1, 2, 3, 42 }};
+            unsafe {{ print(inspect(&destination[0], &source[0], copy_four)); }}
+            print(destination[0]);
+            return 0;
+        }}
+    "#
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("int inspect(int destination[restrict static 4], const int source[static const 4], CopyFour* copy) { copy(destination, source); return destination[3]; }");
+    let generated = format!("{}\n{generated}", std::fs::read_to_string(&path).unwrap());
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n1\n"
+    );
+}
+
+#[test]
+fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_callbacks() {
+    let path = header("#include <stdlib.h>\n#include <string.h>\n");
+    let bindings = generate(&path, &options(&["qsort", "bsearch", "memcpy"])).unwrap();
+    let source = format!(
+        r#"
+        {bindings}
+        unsafe int compare(const void* left, const void* right) {{
+            int first = *(const int*)left;
+            int second = *(const int*)right;
+            return (first > second) - (first < second);
+        }}
+        int main() {{
+            int values[6] = {{ 9, 1, 7, 3, 5, 2 }};
+            int copy[6] = {{ 0, 0, 0, 0, 0, 0 }};
+            int key = 7;
+            unsafe {{
+                qsort(&values[0], 6, sizeof(int), compare);
+                memcpy(&copy[0], &values[0], sizeof(values));
+                void* found = bsearch(&key, &copy[0], 6, sizeof(int), compare);
+                print(found != 0); print(*(int*)found);
+            }}
+            for (int i = 0; i < 6; i += 1) {{ print(copy[i]); }}
+            return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n7\n1\n2\n3\n5\n7\n9\n"
+    );
+}

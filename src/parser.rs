@@ -1602,6 +1602,7 @@ impl Parser {
 
         let kind;
         if self.at(&Token::Int)
+            || self.at(&Token::Void)
             || matches!(
                 self.current().kind,
                 Token::Char | Token::Signed | Token::Unsigned | Token::Short | Token::Long

@@ -23,6 +23,36 @@ fn c_allocation_can_be_wrapped_in_a_safe_move_only_owner() {
 }
 
 #[test]
+fn void_pointer_locals_support_null_nested_indirection_and_for_initializers() {
+    run(
+        r#"
+        int main() {
+            void* empty = 0;
+            print(empty == 0);
+            unsafe {
+                int value = 42;
+                void* pointer = &value;
+                void** slot = &pointer;
+                print(*(int*)*slot);
+                for (void* current = pointer; current != 0; current = 0) {
+                    print(*(int*)current);
+                }
+            }
+            return 0;
+        }
+    "#,
+        "1\n42\n42\n",
+        "",
+    );
+    let error = crust::check("int main() { void value = 0; return 0; }").unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("a local variable cannot have type void")
+    );
+}
+
+#[test]
 fn raw_pointers_support_nested_indirection_and_safe_borrow_bindings() {
     run(
         r#"

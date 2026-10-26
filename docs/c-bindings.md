@@ -37,6 +37,7 @@ command protects its input header from replacement.
 
 - Native C integers, booleans, and `void`
 - Raw pointers with const pointees and multiple pointer levels
+- Adjusted array parameters and top-level parameter qualifiers
 - Opaque struct and union tags
 - Named enums with native integer representations and member values
 - Function pointers, callback returns, and variadic functions
@@ -50,6 +51,11 @@ opaque pointers. Names reserved by Crust receive a `c_` prefix and retain their
 native symbol through a renamed import.
 Selection names the native declaration. A later macro with the same
 name does not redirect the binding.
+
+C array parameters become pointers, including `[static N]` and `restrict`
+declarators. Their minimum-length and aliasing requirements belong to the unsafe
+caller contract. The [C algorithms example](../examples/c_algorithms.cr) sorts,
+searches, and copies arrays through the C standard library.
 
 The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.

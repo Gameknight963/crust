@@ -39,6 +39,8 @@ The [vector edit example](examples/vector_edits.cr) inserts, removes, and clears
 heap owners.
 The [header example](examples/header_project/) imports C declarations with
 `crust import-c` and wraps an opaque handle in a Crust owner.
+The [C algorithms example](examples/c_algorithms.cr) sorts and searches arrays
+with C standard library callbacks.
 On Windows x86 and x64, the [calling-convention project](examples/calling_convention_project/)
 passes `__vectorcall` callbacks between Crust and C.
 
