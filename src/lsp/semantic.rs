@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::{Analysis, Location, SymbolKind};
+use crate::analysis::{Analysis, Location, Symbol, SymbolKind};
 
 pub(super) struct RequestError {
     pub code: i32,
@@ -68,8 +68,8 @@ pub(super) struct Position {
 pub(super) struct Context {
     pub(super) analysis: Analysis,
     pub(super) file: usize,
-    uris: HashMap<PathBuf, String>,
-    uri: String,
+    pub(super) uris: HashMap<PathBuf, String>,
+    pub(super) uri: String,
 }
 
 impl Context {
@@ -211,20 +211,43 @@ impl Context {
         return Value::Null;
     }
 
+    pub(super) fn symbol_information(&self, symbol: &Symbol, location: Location) -> Value {
+        let kind = match symbol.kind {
+            SymbolKind::Function => 12,
+            SymbolKind::Method => 6,
+            SymbolKind::Struct | SymbolKind::Union => 23,
+            SymbolKind::Enum => 10,
+            SymbolKind::EnumMember => 22,
+            SymbolKind::Field => 8,
+            SymbolKind::Interface => 11,
+            SymbolKind::Alias => 26,
+            _ => 13,
+        };
+        let mut value =
+            json!({ "name": symbol.name, "kind": kind, "location": self.location(location) });
+        if let Some(container) = &symbol.container {
+            value["containerName"] = json!(container);
+        }
+        return value;
+    }
+
     fn document_symbols(&self) -> Value {
-        return Value::Array(self.analysis.symbols.iter().filter(|symbol| symbol.location.file == self.file && !matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Parameter | SymbolKind::TypeParameter))
-            .map(|symbol| {
-                let kind = match symbol.kind {
-                    SymbolKind::Function => 12, SymbolKind::Method => 6,
-                    SymbolKind::Struct | SymbolKind::Union => 23, SymbolKind::Enum => 10,
-                    SymbolKind::EnumMember => 22, SymbolKind::Field => 8,
-                    SymbolKind::Interface => 11, SymbolKind::Alias => 26,
-                    _ => 13,
-                };
-                let mut value = json!({ "name": symbol.name, "kind": kind, "location": self.location(symbol.location) });
-                if let Some(container) = &symbol.container { value["containerName"] = json!(container); }
-                return value;
-            }).collect());
+        return Value::Array(
+            self.analysis
+                .symbols
+                .iter()
+                .filter(|symbol| {
+                    symbol.location.file == self.file
+                        && !matches!(
+                            symbol.kind,
+                            SymbolKind::Variable
+                                | SymbolKind::Parameter
+                                | SymbolKind::TypeParameter
+                        )
+                })
+                .map(|symbol| self.symbol_information(symbol, symbol.location))
+                .collect(),
+        );
     }
 }
 
@@ -233,7 +256,11 @@ pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
     document_changes: bool,
+    workspace_roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
+    if method == "workspace/symbol" {
+        return super::workspace::symbols(params, documents, workspace_roots);
+    }
     if method == "textDocument/completion" {
         return super::completion::request(params, documents);
     }

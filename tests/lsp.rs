@@ -18,6 +18,10 @@ impl Server {
     }
 
     fn start_with_capabilities(capabilities: Value) -> Server {
+        return Self::start_with_params(json!({"capabilities": capabilities}));
+    }
+
+    fn start_with_params(params: Value) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_crust-lsp"))
             .arg("--stdio")
             .env("CC", "missing-crust-test-compiler")
@@ -42,7 +46,7 @@ impl Server {
             output,
             next_id: 1,
         };
-        let initialized = server.request("initialize", json!({"capabilities": capabilities}));
+        let initialized = server.request("initialize", params);
         let capabilities = &initialized.result.unwrap()["capabilities"];
         assert_eq!(capabilities["positionEncoding"], "utf-16");
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
@@ -51,6 +55,11 @@ impl Server {
         assert_eq!(capabilities["referencesProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
+        assert_eq!(capabilities["workspaceSymbolProvider"], true);
+        assert_eq!(
+            capabilities["workspace"]["workspaceFolders"]["supported"],
+            true
+        );
         assert_eq!(capabilities["completionProvider"]["resolveProvider"], false);
         assert_eq!(
             capabilities["completionProvider"]["triggerCharacters"],
@@ -647,6 +656,141 @@ fn completion_triggers_distinguish_member_operators_from_comparisons_and_single_
             "{needle}"
         );
     }
+    server.stop();
+}
+
+fn workspace_symbols(server: &mut Server, query: &str) -> Vec<Value> {
+    let response = server.request("workspace/symbol", json!({ "query": query }));
+    assert!(response.error.is_none(), "{:?}", response.error);
+    return response.result.unwrap().as_array().unwrap().clone();
+}
+
+#[test]
+fn workspace_symbols_search_unsaved_names_and_containers_and_exclude_local_bindings() {
+    let uri = "untitled:workspace-symbols.cr";
+    let source = "// 🦀\r\nextern int native(int); extern int native(int); struct Item { int field; int get(int parameter) const { int local = parameter; return local; } }; int main() { return 0; }";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let items = workspace_symbols(&mut server, "ITEM::GE");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "get");
+    assert_eq!(items[0]["kind"], 6);
+    assert_eq!(items[0]["containerName"], "Item");
+    assert_eq!(items[0]["location"]["uri"], uri);
+    assert_eq!(
+        items[0]["location"]["range"]["start"],
+        point(source, "get(int")
+    );
+    let items = workspace_symbols(&mut server, "");
+    assert_eq!(
+        items.iter().filter(|item| item["name"] == "native").count(),
+        1
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|item| item["name"] == "local" || item["name"] == "parameter")
+    );
+    let response = server.request("workspace/symbol", json!({"query": 12}));
+    assert_eq!(response.error.unwrap().code, -32602);
+    server.change(
+        uri,
+        2,
+        "int updated() { return 1; } int main() { return updated(); }",
+    );
+    server.diagnostics();
+    assert_eq!(workspace_symbols(&mut server, "updated").len(), 1);
+    assert!(workspace_symbols(&mut server, "Item").is_empty());
+    server.stop();
+}
+
+#[test]
+fn workspace_symbols_load_unopened_project_targets_and_deduplicate_shared_dependencies() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-workspace-symbols")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname = 'symbols'\n[[targets]]\nname = 'first'\nkind = 'executable'\nentry = 'first.cr'\n[[targets]]\nname = 'second'\nkind = 'executable'\nentry = 'second.cr'\n").unwrap();
+    std::fs::write(
+        root.join("first.cr"),
+        "import \"shared.cr\"; int first() { return 1; } int main() { return first(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("second.cr"),
+        "import \"shared.cr\"; int second() { return 2; } int main() { return second(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("shared.cr"),
+        "struct Shared { int value; }; typedef Shared Alias;",
+    )
+    .unwrap();
+    let uri = file_uri(&root);
+    let mut server = Server::start_with_params(json!({
+        "capabilities": {}, "workspaceFolders": [{"name": "symbols", "uri": uri}]
+    }));
+    assert_eq!(workspace_symbols(&mut server, "first").len(), 1);
+    assert_eq!(workspace_symbols(&mut server, "second").len(), 1);
+    let items = workspace_symbols(&mut server, "Shared");
+    assert_eq!(
+        items.iter().filter(|item| item["name"] == "Shared").count(),
+        1
+    );
+    assert_eq!(
+        items.iter().filter(|item| item["name"] == "value").count(),
+        1
+    );
+    assert_eq!(
+        items[0]["location"]["uri"],
+        file_uri(&root.join("shared.cr"))
+    );
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    server.open(
+        &shared_uri,
+        1,
+        "struct Updated { int value; }; typedef Updated Alias;",
+    );
+    assert!(workspace_symbols(&mut server, "Shared").is_empty());
+    assert_eq!(
+        workspace_symbols(&mut server, "Updated")
+            .iter()
+            .filter(|item| item["name"] == "Updated")
+            .count(),
+        1
+    );
+    server.stop();
+}
+
+#[test]
+fn workspace_folder_changes_update_symbol_search_without_opening_documents() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-workspace-folders")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname = 'folder'\n[[targets]]\nname = 'app'\nkind = 'executable'\nentry = 'main.cr'\n").unwrap();
+    std::fs::write(
+        root.join("main.cr"),
+        "int searchable() { return 1; } int main() { return searchable(); }",
+    )
+    .unwrap();
+    let uri = file_uri(&root);
+    let mut server = Server::start_with_params(json!({"capabilities": {}, "rootUri": uri}));
+    assert_eq!(workspace_symbols(&mut server, "searchable").len(), 1);
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({"event": {
+            "removed": [{"uri": uri, "name": "folder"}], "added": []
+        }}),
+    );
+    assert!(workspace_symbols(&mut server, "searchable").is_empty());
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({"event": {
+            "removed": [], "added": [{"uri": uri, "name": "folder"}]
+        }}),
+    );
+    assert_eq!(workspace_symbols(&mut server, "searchable").len(), 1);
     server.stop();
 }
 

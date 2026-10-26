@@ -1,0 +1,159 @@
+use super::semantic::{Context, RequestError};
+use super::*;
+use crate::analysis::SymbolKind;
+
+pub(super) fn roots(params: &Value) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = params["workspaceFolders"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| folder["uri"].as_str().and_then(uri_path))
+        .collect();
+    if paths.is_empty()
+        && let Some(path) = params["rootUri"].as_str().and_then(uri_path)
+    {
+        paths.push(path);
+    }
+    paths.sort();
+    paths.dedup();
+    return paths;
+}
+
+#[derive(Deserialize)]
+struct Folder {
+    uri: String,
+}
+
+#[derive(Deserialize)]
+struct FolderEvent {
+    added: Vec<Folder>,
+    removed: Vec<Folder>,
+}
+
+#[derive(Deserialize)]
+struct FolderParams {
+    event: FolderEvent,
+}
+
+pub(super) fn change(params: Value, roots: &mut Vec<PathBuf>) -> ServerResult<()> {
+    let params: FolderParams = serde_json::from_value(params)?;
+    let paths = |folders: Vec<Folder>| -> ServerResult<Vec<PathBuf>> {
+        return folders
+            .into_iter()
+            .map(|folder| {
+                return uri_path(&folder.uri)
+                    .ok_or_else(|| "workspace folders require local file URIs".into());
+            })
+            .collect();
+    };
+    let added = paths(params.event.added)?;
+    let removed = paths(params.event.removed)?;
+    roots.retain(|path| !removed.contains(path));
+    roots.extend(added);
+    roots.sort();
+    roots.dedup();
+    return Ok(());
+}
+
+#[derive(Deserialize)]
+struct SymbolParams {
+    query: String,
+}
+
+pub(super) fn symbols(
+    params: Value,
+    documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
+) -> Result<Value, RequestError> {
+    let params: SymbolParams = serde_json::from_value(params)?;
+    let query = params.query.to_ascii_lowercase();
+    let mut sources = load_sources(documents);
+    let mut entries: HashSet<_> = sources
+        .graphs
+        .iter()
+        .map(|graph| graph.files()[0].path.clone())
+        .collect();
+    for root in roots {
+        let Ok(manifest) = crate::project::Project::discover(root) else {
+            continue;
+        };
+        let Ok(project) = crate::project::Project::load(&manifest) else {
+            continue;
+        };
+        for target in project.targets {
+            if !entries.insert(target.entry.clone()) {
+                continue;
+            }
+            if let Ok(graph) = crate::source::SourceSet::load_with(&target.entry, |path| {
+                source_text(path, &sources.paths, documents)
+            }) {
+                sources.graphs.push(graph);
+            }
+        }
+    }
+    let mut contexts = Vec::new();
+    for graph in sources.graphs {
+        if let Ok(analysis) = graph.analyze() {
+            contexts.push(Context {
+                analysis,
+                file: 0,
+                uri: path_uri(&graph.files()[0].path),
+                uris: sources.paths.clone(),
+            });
+        }
+    }
+    for (uri, document) in documents {
+        if uri_path(uri).is_none()
+            && let Ok(analysis) = crate::analyze(&document.text)
+        {
+            contexts.push(Context {
+                analysis,
+                file: 0,
+                uri: uri.clone(),
+                uris: HashMap::new(),
+            });
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut results = Vec::new();
+    for context in contexts {
+        for symbol in &context.analysis.symbols {
+            if matches!(
+                symbol.kind,
+                SymbolKind::Variable | SymbolKind::Parameter | SymbolKind::TypeParameter
+            ) {
+                continue;
+            }
+            let name = symbol
+                .container
+                .as_ref()
+                .map(|container| format!("{container}::{}", symbol.name))
+                .unwrap_or_else(|| symbol.name.clone());
+            if !name.to_ascii_lowercase().contains(&query) {
+                continue;
+            }
+            let information = context.symbol_information(symbol, symbol.declaration);
+            let uri = information["location"]["uri"].as_str().unwrap().to_owned();
+            if seen.insert((
+                uri,
+                symbol.declaration.span.start,
+                symbol.declaration.span.end,
+                symbol.kind,
+            )) {
+                results.push(information);
+            }
+        }
+    }
+    results.sort_by(|a, b| {
+        let key = |value: &Value| {
+            (
+                value["name"].as_str().unwrap().to_owned(),
+                value["location"]["uri"].as_str().unwrap().to_owned(),
+                value["location"]["range"]["start"]["line"].as_u64(),
+                value["location"]["range"]["start"]["character"].as_u64(),
+            )
+        };
+        return key(a).cmp(&key(b));
+    });
+    return Ok(Value::Array(results));
+}

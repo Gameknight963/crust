@@ -50,6 +50,7 @@
 - Local and parameter rename with source reanalysis, capture checks, and versioned LSP edits
 - Scope completion with shadowing, imported declarations, generic parameters, and partial-word recovery
 - Resolved member completion for fields, methods, and enums, including generic receivers and private-field visibility
+- Workspace symbol search across unopened project targets and shared imports, with unsaved source overlays and folder updates
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup

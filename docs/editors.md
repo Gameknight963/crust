@@ -26,6 +26,7 @@ The server also provides:
 - Go to definition for values, functions, members, typedefs, type names, interfaces, and generic parameters
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 - Find All References for resolved bindings across the analyzed target's imports
+- Workspace symbol search across project targets and imported sources
 - Rename for locals and explicit parameters, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
@@ -46,6 +47,14 @@ generic instances. `::` offers enum values and static methods. `.` and `->` offe
 fields and instance methods, with private fields visible inside their struct's
 methods. Completion can use type information gathered before an unfinished
 member produces a body error.
+
+Workspace search loads `crust.toml` targets from the editor's workspace folders,
+including unopened files. It also searches open source files and their projects.
+Queries match names and enclosing type names without regard to ASCII case.
+Results include types, functions, methods, fields, enum values, aliases, and
+external variables. Shared imports and repeated declarations appear once.
+Search uses checked targets and current unsaved text, and follows workspace-folder
+additions and removals.
 
 ## VS Code
 

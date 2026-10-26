@@ -36,6 +36,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
 | `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
+| `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -83,6 +84,11 @@ Completion analysis retains function information gathered before a body error.
 This produces an `AnalyzedProgram`. Native emission accepts a `CheckedProgram`,
 which is constructed after full validation. Other semantic requests continue to
 require a successfully checked program.
+
+Workspace symbol queries load every target in the configured workspace projects
+and combine them with open-document source graphs. Unsaved documents override
+disk text. Results deduplicate canonical declaration locations across shared
+imports, and folder notifications update the project's search roots.
 
 ## C header bindings
 

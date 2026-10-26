@@ -6,6 +6,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
 mod semantic;
+mod workspace;
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -62,6 +63,7 @@ struct DocumentId {
 
 pub fn serve(connection: &Connection) -> ServerResult<()> {
     let (id, params) = connection.initialize_start()?;
+    let mut workspace_roots = workspace::roots(&params);
     let document_changes = params["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"]
         .as_bool()
         .unwrap_or(false);
@@ -75,6 +77,8 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "referencesProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
+                "workspaceSymbolProvider": true,
+                "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
                 "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">"] },
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
@@ -114,12 +118,14 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/rename"
                         | "textDocument/documentSymbol"
                         | "textDocument/completion"
+                        | "workspace/symbol"
                 ) {
                     match semantic::request(
                         &request.method,
                         request.params,
                         &documents,
                         document_changes,
+                        &workspace_roots,
                     ) {
                         Ok(result) => Response::new_ok(request.id, result),
                         Err(error) => Response::new_err(request.id, error.code, error.message),
@@ -143,9 +149,12 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 if shutdown {
                     continue;
                 }
-                if let Err(error) =
+                let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
+                    workspace::change(notification.params, &mut workspace_roots)
+                } else {
                     document_notification(connection, &mut documents, &mut published, notification)
-                {
+                };
+                if let Err(error) = result {
                     connection.sender.send(
                         Notification::new(
                             "window/logMessage".into(),
