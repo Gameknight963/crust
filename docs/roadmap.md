@@ -42,7 +42,7 @@
 - Clang-backed generation of selected C function bindings with native type compatibility checks
 - Header-generated external variables with const objects, callback globals, and native storage checks
 - Windows DLL function and data imports, including header generation and import-library linking
-- Header-generated native enum types and values, with relative C header references and layout checks
+- Header-generated native enum types and values, with explicit tag selection, relative C header references, and layout checks
 - Per-target C preprocessor definitions, including function macros and quoted values
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations

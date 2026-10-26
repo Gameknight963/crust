@@ -16,6 +16,7 @@ pub struct Options {
     pub defines: Vec<String>,
     pub functions: Vec<String>,
     pub variables: Vec<String>,
+    pub enums: Vec<String>,
 }
 
 fn identifier(name: &str) -> bool {
@@ -159,8 +160,8 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .chain(&options.variables)
         .cloned()
         .collect();
-    if names.is_empty() {
-        return Err("select at least one C function or variable".to_owned());
+    if names.is_empty() && options.enums.is_empty() {
+        return Err("select at least one C function, variable, or enum".to_owned());
     }
     let mut selected = HashSet::new();
     for name in &names {
@@ -171,8 +172,17 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             return Err(format!("C declaration '{name}' was selected twice"));
         }
     }
-    let mut prefix = names[0].clone();
-    for name in &names[1..] {
+    let mut selected_enums = HashSet::new();
+    for name in &options.enums {
+        if !identifier(name) {
+            return Err(format!("invalid C enum selection '{name}'"));
+        }
+        if !selected_enums.insert(name) {
+            return Err(format!("C enum '{name}' was selected twice"));
+        }
+    }
+    let mut prefix = names.first().cloned().unwrap_or_default();
+    for name in names.iter().skip(1) {
         while !name.starts_with(&prefix) {
             prefix.pop();
         }
@@ -250,13 +260,17 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             "typedef __typeof__({name}) __crust_import_probe_{index};\n"
         ));
     }
-    let bytes = clang(
-        &header,
-        options,
-        &probes,
-        true,
-        Some("__crust_import_probe_"),
-    )?;
+    let bytes = if names.is_empty() {
+        Vec::new()
+    } else {
+        clang(
+            &header,
+            options,
+            &probes,
+            true,
+            Some("__crust_import_probe_"),
+        )?
+    };
     let probes: Vec<Value> = serde_json::Deserializer::from_slice(&bytes)
         .into_iter()
         .collect::<Result<_, _>>()

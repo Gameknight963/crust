@@ -48,7 +48,9 @@ fn run() -> Result<ExitCode, String> {
     {
         println!("Usage: crust [run|build|emit-c|check|tokens] [file.cr|crust.toml|directory]");
         println!("       crust [command] [--project <path>] [--target <name>]");
-        println!("       crust import-c <header.h> --function <name> [--output <bindings.cr>]");
+        println!(
+            "       crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>]"
+        );
         println!("Project commands discover crust.toml in the current directory or its parents.");
         println!("A source filename compiles and runs that file.");
         println!("build/run use CC, or clang on Windows and cc elsewhere.");

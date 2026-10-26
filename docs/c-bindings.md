@@ -1,8 +1,8 @@
 # C header bindings
 
 `crust import-c` reads a C header through Clang and writes declarations for selected
-functions and external variables. The generated file can be imported by ordinary
-Crust source.
+functions, external variables, and named enums. Ordinary Crust source imports the
+generated file.
 
 ```powershell
 cargo run -- import-c examples/header_project/native.h `
@@ -22,6 +22,7 @@ Crust struct with a destructor.
 | --- | --- |
 | `--function <name>` | Select a C function, repeated for each export |
 | `--variable <name>` | Select external C storage, repeated for each variable |
+| `--enum <tag>` | Select a named C enum, repeated for each tag |
 | `--output <file.cr>` | Write UTF-8 bindings to a file |
 | `--force` | Replace an existing output file |
 | `--include-dir <path>` | Add a C header search directory |
@@ -74,6 +75,13 @@ extern NativeStatus native_status(const struct NativeCounter* counter);
 The header path is relative to the generated binding file. Output written to
 stdout uses an absolute path. `extern header` adds a C include to the generated
 translation unit. Crust declarations describe the API exposed to Crust code.
+
+Enums used by selected functions and variables are included automatically.
+`--enum` also imports enums directly from headers containing constants:
+
+```powershell
+cargo run -- import-c native/constants.h --enum Status --output constants.cr
+```
 
 The generator reads enum values and representation through Clang. Native
 compilation checks the enum's compatible integer type, size, and alignment.

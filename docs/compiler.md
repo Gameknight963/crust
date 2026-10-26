@@ -87,7 +87,7 @@ require a successfully checked program.
 ## C header bindings
 
 `bindings::generate` asks Clang for native declarations and structured types,
-renders selected functions and variables, and checks the resulting Crust declarations.
+renders selected functions, variables, and enums, and checks the resulting Crust declarations.
 Declaration queries filter to selected names, and type queries carry the
 reachable typedef and pointer information needed by those functions.
 Independent Clang type-compatibility assertions verify generated function and

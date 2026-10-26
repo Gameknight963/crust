@@ -66,7 +66,7 @@ pub(super) fn load(
     options: &Options,
     probes: &[Value],
 ) -> Result<Vec<Enum>, String> {
-    let mut names = std::collections::BTreeSet::new();
+    let mut names: std::collections::BTreeSet<_> = options.enums.iter().cloned().collect();
     for probe in probes {
         discover(probe, &mut names)?;
     }

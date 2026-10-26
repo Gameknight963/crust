@@ -62,6 +62,7 @@ impl Renderer {
 
     pub fn enums(&mut self, definitions: Vec<enums::Enum>) -> Result<(), String> {
         for definition in &definitions {
+            self.names.insert(definition.name.clone());
             self.names
                 .extend(definition.values.iter().map(|(name, _)| name.clone()));
         }

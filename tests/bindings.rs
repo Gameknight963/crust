@@ -594,3 +594,96 @@ fn unsupported_enum_shapes_fail_with_diagnostics() {
             .contains("extern header")
     );
 }
+
+#[test]
+fn explicit_enum_selection_imports_constant_headers_without_function_or_variable_exports() {
+    let path = header(
+        "enum Mode { Idle = 0, Active = 42 }; enum Unselected { Other = 3 };\n#define Mode unrelated\n",
+    );
+    let selected = Options {
+        enums: vec!["Mode".to_owned()],
+        ..Options::default()
+    };
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("extern enum Mode"));
+    assert!(!bindings.contains("Unselected"));
+    let c = crust::compile(&format!(
+        "{bindings} int main() {{ print((int)Mode::Active); return 0; }}"
+    ))
+    .unwrap();
+    let output = common::tracked_generated_c(&c, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+}
+
+#[test]
+fn explicit_enum_selection_deduplicates_reachable_enums_and_reserves_native_tag_names() {
+    let path = header(
+        "enum init { First = 1 }; enum c_init { Second = 2 }; enum __crust_import_fn_0 { Third = 3 }; enum init echo(enum init); int callback(int (*)(int));",
+    );
+    let mut selected = options(&["echo", "callback"]);
+    selected.enums = vec![
+        "init".to_owned(),
+        "c_init".to_owned(),
+        "__crust_import_fn_0".to_owned(),
+    ];
+    let bindings = generate(&path, &selected).unwrap();
+    assert_eq!(bindings.matches("= \"init\"").count(), 1);
+    assert!(bindings.contains("extern enum c_init_ = \"init\""));
+    assert!(bindings.contains("extern enum c_init :"));
+    assert!(bindings.contains("extern enum __crust_import_fn_0 :"));
+    crust::check(&format!("{bindings} int main() {{ return 0; }}")).unwrap();
+}
+
+#[test]
+fn explicit_enum_selection_checks_tag_names_and_requires_complete_global_definitions() {
+    let path = header("enum Present { First = 1 }; enum Forward;");
+    for (enums, expected) in [
+        (vec!["Present", "Present"], "selected twice"),
+        (vec!["Present;"], "invalid C enum selection"),
+        (vec!["Missing"], "complete global definition"),
+        (vec!["Forward"], "complete global definition"),
+    ] {
+        let selected = Options {
+            enums: enums.into_iter().map(str::to_owned).collect(),
+            ..Options::default()
+        };
+        let error = generate(&path, &selected).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .arg("--enum")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--enum needs a tag name"));
+}
+
+#[test]
+fn cli_selects_named_enums_and_writes_relative_native_header_references() {
+    let path = header("enum Status { Ready = 1, Failed = -1 }; enum Kind { Small, Large };");
+    let output_path = path.parent().unwrap().join("constants.cr");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .args(["--enum", "Status", "--enum", "Kind", "--output"])
+        .arg(&output_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = std::fs::read_to_string(&output_path).unwrap();
+    assert!(text.contains("extern header \"native ü.h\";"));
+    assert!(text.contains("extern enum Status"));
+    assert!(text.contains("extern enum Kind"));
+    crust::check(&format!("{text} int main() {{ return 0; }}")).unwrap();
+}
