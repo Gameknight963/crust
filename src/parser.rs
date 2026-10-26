@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{SpannedToken, Token};
+use std::collections::{HashMap, HashSet};
 
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
@@ -9,12 +10,20 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         struct_names: Vec::new(),
         current_struct: None,
         methods: Vec::new(),
+        aliases: HashMap::new(),
+        resolved_aliases: HashMap::new(),
+        resolving_aliases: HashSet::new(),
     };
+    parser.collect_type_names()?;
     let mut functions = Vec::new();
     let mut structs = Vec::new();
 
     while !parser.at(&Token::EndOfFile) {
-        if parser.at(&Token::Struct)
+        if parser.consume(&Token::Typedef) {
+            parser.type_name()?;
+            parser.identifier()?;
+            parser.expect(Token::Semicolon, "expected ';' after typedef")?;
+        } else if parser.at(&Token::Struct)
             && parser
                 .tokens
                 .get(parser.position + 2)
@@ -40,9 +49,188 @@ struct Parser {
     struct_names: Vec<(String, Span)>,
     current_struct: Option<usize>,
     methods: Vec<Function>,
+    aliases: HashMap<String, Alias>,
+    resolved_aliases: HashMap<String, Type>,
+    resolving_aliases: HashSet<String>,
+}
+
+#[derive(Clone, Copy)]
+struct Alias {
+    position: usize,
+    name_position: usize,
+    span: Span,
 }
 
 impl Parser {
+    // Collect top-level type declarations first so forward uses have the same
+    // meaning throughout the file. Type aliases expand before the checker.
+    fn collect_type_names(&mut self) -> Result<(), Diagnostic> {
+        let mut depth = 0usize;
+        let mut position = 0;
+        while position < self.tokens.len() {
+            let token = self.tokens[position].clone();
+            if depth == 0
+                && token.kind == Token::Struct
+                && self
+                    .tokens
+                    .get(position + 2)
+                    .is_some_and(|token| token.kind == Token::LeftBrace)
+                && let Some(SpannedToken {
+                    kind: Token::Identifier(name),
+                    span,
+                }) = self.tokens.get(position + 1).cloned()
+            {
+                if name == "Self" || name == "this" {
+                    return Err(Diagnostic::new(span, "Self and this are reserved names"));
+                }
+                self.struct_id(name, span);
+            }
+            if depth == 0 && token.kind == Token::Typedef {
+                let start = position + 1;
+                let mut end = start;
+                while let Some(token) = self.tokens.get(end) {
+                    if matches!(
+                        token.kind,
+                        Token::Semicolon | Token::EndOfFile | Token::LeftBrace
+                    ) {
+                        break;
+                    }
+                    end += 1;
+                }
+                if !self
+                    .tokens
+                    .get(end)
+                    .is_some_and(|token| token.kind == Token::Semicolon)
+                {
+                    return Err(Diagnostic::new(token.span, "expected 'typedef type Name;'"));
+                }
+                let name_position = end.saturating_sub(1);
+                if name_position <= start {
+                    return Err(Diagnostic::new(
+                        token.span,
+                        "a typedef needs both a type and an alias name",
+                    ));
+                }
+                let SpannedToken {
+                    kind: Token::Identifier(name),
+                    span,
+                } = self.tokens[name_position].clone()
+                else {
+                    return Err(Diagnostic::new(token.span, "a typedef needs an alias name"));
+                };
+                if name == "Self" || name == "this" {
+                    return Err(Diagnostic::new(span, "Self and this are reserved names"));
+                }
+                if self
+                    .aliases
+                    .insert(
+                        name.clone(),
+                        Alias {
+                            position: start,
+                            name_position,
+                            span,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Diagnostic::new(
+                        span,
+                        format!("typedef '{name}' is already defined"),
+                    ));
+                }
+                position = end + 1;
+                continue;
+            }
+            match token.kind {
+                Token::LeftBrace => depth += 1,
+                Token::RightBrace => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            position += 1;
+        }
+        let mut aliases: Vec<_> = self
+            .aliases
+            .iter()
+            .map(|(name, alias)| (alias.position, name.clone()))
+            .collect();
+        aliases.sort_by_key(|entry| entry.0);
+        for (_, name) in aliases {
+            self.alias_type(&name)?;
+        }
+        return Ok(());
+    }
+
+    fn alias_type(&mut self, name: &str) -> Result<Type, Diagnostic> {
+        if let Some(ty) = self.resolved_aliases.get(name) {
+            return Ok(*ty);
+        }
+        let alias = self.aliases[name];
+        if !self.resolving_aliases.insert(name.to_owned()) {
+            return Err(Diagnostic::new(
+                alias.span,
+                format!("cyclic typedef involving '{name}'"),
+            ));
+        }
+        let previous = self.position;
+        self.position = alias.position;
+        let ty = self.type_name()?;
+        if self.position != alias.name_position {
+            return Err(Diagnostic::new(
+                self.current().span,
+                "expected 'typedef type Name;'",
+            ));
+        }
+        self.position = previous;
+        self.resolving_aliases.remove(name);
+        self.resolved_aliases.insert(name.to_owned(), ty);
+        return Ok(ty);
+    }
+
+    fn named_type(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
+        if name == "Self" {
+            return self
+                .current_struct
+                .map(Type::Struct)
+                .ok_or_else(|| Diagnostic::new(span, "Self is only available inside a struct"));
+        }
+        if self.aliases.contains_key(name) {
+            return self.alias_type(name);
+        }
+        if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
+            return Ok(Type::Struct(id));
+        }
+        return Err(Diagnostic::new(span, format!("unknown type '{name}'")));
+    }
+
+    fn known_type(&self, name: &str) -> bool {
+        return name == "Self"
+            || self.aliases.contains_key(name)
+            || self.struct_names.iter().any(|entry| entry.0 == name);
+    }
+
+    fn local_type_name(&self) -> bool {
+        if !matches!(&self.current().kind, Token::Identifier(name) if self.known_type(name)) {
+            return false;
+        }
+        if matches!(
+            self.tokens.get(self.position + 1).map(|token| &token.kind),
+            Some(Token::Identifier(_))
+        ) {
+            return true;
+        }
+        // A type name may also be a value name. Keep `Count ^ other` available
+        // as an XOR expression, while recognizing initialized borrow locals.
+        return self.next_at(&Token::Caret)
+            && matches!(
+                self.tokens.get(self.position + 2).map(|token| &token.kind),
+                Some(Token::Identifier(_))
+            )
+            && self
+                .tokens
+                .get(self.position + 3)
+                .is_some_and(|token| token.kind == Token::Equal);
+    }
+
     fn struct_id(&mut self, name: String, span: Span) -> usize {
         if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
             return id;
@@ -108,12 +296,21 @@ impl Parser {
                 has_destructor = true;
                 continue;
             }
+            let is_static = self.consume(&Token::Static);
             let ty = self.type_name()?;
             let (name, span) = self.identifier()?;
             if self.at(&Token::LeftParen) {
-                let method = self.function_body(ty, method_name(id, &name), span, Some(id))?;
+                let key = if is_static {
+                    static_method_name(id, &name)
+                } else {
+                    method_name(id, &name)
+                };
+                let method = self.function_body(ty, key, span, Some(id), is_static)?;
                 self.methods.push(method);
                 continue;
+            }
+            if is_static {
+                return Err(Diagnostic::new(span, "static currently applies to methods"));
             }
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field { name, ty, span });
@@ -133,7 +330,7 @@ impl Parser {
         let start = self.current().span;
         let return_type = self.type_name()?;
         let (name, _) = self.identifier()?;
-        return self.function_body(return_type, name, start, None);
+        return self.function_body(return_type, name, start, None, false);
     }
 
     fn function_body(
@@ -142,6 +339,7 @@ impl Parser {
         name: String,
         start: Span,
         owner: Option<usize>,
+        is_static: bool,
     ) -> Result<Function, Diagnostic> {
         self.expect(Token::LeftParen, "expected '(' after the function name")?;
         let mut parameters = Vec::new();
@@ -167,7 +365,13 @@ impl Parser {
 
         self.expect(Token::RightParen, "expected ')' after the parameters")?;
         let shared = self.consume(&Token::Const);
-        if let Some(id) = owner {
+        if is_static && shared {
+            return Err(Diagnostic::new(
+                start,
+                "a static method has no receiver to qualify as const",
+            ));
+        }
+        if let Some(id) = owner.filter(|_| !is_static) {
             if parameters
                 .first()
                 .is_some_and(|parameter| parameter.name == "this")
@@ -219,11 +423,7 @@ impl Parser {
                 let (name, span) = self.identifier()?;
                 Type::Struct(self.struct_id(name, span))
             }
-            Token::Identifier(ref name) if name == "Self" => {
-                Type::Struct(self.current_struct.ok_or_else(|| {
-                    Diagnostic::new(token.span, "Self is only available inside a struct")
-                })?)
-            }
+            Token::Identifier(ref name) => self.named_type(name, token.span)?,
             _ => {
                 return Err(Diagnostic::new(
                     token.span,
@@ -314,9 +514,15 @@ impl Parser {
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Struct)
-            || matches!(&self.current().kind, Token::Identifier(name) if name == "Self")
+            || self.local_type_name()
         {
             let ty = self.type_name()?;
+            if ty == Type::Void {
+                return Err(Diagnostic::new(
+                    start,
+                    "a local variable cannot have type void",
+                ));
+            }
             let (name, _) = self.identifier()?;
             self.expect(
                 Token::Equal,
@@ -529,6 +735,28 @@ impl Parser {
                 });
             }
             Token::Identifier(name) => {
+                if self.consume(&Token::ColonColon) {
+                    let Type::Struct(id) = self.named_type(&name, token.span)? else {
+                        return Err(Diagnostic::new(
+                            token.span,
+                            "static calls require a struct type",
+                        ));
+                    };
+                    let (name, _) = self.identifier()?;
+                    self.expect(
+                        Token::LeftParen,
+                        "expected '(' after the static method name",
+                    )?;
+                    let (arguments, end) = self.arguments()?;
+                    return Ok(Expression {
+                        span: token.span.through(end),
+                        kind: ExpressionKind::StaticCall {
+                            id,
+                            name,
+                            arguments,
+                        },
+                    });
+                }
                 if !self.consume(&Token::LeftParen) {
                     return Ok(Expression {
                         kind: ExpressionKind::Variable(name),
@@ -543,7 +771,12 @@ impl Parser {
             }
             Token::LeftParen => {
                 if self.at(&Token::Struct)
-                    || matches!(&self.current().kind, Token::Identifier(name) if name == "Self")
+                    || (matches!(&self.current().kind, Token::Identifier(name) if self.known_type(name))
+                        && self.next_at(&Token::RightParen)
+                        && self
+                            .tokens
+                            .get(self.position + 2)
+                            .is_some_and(|token| token.kind == Token::LeftBrace))
                 {
                     let ty = self.type_name()?;
                     let Type::Struct(id) = ty else {

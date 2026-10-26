@@ -80,7 +80,11 @@ impl Function {
         if self.name.starts_with('~') {
             return String::from("destructor");
         }
-        if let Some(method) = self.name.strip_prefix('@') {
+        if let Some(method) = self
+            .name
+            .strip_prefix('@')
+            .or_else(|| self.name.strip_prefix('#'))
+        {
             let (_, name) = method.split_once('_').expect("internal method name");
             return format!("method '{name}'");
         }
@@ -145,6 +149,11 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    StaticCall {
+        id: usize,
+        name: String,
+        arguments: Vec<Expression>,
+    },
     MethodCall {
         receiver: Box<Expression>,
         name: String,
@@ -219,4 +228,8 @@ pub fn method_name(id: usize, name: &str) -> String {
 
 pub fn destructor_name(id: usize) -> String {
     return format!("~{id}");
+}
+
+pub fn static_method_name(id: usize, name: &str) -> String {
+    return format!("#{id}_{name}");
 }

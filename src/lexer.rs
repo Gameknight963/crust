@@ -15,6 +15,8 @@ pub enum Token {
     BoxInt,
     Const,
     Struct,
+    Typedef,
+    Static,
 
     // Tokens carrying data.
     Identifier(String),
@@ -31,6 +33,7 @@ pub enum Token {
     Comma,
     Dot,
     Colon,
+    ColonColon,
 
     // Operators.
     Equal,
@@ -150,6 +153,8 @@ impl Lexer<'_> {
             "BoxInt" => Token::BoxInt,
             "const" => Token::Const,
             "struct" => Token::Struct,
+            "typedef" => Token::Typedef,
+            "static" => Token::Static,
             _ => Token::Identifier(name.to_owned()),
         };
     }
@@ -214,6 +219,7 @@ impl Lexer<'_> {
             (Some('&'), Some('&')) => Some(Token::AmpersandAmpersand),
             (Some('|'), Some('|')) => Some(Token::PipePipe),
             (Some('-'), Some('>')) => Some(Token::Arrow),
+            (Some(':'), Some(':')) => Some(Token::ColonColon),
             _ => None,
         };
 

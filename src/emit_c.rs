@@ -62,6 +62,9 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 }
 
 fn function_name(name: &str) -> String {
+    if let Some(method) = name.strip_prefix('#') {
+        return format!("crust_static_{method}");
+    }
     if let Some(id) = name.strip_prefix('~') {
         return format!("crust_destructor_{id}");
     }
@@ -336,7 +339,7 @@ impl Emitter<'_> {
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
         match &expression.kind {
-            ExpressionKind::MethodCall { .. } => {
+            ExpressionKind::MethodCall { .. } | ExpressionKind::StaticCall { .. } => {
                 let call = self.method_calls[&expression.span].clone();
                 return self.expression(&call);
             }

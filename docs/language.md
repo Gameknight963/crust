@@ -2,7 +2,7 @@
 
 ## Functions and control flow
 
-- Types: `int`, `void`, `BoxInt`, and `struct Name`
+- Types: `int`, `void`, `BoxInt`, struct names, and typedef names
 - Functions support named parameters, forward calls, and recursion
 - The entry point is `int main()` or `int main(void)`
 - Local declarations require initializers
@@ -56,6 +56,7 @@ int main() {
 ```
 
 - Struct definitions appear at the top level
+- A struct's name can be used directly as a type. `struct Name` remains an explicit spelling
 - Fields may contain other structs, including types defined later in the file
 - By-value layouts must be acyclic
 - Named initializers specify every field exactly once and evaluate in written order
@@ -70,6 +71,22 @@ int main() {
 Field access and borrowed method receivers currently require a named variable,
 field, or pointee. Empty structs, borrowed fields, partial initialization, and
 partial field moves need further language support.
+
+## Typedefs
+
+```c
+typedef int Count;
+typedef Resource Handle;
+typedef const Count^ ReadCount;
+```
+
+- Typedefs introduce names for existing types and preserve their ownership rules
+- Declarations are resolved across the whole file, including forward references
+- Cyclic and duplicate typedefs produce diagnostics
+- A typedef takes precedence over an automatically introduced struct type name
+- `struct Name` always selects the struct tag when a typedef has the same name
+- Type names and value names have separate lookup rules
+- Typedef declarations use `typedef type Name;` at the top level
 
 ## Borrows
 
@@ -161,6 +178,31 @@ int finish(Self this) {
 - Consuming calls can accept temporary struct results
 - A value receiver uses ownership transfer instead of a trailing `const` qualifier
 
+### Static methods
+
+```c
+struct Counter {
+    int value;
+
+    static Self create(int value) {
+        return (Self){ .value = value };
+    }
+};
+
+int main() {
+    Counter counter = Counter::create(42);
+    print(counter.value);
+    return 0;
+}
+```
+
+- Static methods are declared with `static` and called through `Type::method()`
+- Calls can use a struct's name, a typedef naming the struct, or `Self`
+- Static methods have ordinary parameters and use the same ownership and borrowing rules as free functions
+- Each static method has no receiver and therefore uses neither `this` nor a trailing `const`
+- Static and instance methods share the struct's member-name space
+- Static factories can return owning values, including values with destructors
+
 ## Destructors
 
 ```c
@@ -185,14 +227,14 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, `struct`, `BoxInt`
+- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, `struct`, `BoxInt`, `typedef`, `static`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
 - Decimal literals are unsuffixed, with a separate minus token
 - The lexer accepts magnitudes through `9223372036854775807`, and type checking restricts integers to signed 32-bit
 - `-2147483648` is supported
-- Operators: `= + - * / % ! < > & | ^ == != <= >= && || ->`
+- Operators: `= + - * / % ! < > & | ^ == != <= >= && || -> ::`
 - `~` introduces destructor declarations
 - Comments use `//` or non-nesting `/* ... */`
 - Whitespace supports LF, CRLF, and CR line endings

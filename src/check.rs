@@ -68,9 +68,25 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     // Signatures are known before bodies, allowing forward calls and recursion.
     for function in &program.functions {
-        if let Some(method) = function.name.strip_prefix('@') {
+        if let Some(method) = function
+            .name
+            .strip_prefix('@')
+            .or_else(|| function.name.strip_prefix('#'))
+        {
             let (id, name) = method.split_once('_').unwrap();
-            let info = &types.structs[id.parse::<usize>().unwrap()];
+            let id = id.parse::<usize>().unwrap();
+            let info = &types.structs[id];
+            let other = if function.name.starts_with('@') {
+                static_method_name(id, name)
+            } else {
+                method_name(id, name)
+            };
+            if signatures.contains_key(&other) {
+                return Err(Diagnostic::new(
+                    function.span,
+                    format!("method '{name}' is already defined"),
+                ));
+            }
             if info.fields.iter().any(|field| field.name == name) {
                 return Err(Diagnostic::new(
                     function.span,
@@ -349,6 +365,42 @@ impl FunctionChecker<'_> {
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::StaticCall {
+                id,
+                name,
+                arguments,
+            } => {
+                let key = static_method_name(*id, name);
+                let signature = self.signatures.get(&key).ok_or_else(|| {
+                    Diagnostic::new(
+                        expression.span,
+                        format!(
+                            "unknown static method '{name}' on struct '{}'",
+                            self.types.structs[*id].name
+                        ),
+                    )
+                })?;
+                if arguments.len() != signature.parameters.len() {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        format!(
+                            "static method '{name}' expects {} argument(s), got {}",
+                            signature.parameters.len(),
+                            arguments.len()
+                        ),
+                    ));
+                }
+                let call = Expression {
+                    span: expression.span,
+                    kind: ExpressionKind::Call {
+                        name: key,
+                        arguments: arguments.clone(),
+                    },
+                };
+                let ty = self.expression(&call)?;
+                self.method_calls.insert(expression.span, call);
+                return Ok(ty);
+            }
             ExpressionKind::MethodCall {
                 receiver,
                 name,
@@ -580,6 +632,15 @@ impl FunctionChecker<'_> {
     // move(value).method() must not move value before checking the actual call.
     fn receiver_type(&self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::StaticCall { id, name, .. } => {
+                return self
+                    .signatures
+                    .get(&static_method_name(*id, name))
+                    .map(|signature| signature.return_type)
+                    .ok_or_else(|| {
+                        Diagnostic::new(expression.span, format!("unknown static method '{name}'"))
+                    });
+            }
             ExpressionKind::Call { name, arguments } if name == "move" && arguments.len() == 1 => {
                 return self.receiver_type(&arguments[0]);
             }
