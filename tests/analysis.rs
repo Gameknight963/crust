@@ -1,5 +1,86 @@
 use crust::analysis::{Analysis, SymbolKind};
 
+#[test]
+fn reference_search_groups_redeclarations_and_preserves_lexical_bindings() {
+    let source = r#"
+        typedef int Count;
+        typedef int Count;
+        extern int native(Count);
+        extern int native(int);
+        extern int other(int) = "native";
+        int main() {
+            Count value = 1;
+            { Count value = 2; print(value); }
+            value = value + 1;
+            unsafe { print(native(value)); print(other(value)); }
+            return value;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    for offset in source
+        .match_indices("native")
+        .map(|(offset, _)| offset)
+        .take(2)
+    {
+        let references = analysis.references_at(0, offset, true);
+        assert_eq!(references.len(), 3);
+        assert!(
+            references
+                .iter()
+                .all(|location| &source[location.span.start..location.span.end] == "native")
+        );
+        assert_eq!(analysis.references_at(0, offset, false).len(), 1);
+    }
+    let alias = source.find("Count;\n        extern").unwrap();
+    assert_eq!(analysis.references_at(0, alias, true).len(), 5);
+    assert_eq!(analysis.references_at(0, alias, false).len(), 3);
+    let local = source.find("value = 1").unwrap();
+    assert_eq!(analysis.references_at(0, local, false).len(), 5);
+    let shadow = source.find("value = 2").unwrap();
+    assert_eq!(analysis.references_at(0, shadow, true).len(), 2);
+    assert_eq!(
+        analysis
+            .references_at(0, source.find("other(int)").unwrap(), true)
+            .len(),
+        2
+    );
+    assert!(
+        analysis
+            .references_at(0, source.find("\"native\"").unwrap() + 1, true)
+            .is_empty()
+    );
+}
+
+#[test]
+fn reference_search_deduplicates_generic_replays_and_distinguishes_member_owners() {
+    let source = r#"
+        struct First { int value; int get() const { return this->value; } };
+        struct Second { int value; int get() const { return this->value; } };
+        T identity<T>(T value) { return value; }
+        int main() {
+            First first = { .value = 1 };
+            Second second = { .value = 2 };
+            print(first.get()); print(second.get());
+            print(identity<int>(1)); print(identity<char>('a'));
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let generic = source.find("identity<T>").unwrap();
+    assert_eq!(analysis.references_at(0, generic, true).len(), 3);
+    let parameter = source.find("value) { return value").unwrap();
+    assert_eq!(analysis.references_at(0, parameter, true).len(), 2);
+    for offset in source
+        .match_indices("get() const")
+        .map(|(offset, _)| offset)
+    {
+        assert_eq!(analysis.references_at(0, offset, true).len(), 2);
+        assert_eq!(analysis.references_at(0, offset, false).len(), 1);
+    }
+    let first_field = source.find("value;").unwrap();
+    assert_eq!(analysis.references_at(0, first_field, true).len(), 3);
+}
+
 fn definition<'a>(
     analysis: &'a Analysis,
     source: &str,

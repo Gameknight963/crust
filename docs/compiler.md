@@ -25,7 +25,7 @@ ownership checking, C generation, and native compilation.
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
-| `src/lsp/semantic.rs` | Hover, definition, document symbols, and request positions |
+| `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -46,6 +46,9 @@ file-local byte span. Generic instances share their original declarations, and
 ambiguous concrete types in replayed bodies are omitted from type queries.
 Type references retain lexical typedef and generic-parameter bindings. Built-in
 types have no source declaration.
+Symbols expose a canonical declaration location for compatible redeclarations.
+`Analysis::references_at` collects bound uses and optionally declarations, with
+duplicate locations from generic replay removed.
 
 ## Native compilation
 

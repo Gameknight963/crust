@@ -67,6 +67,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "positionEncoding": "utf-16",
                 "hoverProvider": true,
                 "definitionProvider": true,
+                "referencesProvider": true,
                 "documentSymbolProvider": true,
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
@@ -101,6 +102,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                     request.method.as_str(),
                     "textDocument/hover"
                         | "textDocument/definition"
+                        | "textDocument/references"
                         | "textDocument/documentSymbol"
                 ) {
                     match semantic::request(&request.method, request.params, &documents) {

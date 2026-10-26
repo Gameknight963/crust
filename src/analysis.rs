@@ -38,6 +38,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
     pub location: Location,
+    pub declaration: Location,
     pub range: Location,
     pub detail: String,
     pub container: Option<String>,
@@ -74,6 +75,40 @@ fn contains(location: Location, file: usize, offset: usize, include_end: bool) -
 }
 
 impl Analysis {
+    pub fn references_at(
+        &self,
+        file: usize,
+        offset: usize,
+        include_declarations: bool,
+    ) -> Vec<Location> {
+        let targets: HashSet<_> = self
+            .definitions_at(file, offset)
+            .iter()
+            .map(|symbol| symbol.declaration)
+            .collect();
+        let mut locations: Vec<_> = self
+            .references
+            .iter()
+            .filter(|reference| {
+                reference
+                    .declaration
+                    .is_some_and(|target| targets.contains(&target))
+            })
+            .map(|reference| reference.location)
+            .collect();
+        if include_declarations {
+            locations.extend(
+                self.symbols
+                    .iter()
+                    .filter(|symbol| targets.contains(&symbol.declaration))
+                    .map(|symbol| symbol.location),
+            );
+        }
+        locations.sort_by_key(|location| (location.file, location.span.start, location.span.end));
+        locations.dedup();
+        return locations;
+    }
+
     pub fn definitions_at(&self, file: usize, offset: usize) -> Vec<&Symbol> {
         for include_end in [false, true] {
             let shortest = self
@@ -151,6 +186,7 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
             name,
             kind,
             location,
+            declaration: location,
             range: (self.locate)(range),
             detail,
             container,
@@ -360,6 +396,27 @@ pub(crate) fn build(
         }
         builder.block(&function.body);
     }
+    let mut canonical = HashMap::new();
+    let mut functions = HashMap::new();
+    for function in &checked.program.functions {
+        let location = locate(function.name_span);
+        let declaration = *functions.entry(&function.name).or_insert(location);
+        canonical.insert(location, declaration);
+    }
+    let mut aliases = HashMap::new();
+    for declaration in &checked.program.source_declarations {
+        if matches!(declaration.kind, SourceDeclarationKind::Alias) {
+            let location = locate(declaration.name_span);
+            let name = builder.text(declaration.name_span);
+            let target = *aliases.entry(name).or_insert(location);
+            canonical.insert(location, target);
+        }
+    }
+    for symbol in &mut builder.analysis.symbols {
+        if let Some(declaration) = canonical.get(&symbol.location) {
+            symbol.declaration = *declaration;
+        }
+    }
     let mut descriptions: HashMap<Span, HashSet<Type>> = HashMap::new();
     for reference in &checked.program.type_references {
         let declaration = match reference.declaration {
@@ -408,6 +465,13 @@ pub(crate) fn build(
                     .types
                     .describe(descriptions.into_iter().next().unwrap()),
             });
+        }
+    }
+    for reference in &mut builder.analysis.references {
+        if let Some(target) = reference.declaration
+            && let Some(declaration) = canonical.get(&target)
+        {
+            reference.declaration = Some(*declaration);
         }
     }
     builder.analysis.symbols.sort_by_key(|symbol| {

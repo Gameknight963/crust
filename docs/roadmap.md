@@ -36,6 +36,7 @@
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
+- Reference searches across source imports with binding-aware redeclaration grouping
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
@@ -51,7 +52,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 ## Editor support
 
-- Add completion, reference searches, and rename through the shared symbol index
+- Add completion and rename through the shared symbol index
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Build Visual Studio integration on the same language server
 - Use `crust.toml` as the authoritative project configuration
@@ -59,8 +60,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 - Add native source-level debugging through the generated C backend
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
-source outlines. Completion, reference searches, and rename can extend the same
-symbol index.
+source outlines, and reference searches. Completion and rename can extend the
+same symbol index.
 
 ## Further design
 

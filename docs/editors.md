@@ -25,8 +25,11 @@ The server also provides:
 - Hover for source declarations and checked expression types
 - Go to definition for values, functions, members, typedefs, type names, interfaces, and generic parameters
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
+- Find All References for resolved bindings across the analyzed target's imports
 
 Semantic requests use successfully checked programs and the current unsaved text.
+Reference searches include reads, writes, and calls. Compatible repeated
+declarations share a binding, and generic instantiations share their source locations.
 
 ## VS Code
 
@@ -67,6 +70,6 @@ to stderr.
 
 ## Further work
 
-- Completion, reference searches, and rename through the shared symbol index
+- Completion and rename through the shared symbol index
 - Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

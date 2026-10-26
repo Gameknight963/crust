@@ -15,6 +15,20 @@ struct PositionParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReferenceParams {
+    #[serde(flatten)]
+    position: PositionParams,
+    context: ReferenceContext,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReferenceContext {
+    include_declaration: bool,
+}
+
+#[derive(Deserialize)]
 struct Position {
     line: usize,
     character: usize,
@@ -136,8 +150,15 @@ pub(super) fn request(
             .map(|context| context.document_symbols())
             .unwrap_or(Value::Null));
     }
-    let params: PositionParams =
-        serde_json::from_value(params).map_err(|error| error.to_string())?;
+    let (params, include_declarations) = if method == "textDocument/references" {
+        let params: ReferenceParams =
+            serde_json::from_value(params).map_err(|error| error.to_string())?;
+        (params.position, Some(params.context.include_declaration))
+    } else {
+        let params: PositionParams =
+            serde_json::from_value(params).map_err(|error| error.to_string())?;
+        (params, None)
+    };
     let Some(context) = Context::load(&params.text_document.uri, documents) else {
         return Ok(Value::Null);
     };
@@ -146,6 +167,16 @@ pub(super) fn request(
     };
     if method == "textDocument/hover" {
         return Ok(context.hover(offset));
+    }
+    if let Some(include_declarations) = include_declarations {
+        return Ok(Value::Array(
+            context
+                .analysis
+                .references_at(context.file, offset, include_declarations)
+                .into_iter()
+                .map(|location| context.location(location))
+                .collect(),
+        ));
     }
     let definitions = context.analysis.definitions_at(context.file, offset);
     return Ok(Value::Array(

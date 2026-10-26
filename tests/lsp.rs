@@ -44,6 +44,7 @@ impl Server {
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
         assert_eq!(capabilities["hoverProvider"], true);
         assert_eq!(capabilities["definitionProvider"], true);
+        assert_eq!(capabilities["referencesProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
         server.notify("initialized", json!({}));
         return server;
@@ -541,6 +542,99 @@ fn semantic_requests_validate_parameters_and_recover_after_compiler_errors() {
             .unwrap()
             .is_null()
     );
+    server.stop();
+}
+
+#[test]
+fn references_follow_bindings_and_redeclarations_with_declaration_control() {
+    let source = "// 🦀\r\nextern int call(int); extern int call(int); int main() { int value = 1; { int value = 2; print(value); } unsafe { return call(value); } }";
+    let uri = "untitled:references.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    for include in [false, true] {
+        let result = server
+            .request(
+                "textDocument/references",
+                json!({
+                    "textDocument": {"uri": uri}, "position": point(source, "call(int); int main"),
+                    "context": {"includeDeclaration": include}
+                }),
+            )
+            .result
+            .unwrap();
+        assert_eq!(
+            result.as_array().unwrap().len(),
+            if include { 3 } else { 1 }
+        );
+        let last = result.as_array().unwrap().last().unwrap();
+        assert_eq!(last["uri"], uri);
+        assert_eq!(last["range"]["start"], point(source, "call(value)"));
+    }
+    let result = server
+        .request(
+            "textDocument/references",
+            json!({
+                "textDocument": {"uri": uri}, "position": point(source, "value = 2"),
+                "context": {"includeDeclaration": false}
+            }),
+        )
+        .result
+        .unwrap();
+    assert_eq!(result.as_array().unwrap().len(), 1);
+    assert_eq!(result[0]["range"]["start"], point(source, "value);"));
+    let malformed = server.request(
+        "textDocument/references",
+        json!({
+            "textDocument": {"uri": uri}, "position": point(source, "value = 2")
+        }),
+    );
+    assert_eq!(malformed.error.unwrap().code, -32602);
+    server.stop();
+}
+
+#[test]
+fn references_use_unsaved_imports_and_closed_source_files() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-references")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = "import \"helper.cr\"; int main() { return answer(1) + answer(2); }";
+    let helper = "int answer(int input) { return input; }";
+    std::fs::write(root.join("main.cr"), entry).unwrap();
+    std::fs::write(root.join("helper.cr"), helper).unwrap();
+    let uri = file_uri(&root.join("main.cr"));
+    let helper_uri = file_uri(&root.join("helper.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&uri, 1, entry)["diagnostics"], json!([]));
+    let query = json!({"textDocument": {"uri": uri}, "position": point(entry, "answer(1)"), "context": {"includeDeclaration": true}});
+    let result = server
+        .request("textDocument/references", query.clone())
+        .result
+        .unwrap();
+    assert_eq!(result.as_array().unwrap().len(), 3);
+    assert!(
+        result
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|location| location["uri"] == helper_uri)
+    );
+    let unsaved = "// 🦀\r\nint answer(int input) { return input; }";
+    assert_eq!(
+        server.open(&helper_uri, 1, unsaved)["diagnostics"],
+        json!([])
+    );
+    let result = server
+        .request("textDocument/references", query)
+        .result
+        .unwrap();
+    let declaration = result
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|location| location["uri"] == helper_uri)
+        .unwrap();
+    assert_eq!(declaration["range"]["start"], point(unsaved, "answer(int"));
     server.stop();
 }
 
