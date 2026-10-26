@@ -20,6 +20,7 @@ pub(crate) struct CheckedProgram {
 struct Signature {
     return_type: Type,
     parameters: Vec<Type>,
+    return_borrow: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +47,7 @@ struct Place {
     via: Option<usize>,
 }
 
+#[derive(Clone)]
 struct Loan {
     id: usize,
     root: (usize, String),
@@ -77,6 +79,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             Signature {
                 return_type,
                 parameters,
+                return_borrow: None,
             },
         );
     }
@@ -118,12 +121,30 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 ));
             }
         }
-        if function.return_type.is_borrow() {
-            return Err(Diagnostic::new(
-                function.span,
-                "borrowed return values need lifetime contracts and are not supported yet",
-            ));
-        }
+        let return_borrow = if let Type::Borrow { mutable, .. } = function.return_type {
+            let borrowed: Vec<_> = function
+                .parameters
+                .iter()
+                .enumerate()
+                .filter(|(_, parameter)| parameter.ty.is_borrow())
+                .collect();
+            if borrowed.len() != 1 {
+                return Err(Diagnostic::new(
+                    function.span,
+                    "borrowed return lifetime contracts require exactly one borrowed parameter",
+                ));
+            }
+            let (index, parameter) = borrowed[0];
+            if mutable && !matches!(parameter.ty, Type::Borrow { mutable: true, .. }) {
+                return Err(Diagnostic::new(
+                    function.span,
+                    "a mutable borrowed return requires a mutable borrowed parameter",
+                ));
+            }
+            Some(index)
+        } else {
+            None
+        };
         if signatures.contains_key(&function.name) {
             return Err(Diagnostic::new(
                 function.span,
@@ -134,6 +155,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             function.name.clone(),
             Signature {
                 return_type: function.return_type,
+                return_borrow,
                 parameters: function
                     .parameters
                     .iter()
@@ -176,6 +198,9 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             signatures: &signatures,
             scopes: vec![HashMap::new()],
             return_type: function.return_type,
+            return_borrow_root: signatures[&function.name]
+                .return_borrow
+                .map(|index| (0, function.parameters[index].name.clone())),
             loans: Vec::new(),
             next_loan: 0,
             references: HashMap::new(),
@@ -231,6 +256,7 @@ struct FunctionChecker<'program> {
     signatures: &'program HashMap<String, Signature>,
     scopes: Scopes,
     return_type: Type,
+    return_borrow_root: Option<(usize, String)>,
     // Argument loans last through the call. Local references retain their
     // loans until the binding's block ends, including their reborrow ancestry.
     loans: Vec<Loan>,
@@ -265,6 +291,32 @@ impl FunctionChecker<'_> {
     }
 
     fn statement(&mut self, statement: &Statement) -> Result<bool, Diagnostic> {
+        let result = self.statement_inner(statement);
+        self.release_temporaries();
+        return result;
+    }
+
+    fn release_temporaries(&mut self) {
+        self.loans.retain(|loan| loan.scope.is_some());
+    }
+
+    fn adopt_reference(&mut self, id: usize, scope: usize) {
+        let mut current = Some(id);
+        while let Some(id) = current {
+            let loan = self
+                .loans
+                .iter_mut()
+                .find(|loan| loan.id == id)
+                .expect("reference has a live loan");
+            if loan.scope.is_some() {
+                break;
+            }
+            loan.scope = Some(scope);
+            current = loan.parent;
+        }
+    }
+
+    fn statement_inner(&mut self, statement: &Statement) -> Result<bool, Diagnostic> {
         match &statement.kind {
             StatementKind::Local {
                 name,
@@ -282,11 +334,7 @@ impl FunctionChecker<'_> {
                 if ty.is_borrow() {
                     let id = self.references[&initializer.span];
                     let scope = self.scopes.len() - 1;
-                    self.loans
-                        .iter_mut()
-                        .find(|loan| loan.id == id)
-                        .expect("borrow initializer creates a loan")
-                        .scope = Some(scope);
+                    self.adopt_reference(id, scope);
                     self.scopes
                         .last_mut()
                         .unwrap()
@@ -330,16 +378,15 @@ impl FunctionChecker<'_> {
                 self.access(&place.root, true, place.via, target.span)?;
             }
             StatementKind::Store { target, value } => {
-                let place = self.place(target)?;
+                let target_type = self.receiver_type(target)?;
+                self.require_type(value, target_type)?;
+                let place = self.checked_place(target)?;
                 if !place.mutable || place.ty.is_borrow() {
                     return Err(Diagnostic::new(
                         target.span,
                         "cannot assign through a shared borrow or rebind a borrow",
                     ));
                 }
-                self.require_type(value, place.ty)?;
-                // The right side may move the owner of the destination.
-                let place = self.checked_place(target)?;
                 self.access(&place.root, true, place.via, target.span)?;
             }
             StatementKind::Expression(expression) => {
@@ -360,7 +407,23 @@ impl FunctionChecker<'_> {
                             "a void function must use 'return;' without a value",
                         ));
                     }
-                    (ty, Some(expression)) => self.require_type(expression, ty)?,
+                    (ty, Some(expression)) => {
+                        self.require_type(expression, ty)?;
+                        if let Some(expected_root) = &self.return_borrow_root {
+                            let id = self.references[&expression.span];
+                            let loan = self
+                                .loans
+                                .iter()
+                                .find(|loan| loan.id == id)
+                                .expect("returned reference has a loan");
+                            if loan.root != *expected_root {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "returned borrow must originate from the function's borrowed parameter",
+                                ));
+                            }
+                        }
+                    }
                     (_, None) => {
                         return Err(Diagnostic::new(
                             statement.span,
@@ -763,10 +826,44 @@ impl FunctionChecker<'_> {
 
                 // This ordering is also the language's evaluation order.
                 let previous_loans = self.loans.len();
-                for (argument, expected) in arguments.iter().zip(signature.parameters) {
-                    self.require_type(argument, expected)?;
+                for (argument, expected) in arguments.iter().zip(&signature.parameters) {
+                    self.require_type(argument, *expected)?;
                 }
+                let returned = signature
+                    .return_borrow
+                    .filter(|_| !self.unevaluated)
+                    .map(|index| {
+                        let id = self.references[&arguments[index].span];
+                        self.loans
+                            .iter()
+                            .find(|loan| loan.id == id)
+                            .expect("borrowed argument has a loan")
+                            .clone()
+                    });
+                let returned = returned.map(|mut source| {
+                    while let Some(parent) = source.parent {
+                        if self.loans[..previous_loans]
+                            .iter()
+                            .any(|loan| loan.id == parent)
+                        {
+                            break;
+                        }
+                        source.parent = self
+                            .loans
+                            .iter()
+                            .find(|loan| loan.id == parent)
+                            .and_then(|loan| loan.parent);
+                    }
+                    source
+                });
                 self.loans.truncate(previous_loans);
+                if let Some(source) = returned {
+                    let Type::Borrow { mutable, .. } = signature.return_type else {
+                        unreachable!()
+                    };
+                    let id = self.borrow(source.root, mutable, source.parent, expression.span)?;
+                    self.references.insert(expression.span, id);
+                }
                 return Ok(signature.return_type);
             }
             ExpressionKind::Unary { operator, operand } => {
@@ -952,6 +1049,7 @@ impl FunctionChecker<'_> {
     fn condition(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
         let ty = self.expression(expression)?;
         self.integer(ty, expression.span)?;
+        self.release_temporaries();
         return Ok(());
     }
 
@@ -959,6 +1057,31 @@ impl FunctionChecker<'_> {
     // move(value).method() must not move value before checking the actual call.
     fn receiver_type(&self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Variable(name) => return Ok(self.available(name, expression.span)?.ty),
+            ExpressionKind::Field { base, name } => {
+                return self
+                    .types
+                    .field(self.receiver_type(base)?, name, expression.span);
+            }
+            ExpressionKind::Index { base, .. } => {
+                let Type::Array(id) = self.receiver_type(base)? else {
+                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                };
+                return Ok(self.types.arrays[id].element);
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => {
+                return match self.receiver_type(operand)? {
+                    Type::BoxInt => Ok(Type::Integer(IntType::I32)),
+                    Type::Borrow { pointee, .. } => Ok(pointee.ty()),
+                    _ => Err(Diagnostic::new(
+                        expression.span,
+                        "dereference needs a BoxInt or a borrow",
+                    )),
+                };
+            }
             ExpressionKind::StaticCall { id, name, .. } => {
                 return self
                     .signatures
@@ -1079,12 +1202,12 @@ impl FunctionChecker<'_> {
     fn checked_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
-                let base_place = self.checked_place(base)?;
-                let Type::Array(id) = base_place.ty else {
+                let place = self.checked_place(base)?;
+                let Type::Array(id) = place.ty else {
                     return Err(Diagnostic::new(base.span, "indexing requires an array"));
                 };
                 let previous_loans = self.loans.len();
-                self.borrow(base_place.root.clone(), false, base_place.via, base.span)?;
+                self.borrow(place.root.clone(), false, place.via, base.span)?;
                 let index_type = self.expression(index)?;
                 self.integer(index_type, index.span)?;
                 if let Some(value) = constant_integer(index)
@@ -1093,67 +1216,53 @@ impl FunctionChecker<'_> {
                     return Err(Diagnostic::new(index.span, "array index is out of bounds"));
                 }
                 self.loans.truncate(previous_loans);
-            }
-            ExpressionKind::Field { base, .. } => {
-                self.checked_place(base)?;
-            }
-            ExpressionKind::Unary {
-                operator: UnaryOperator::Dereference,
-                operand,
-            } => {
-                self.checked_place(operand)?;
-            }
-            _ => {}
-        }
-        return self.place(expression);
-    }
-
-    fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
-        match &expression.kind {
-            ExpressionKind::Index { base, .. } => {
-                let place = self.place(base)?;
-                let Type::Array(id) = place.ty else {
-                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
-                };
                 return Ok(Place {
                     ty: self.types.arrays[id].element,
                     ..place
                 });
             }
             ExpressionKind::Field { base, name } => {
-                let place = self.place(base)?;
+                let place = self.checked_place(base)?;
                 let ty = self.types.field(place.ty, name, expression.span)?;
-                return Ok(Place {
-                    ty,
-                    mutable: place.mutable,
-                    root: place.root,
-                    via: place.via,
-                });
+                return Ok(Place { ty, ..place });
             }
-            ExpressionKind::Variable(name) => {
-                let variable = self.available(name, expression.span)?;
-                let root = if let Some(id) = variable.reference {
-                    self.loans
-                        .iter()
-                        .find(|loan| loan.id == id)
-                        .expect("local reference has a live loan")
-                        .root
-                        .clone()
-                } else {
-                    self.root(name)
-                };
-                return Ok(Place {
-                    ty: variable.ty,
-                    mutable: !variable.ty.is_borrow(),
-                    root,
-                    via: variable.reference,
-                });
-            }
+            ExpressionKind::Variable(_) => return self.place(expression),
             ExpressionKind::Unary {
                 operator: UnaryOperator::Dereference,
                 operand,
             } => {
-                let place = self.place(operand)?;
+                let place = if is_place(operand) {
+                    self.checked_place(operand)?
+                } else {
+                    if !self.receiver_type(operand)?.is_borrow() {
+                        return Err(Diagnostic::new(
+                            operand.span,
+                            "dereference of a temporary requires a returned borrow",
+                        ));
+                    }
+                    let ty = self.expression(operand)?;
+                    if self.unevaluated {
+                        Place {
+                            ty,
+                            mutable: false,
+                            root: (0, String::new()),
+                            via: None,
+                        }
+                    } else {
+                        let id = self.references[&operand.span];
+                        let loan = self
+                            .loans
+                            .iter()
+                            .find(|loan| loan.id == id)
+                            .expect("returned reference has a loan");
+                        Place {
+                            ty,
+                            mutable: false,
+                            root: loan.root.clone(),
+                            via: Some(id),
+                        }
+                    }
+                };
                 let (ty, mutable) = match place.ty {
                     Type::BoxInt => (Type::Integer(IntType::I32), place.mutable),
                     Type::Borrow { pointee, mutable } => (pointee.ty(), mutable),
@@ -1167,17 +1276,42 @@ impl FunctionChecker<'_> {
                 return Ok(Place {
                     ty,
                     mutable,
-                    root: place.root,
-                    via: place.via,
+                    ..place
                 });
             }
             _ => {
                 return Err(Diagnostic::new(
                     expression.span,
-                    "borrow or dereference target must be a named variable or its pointee",
+                    "borrow or dereference target must be a named variable, its pointee, or a returned borrow",
                 ));
             }
         }
+    }
+
+    fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
+        let ExpressionKind::Variable(name) = &expression.kind else {
+            return Err(Diagnostic::new(
+                expression.span,
+                "expected a named variable",
+            ));
+        };
+        let variable = self.available(name, expression.span)?;
+        let root = if let Some(id) = variable.reference {
+            self.loans
+                .iter()
+                .find(|loan| loan.id == id)
+                .expect("local reference has a live loan")
+                .root
+                .clone()
+        } else {
+            self.root(name)
+        };
+        return Ok(Place {
+            ty: variable.ty,
+            mutable: !variable.ty.is_borrow(),
+            root,
+            via: variable.reference,
+        });
     }
 
     fn root(&self, name: &str) -> (usize, String) {
@@ -1363,4 +1497,17 @@ fn same_owner_states(left: &Scopes, right: &Scopes, types: &Types) -> bool {
         }
     }
     return true;
+}
+
+fn is_place(expression: &Expression) -> bool {
+    return matches!(
+        expression.kind,
+        ExpressionKind::Variable(_)
+            | ExpressionKind::Field { .. }
+            | ExpressionKind::Index { .. }
+            | ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                ..
+            }
+    );
 }

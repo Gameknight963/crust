@@ -244,8 +244,8 @@ int main() {
 - Ownership transfers use whole-struct moves
 - Owning fields are destroyed in reverse declaration order
 
-Field access and borrowed method receivers currently require a named variable,
-field, or pointee. Empty structs, borrowed fields, partial initialization, and
+Field access and borrowed method receivers use a named variable, field, or
+pointee, including a returned borrow. Empty structs, borrowed fields, partial initialization, and
 partial field moves need further language support.
 
 ## Typedefs
@@ -330,8 +330,34 @@ print(number);
 - Reference bindings cannot be rebound
 
 Borrows lock the whole parent value and remain active to the end of the block,
-including after their last use. Borrowed fields and return values require further
-lifetime contracts.
+including after their last use. Borrowed fields require further lifetime rules.
+
+### Borrowed returns
+
+```c
+struct Item {
+    BoxInt owner;
+
+    const int^ value() const {
+        return ^const *this->owner;
+    }
+};
+```
+
+- A function returning a borrow requires exactly one borrowed parameter
+- An instance method's implicit receiver counts as a borrowed parameter
+- The returned reference must originate from that parameter or one of its fields or pointees
+- A mutable borrowed return requires an exclusive borrowed input
+- Return statements can forward the input through calls and local reborrows
+- The caller's returned reference keeps the source borrowed
+- Returned references support local bindings, call arguments, dereferencing, field access, and method chaining
+- A local binding retains the returned loan until its block ends
+- Unbound returned loans last through the expression statement or initializer
+- Condition temporaries end before entering an `if` or loop body
+- Borrowed return contracts with multiple borrowed inputs require further lifetime syntax
+
+Returning a reference to a local or an owned value parameter produces a compiler
+diagnostic. Borrowing a temporary owner requires further temporary-lifetime rules.
 
 ## Methods
 

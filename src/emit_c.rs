@@ -845,7 +845,21 @@ impl Emitter<'_> {
                 operator: UnaryOperator::Dereference,
                 operand,
             } => {
-                return format!("*({})", self.place(operand));
+                let pointer = if matches!(
+                    operand.kind,
+                    ExpressionKind::Variable(_)
+                        | ExpressionKind::Field { .. }
+                        | ExpressionKind::Index { .. }
+                        | ExpressionKind::Unary {
+                            operator: UnaryOperator::Dereference,
+                            ..
+                        }
+                ) {
+                    self.place(operand)
+                } else {
+                    self.value_expression(operand)
+                };
+                return format!("*({pointer})");
             }
             _ => unreachable!("checker requires an assignable or borrowable place"),
         }
@@ -878,7 +892,7 @@ impl Emitter<'_> {
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
             }
-            _ => unreachable!("checker requires a place"),
+            _ => return self.expression_type(expression),
         }
     }
 

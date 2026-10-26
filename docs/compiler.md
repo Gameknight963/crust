@@ -42,6 +42,9 @@ ownership checking, C generation, and native compilation.
 - Local reference bindings retain a loan ID and source root until their block ends
 - Reborrow loans record their parent, allowing access through that ancestry while checking conflicts with sibling and child loans
 - Call argument loans are temporary, and scope exit releases local-reference loans
+- Borrowed return signatures identify a single borrowed input, and return checking verifies the source root
+- Calls transfer the selected argument's origin into a returned loan and retain its surviving reborrow ancestry
+- Reference initializers retain temporary ancestors, and statement and condition boundaries release other temporary loans
 - Named owning structs have separate initialized-value flags in generated functions
 - A move clears the source's flag, and reassignment restores it
 - Cleanup checks the flag before destroying a named struct

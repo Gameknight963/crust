@@ -14,13 +14,14 @@
 - UTF-8 byte-array string literals, literal concatenation, and bounded text output
 - Local references with lexical lifetimes, nested reborrows, and scope-based loan release
 - Distinct enum types, explicit representations, scoped and unscoped values, and checked casts
+- Borrowed returns tied to a single input or receiver, returned-reference chaining, and expression temporary loans
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add borrowed returns tied to an input or receiver, temporary lifetimes, and disjoint field access
+1. Add disjoint field access and refine temporary lifetimes
 2. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
 3. Add generic types and functions, interface constraints, and static interface requirements
 4. Add modules, imports, visibility, project dependencies, and library targets
