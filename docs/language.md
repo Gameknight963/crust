@@ -50,7 +50,7 @@ are rejected until assignment completes.
 | `size_t`, `uintptr_t` | Unsigned pointer-sized integer |
 | `ptrdiff_t`, `intptr_t` | Signed pointer-sized integer |
 
-- Unsuffixed decimal literals use `int`, then `int64_t`, then `uint64_t`, according to their value
+- Unsuffixed integer literals use `int`, then `int64_t`, then `uint64_t`, according to their value
 - A literal assigned or passed directly to an integer type must fit that type
 - Boolean and 8- or 16-bit operands promote to `int` before arithmetic
 - Operands with the same signedness use the wider promoted type
@@ -310,7 +310,10 @@ struct Resource {
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
-- Decimal literals are unsuffixed, with a separate minus token
+- Integer literals are unsuffixed, with a separate minus token
+- Literals support decimal, `0x` hexadecimal, `0b` binary, and leading-zero octal notation
+- Character literals such as `'A'` and `'\n'` produce integer constants
+- Characters use ASCII or byte escapes, including `\xFF`, up to three octal digits, and the standard C single-character escapes
 - The lexer accepts magnitudes through `18446744073709551615`
 - Signed minimum literals such as `-2147483648` and `-9223372036854775808` are supported
 - Operators: `= + - * / % ! < > & | ^ == != <= >= && || -> ::`
@@ -320,5 +323,5 @@ struct Resource {
 - Unicode is accepted in comments
 
 Unsupported literal forms and compound operators produce diagnostics. Examples
-include leading-zero integers, `0xff`, `42u`, floating-point literals, `++`,
+include `42u`, floating-point literals, `++`,
 and `<<`.

@@ -131,6 +131,8 @@ impl Lexer<'_> {
                 kind = self.identifier(start);
             } else if current.is_ascii_digit() {
                 kind = self.integer(start)?;
+            } else if current == '\'' {
+                kind = self.character(start)?;
             } else {
                 kind = self.operator_or_punctuation(start)?;
             }
@@ -184,31 +186,118 @@ impl Lexer<'_> {
     }
 
     fn integer(&mut self, start: Span) -> Result<Token, LexError> {
+        let mut radix = 10;
+        let mut digits_start = start.start;
+        if self.peek() == Some('0') {
+            radix = match self.peek_next() {
+                Some('x' | 'X') => 16,
+                Some('b' | 'B') => 2,
+                Some('0'..='9') => 8,
+                _ => 10,
+            };
+            if radix == 16 || radix == 2 {
+                self.advance();
+                self.advance();
+                digits_start = self.offset;
+            }
+        }
         while let Some(character) = self.peek() {
-            if !character.is_ascii_digit() {
+            if !character.is_ascii() || !character.is_digit(radix) {
                 break;
             }
             self.advance();
         }
 
-        // Don't split unsupported literals such as 0xff or 42u into an integer
-        // and an identifier. Floating-point syntax is also reserved for later.
+        // Keep malformed literals together rather than splitting off a name.
         if self.peek().is_some_and(|character| {
-            character.is_ascii_alphabetic() || character == '_' || character == '.'
+            character.is_ascii_alphanumeric() || character == '_' || character == '.'
         }) {
-            return Err(self.error(start, "only unsuffixed decimal integers are supported"));
+            return Err(self.error(start, "invalid integer digit or unsupported literal suffix"));
         }
 
-        let text = &self.source[start.start..self.offset];
-
-        // Avoid silently treating a C-style octal literal as decimal.
-        if text.len() > 1 && text.starts_with('0') {
-            return Err(self.error(start, "integers with leading zeros are not supported yet"));
+        let text = &self.source[digits_start..self.offset];
+        if text.is_empty() {
+            return Err(self.error(start, "expected digits after integer base prefix"));
         }
 
-        return match text.parse::<u64>() {
+        return match u64::from_str_radix(text, radix) {
             Ok(value) => Ok(Token::IntegerLiteral(value)),
             Err(_) => Err(self.error(start, "integer literal exceeds the unsigned 64-bit range")),
+        };
+    }
+
+    fn character(&mut self, start: Span) -> Result<Token, LexError> {
+        self.advance(); // Opening quote.
+        let value = match self.peek() {
+            Some('\\') => {
+                self.advance();
+                self.character_escape(start)?
+            }
+            Some('\'' | '\n' | '\r') | None => {
+                return Err(self.error(start, "expected one character inside character literal"));
+            }
+            Some(character) if character.is_ascii() => {
+                self.advance();
+                character as u64
+            }
+            Some(_) => {
+                self.advance();
+                return Err(self.error(
+                    start,
+                    "character literals require an ASCII character or byte escape",
+                ));
+            }
+        };
+        if self.peek() != Some('\'') {
+            return Err(self.error(start, "expected closing quote after one character"));
+        }
+        self.advance();
+        return Ok(Token::IntegerLiteral(value));
+    }
+
+    fn character_escape(&mut self, start: Span) -> Result<u64, LexError> {
+        let character = self
+            .peek()
+            .ok_or_else(|| self.error(start, "unterminated character escape"))?;
+        if character == 'x' || matches!(character, '0'..='7') {
+            let hexadecimal = character == 'x';
+            let radix = if hexadecimal { 16 } else { 8 };
+            if hexadecimal {
+                self.advance();
+            }
+            let mut value = 0u64;
+            let mut count = 0;
+            while let Some(digit) = self
+                .peek()
+                .filter(|c| c.is_ascii())
+                .and_then(|c| c.to_digit(radix))
+            {
+                if !hexadecimal && count == 3 {
+                    break;
+                }
+                self.advance();
+                count += 1;
+                value = value * radix as u64 + digit as u64;
+                if value > 255 {
+                    return Err(self.error(start, "character escape exceeds one byte"));
+                }
+            }
+            if count == 0 {
+                return Err(self.error(start, "expected hexadecimal digits after \\x"));
+            }
+            return Ok(value);
+        }
+        self.advance();
+        return match character {
+            'a' => Ok(7),
+            'b' => Ok(8),
+            'f' => Ok(12),
+            'n' => Ok(10),
+            'r' => Ok(13),
+            't' => Ok(9),
+            'v' => Ok(11),
+            '\\' | '\'' | '"' | '?' => Ok(character as u64),
+            _ => Err(self.error(start, "unknown character escape")),
         };
     }
 
@@ -547,9 +636,55 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_number_syntax_instead_of_splitting_it() {
-        for source in ["0xff", "0b10", "42u", "1_000", "1.5", ".5", "1e3", "077"] {
+        for source in [
+            "0x", "0b", "0xg", "0b102", "09", "42u", "1_000", "1.5", ".5", "1e3",
+        ] {
             assert!(tokenize(source).is_err(), "should reject {source}");
         }
+    }
+
+    #[test]
+    fn scans_integer_bases_and_byte_character_literals() {
+        assert_eq!(
+            kinds(r#"0xff 0XFF 0b1010 0B11 077 '\n' 'A' '\xff' '\377' '\'' '\\'"#),
+            vec![
+                Token::IntegerLiteral(255),
+                Token::IntegerLiteral(255),
+                Token::IntegerLiteral(10),
+                Token::IntegerLiteral(3),
+                Token::IntegerLiteral(63),
+                Token::IntegerLiteral(10),
+                Token::IntegerLiteral(65),
+                Token::IntegerLiteral(255),
+                Token::IntegerLiteral(255),
+                Token::IntegerLiteral(39),
+                Token::IntegerLiteral(92),
+                Token::EndOfFile,
+            ]
+        );
+        assert_eq!(
+            kinds("0xffffffffffffffff"),
+            vec![Token::IntegerLiteral(u64::MAX), Token::EndOfFile]
+        );
+        for source in [
+            "0x10000000000000000",
+            "0b11111111111111111111111111111111111111111111111111111111111111111",
+        ] {
+            assert!(tokenize(source).is_err(), "should reject {source}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_characters_and_escape_sequences_at_the_opening_quote() {
+        for source in [
+            "''", "'ab'", "'a", "'\n'", "'é'", r"'\q'", r"'\x'", r"'\x100'", r"'\400'", r"'\0000'",
+        ] {
+            let error = tokenize(&format!("\n  {source}")).unwrap_err();
+            assert_eq!((error.span.line, error.span.column), (2, 3), "{source}");
+        }
+        let tokens = tokenize("'a'\r\n'\\n' + 1").unwrap();
+        assert_eq!((tokens[1].span.line, tokens[1].span.column), (2, 1));
+        assert_eq!((tokens[2].span.line, tokens[2].span.column), (2, 6));
     }
 
     #[test]

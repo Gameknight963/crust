@@ -40,6 +40,31 @@ fn runs_fixed_width_integer_boundaries_and_unsigned_wraparound() {
 }
 
 #[test]
+fn integer_bases_and_character_literals_work_in_expressions_and_contexts() {
+    run(
+        r#"
+        uint8_t letter(uint8_t c) { return c; }
+        int main() {
+            uint64_t bits = 0xffffffffffffffff;
+            print(bits); print(077); print(0b1010 + 0X10);
+            print(letter('A')); print('\n'); print('\0');
+            print('\xff'); print('\377'); print('z' - 'a');
+            uint8_t high = '\x80'; print(high);
+            print(sizeof('a'));
+            return 0;
+        }
+        "#,
+        "18446744073709551615\n63\n26\n65\n10\n0\n255\n255\n25\n128\n4\n",
+    );
+    for source in [
+        r"int main() { int8_t a = '\xff'; return 0; }",
+        "int main() { int8_t a = 0x80; return 0; }",
+    ] {
+        assert!(crust::check(source).is_err());
+    }
+}
+
+#[test]
 fn arithmetic_promotions_and_mixed_integer_types_preserve_values() {
     run(
         r#"

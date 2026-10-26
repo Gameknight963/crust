@@ -4,6 +4,7 @@
   "patterns": [
     { "name": "comment.line.double-slash.crust", "begin": "//", "end": "$" },
     { "name": "comment.block.crust", "begin": "/\\*", "end": "\\*/" },
+    { "name": "string.quoted.single.crust", "begin": "'", "end": "'", "patterns": [{ "name": "constant.character.escape.crust", "match": "\\\\(x[0-9a-fA-F]+|[0-7]{1,3}|.)" }] },
     {
       "match": "\\b(struct)\\s+([a-zA-Z_][a-zA-Z_0-9]*)",
       "captures": {
@@ -18,7 +19,7 @@
     { "name": "keyword.operator.crust", "match": "\\b(sizeof|alignof|_Alignof)\\b" },
     { "name": "support.function.crust", "match": "\\b(print|box_int|move)(?=\\s*\\()" },
     { "name": "entity.name.function.crust", "match": "~?[a-zA-Z_][a-zA-Z_0-9]*(?=\\s*\\()" },
-    { "name": "constant.numeric.crust", "match": "\\b[0-9]+\\b" },
+    { "name": "constant.numeric.crust", "match": "\\b(0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+)\\b" },
     { "name": "variable.language.crust", "match": "\\bthis\\b" },
     { "name": "keyword.operator.crust", "match": "::|->|==|!=|<=|>=|&&|\\|\\||[=+*/%!<>&|^~-]" }
   ]
