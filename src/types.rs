@@ -204,7 +204,7 @@ impl Types {
             _ => return None,
         };
         let array = self.arrays[id];
-        return if array.element == Type::Integer(IntType::U8) {
+        return if matches!(array.element, Type::Integer(IntType::U8 | IntType::Char)) {
             Some(array.length)
         } else {
             None

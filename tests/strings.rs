@@ -82,6 +82,30 @@ fn bounded_printing_handles_arrays_without_a_terminating_zero() {
 }
 
 #[test]
+fn native_char_scalars_and_arrays_preserve_c_signedness_and_utf8_bytes() {
+    run(
+        r#"
+        typedef char Text[4];
+        Text create() { return "cat"; }
+        int main() {
+            char letter = 'A'; print(letter); print(letter + 1);
+            char utf8[3] = "é";
+            print(utf8); print(utf8[0]);
+            print(sizeof(char));
+            Text text = create();
+            print(^const text); text[0] = 'b'; print(text);
+            return 0;
+        }
+    "#,
+        &format!("65\n66\né\n{}\n1\ncat\nbat\n", 195u8 as std::ffi::c_char),
+    );
+    assert!(
+        crust::check("void set(int8_t^ value) {} int main() { char c = 'A'; set(^c); return 0; }")
+            .is_err()
+    );
+}
+
+#[test]
 fn strings_copy_through_fields_arguments_and_return_values() {
     run(
         r#"

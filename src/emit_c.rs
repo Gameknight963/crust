@@ -35,6 +35,10 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         .insert(String::from("move"), Type::BoxInt);
 
     emitter.line(&format!("_Static_assert(sizeof(void *) * CHAR_BIT == {}, \"C compiler target must match the Crust host\");", usize::BITS));
+    emitter.line(&format!(
+        "_Static_assert(CHAR_MIN == {}, \"C char signedness must match the Crust host\");",
+        IntType::Char.minimum()
+    ));
     emitter.unsigned_runtime();
     for definition in &checked.types.enums {
         emitter.line(&format!(
@@ -589,7 +593,18 @@ impl Emitter<'_> {
             ExpressionKind::EnumValue { .. } => unreachable!("enum constants have checked values"),
             ExpressionKind::StringLiteral { bytes, .. } => {
                 let ty = self.expression_type(expression);
-                let mut values = bytes.iter().map(u8::to_string).collect::<Vec<_>>();
+                let signed_char = matches!(ty, Type::Array(id) if self.types.arrays[id].element == Type::Integer(IntType::Char))
+                    && IntType::Char.signed();
+                let mut values = bytes
+                    .iter()
+                    .map(|byte| {
+                        if signed_char {
+                            (*byte as i8).to_string()
+                        } else {
+                            byte.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 values.push(String::from("0"));
                 return Some(self.temporary(
                     ty,

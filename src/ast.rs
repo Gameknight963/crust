@@ -2,6 +2,7 @@ use crate::diagnostic::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntType {
+    Char,
     I8,
     I16,
     I32,
@@ -15,7 +16,7 @@ pub enum IntType {
 impl IntType {
     pub fn bits(self) -> u8 {
         return match self {
-            Self::I8 | Self::U8 => 8,
+            Self::Char | Self::I8 | Self::U8 => 8,
             Self::I16 | Self::U16 => 16,
             Self::I32 | Self::U32 => 32,
             Self::I64 | Self::U64 => 64,
@@ -23,6 +24,9 @@ impl IntType {
     }
 
     pub fn signed(self) -> bool {
+        if self == Self::Char {
+            return std::ffi::c_char::MIN != 0;
+        }
         return matches!(self, Self::I8 | Self::I16 | Self::I32 | Self::I64);
     }
 
@@ -66,6 +70,7 @@ impl IntType {
 
     pub fn c_name(self) -> &'static str {
         return match self {
+            Self::Char => "char",
             Self::I8 => "int8_t",
             Self::I16 => "int16_t",
             Self::I32 => "int32_t",
@@ -79,6 +84,7 @@ impl IntType {
 
     pub fn named(name: &str) -> Option<IntType> {
         return Some(match name {
+            "char" => Self::Char,
             "int8_t" => Self::I8,
             "int16_t" => Self::I16,
             "int32_t" => Self::I32,

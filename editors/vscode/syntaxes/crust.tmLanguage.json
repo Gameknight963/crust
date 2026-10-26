@@ -13,7 +13,7 @@
         "2": { "name": "entity.name.type.crust" }
       }
     },
-    { "name": "storage.type.crust", "match": "\\b(int|bool|void|BoxInt|Self|u?int(8|16|32|64)_t|size_t|ptrdiff_t|u?intptr_t)\\b" },
+    { "name": "storage.type.crust", "match": "\\b(int|char|bool|void|BoxInt|Self|u?int(8|16|32|64)_t|size_t|ptrdiff_t|u?intptr_t)\\b" },
     { "name": "constant.language.crust", "match": "\\b(true|false)\\b" },
     { "name": "storage.modifier.crust", "match": "\\b(const|static|typedef)\\b" },
     { "name": "keyword.control.crust", "match": "\\b(return|if|else|while|for|break|continue)\\b" },

@@ -34,6 +34,7 @@ ownership checking, C generation, and native compilation.
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
 - Toolchain environment changes apply to the child compiler process
 - Pointer-sized types follow the Rust host, with a generated C assertion checking native pointer width
+- `char` follows the host C signedness, with a generated assertion checking the selected C compiler
 - `run` forwards the low eight bits of the native program's exit code
 
 ## Ownership and cleanup

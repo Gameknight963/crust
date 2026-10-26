@@ -1,6 +1,7 @@
 /* Numeric helpers embedded in generated C after the basic runtime. */
-static inline void crust_rt_print_bytes(const uint8_t *bytes, size_t capacity)
+static inline void crust_rt_print_bytes(const void *text, size_t capacity)
 {
+    const uint8_t *bytes = (const uint8_t *)text;
     size_t length = 0;
     while (length < capacity && bytes[length] != 0) { ++length; }
     fwrite(bytes, 1, length, stdout);

@@ -1004,7 +1004,10 @@ impl FunctionChecker<'_> {
             && let Type::Array(_) = expected
         {
             let length = self.types.byte_array_length(expected).ok_or_else(|| {
-                Diagnostic::new(expression.span, "string literals require a uint8_t array")
+                Diagnostic::new(
+                    expression.span,
+                    "string literals require a char or uint8_t array",
+                )
             })?;
             if bytes.len() >= length {
                 return Err(Diagnostic::new(

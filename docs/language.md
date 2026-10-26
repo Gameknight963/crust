@@ -45,6 +45,7 @@ are rejected until assignment completes.
 | Names | Representation |
 | --- | --- |
 | `int`, `int32_t` | Signed 32-bit |
+| `char` | Native C character type with the host's signedness |
 | `int8_t`, `int16_t`, `int64_t` | Signed 8-, 16-, and 64-bit |
 | `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` | Unsigned 8-, 16-, 32-, and 64-bit |
 | `size_t`, `uintptr_t` | Unsigned pointer-sized integer |
@@ -80,6 +81,7 @@ The expression is checked without being evaluated or moving its owners.
 
 Pointer-sized names follow the compiler host. Generated C checks that the native
 compiler uses the same pointer width.
+`char` uses the host C ABI, and generated C also checks its signedness.
 
 ## Arrays
 
@@ -134,11 +136,11 @@ int main() {
 
 - String literals contain UTF-8 bytes followed by a terminating zero
 - Their type is a fixed-size `uint8_t` array, including the terminating byte
-- An explicitly sized byte-array destination may provide extra capacity, which is filled with zeros
+- A `char` or `uint8_t` array destination may provide extra capacity, which is filled with zeros
 - String literals support the same byte escapes as character literals
 - Adjacent literals concatenate, including across whitespace and comments
 - Array copies, indexing, mutation, borrows, fields, parameters, and returns use ordinary array rules
-- `print` accepts a byte array or a shared or mutable borrow of one
+- `print` accepts a `char` or `uint8_t` array or a shared or mutable borrow of one
 - Text output stops at the first zero or the array's capacity and appends a newline
 - `sizeof` includes the terminating zero and any destination padding
 
