@@ -67,6 +67,14 @@
             "problemMatcher": ["$rustc"]
         },
         {
+            "label": "Crust: run project example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "run", "--project", "examples/project"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
             "label": "Crust: test",
             "type": "process",
             "command": "cargo",

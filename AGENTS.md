@@ -23,7 +23,10 @@ and borrows, generates C, and invokes a native C compiler.
 ## Project conventions
 
 - Treat language-design discussion as discussion until implementation is requested.
-- Distinguish implemented features from proposed syntax. Bare struct type names, typedefs, static methods, interfaces, and static constructors are currently design topics.
+- Distinguish implemented features from proposed syntax. Interfaces, constrained/replaceable typedefs, and static constructors remain design topics.
+- The user authorized autonomous compiler work along docs/roadmap.md. Make routine implementation decisions and commit completed stages.
+- Project configuration uses crust.toml. Plan editor support around a standalone LSP executable shared by VS Code, Visual Studio, and direct clients such as Neovim.
+- The Gflat checkout at C:/Users/sebis/projects/gflat is a read-only reference. Another agent is actively working there.
 - Give independent recommendations with reasons rather than changing an opinion just to agree with the user.
 - Keep explicit Rust return statements. The Clippy configuration intentionally permits them.
 - Accept both main() and main(void) in Crust. Prefer main() in new examples.

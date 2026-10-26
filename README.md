@@ -23,7 +23,7 @@ int main() {
 }
 ```
 
-Crust supports structs, instance methods, shared and exclusive borrows, and
+Crust supports structs, typedefs, static and instance methods, shared and exclusive borrows, and
 `~Type()` destructors. See [examples/](examples/) for runnable programs.
 
 ## Getting started
@@ -35,6 +35,7 @@ The compiler driver defaults to Clang on Windows and `cc` elsewhere.
 cargo run -- examples/hello.cr
 cargo run -- examples/methods.cr
 cargo run -- examples/destructors.cr
+cargo run -- run --project examples/project
 ```
 
 In VS Code, install the recommended **rust-analyzer** extension. **Ctrl+Shift+B**
@@ -48,7 +49,8 @@ $env:CC = 'clang'
 
 ## Commands
 
-Use `cargo run -- <command> <file.cr>`:
+Use `cargo run -- <command> <file.cr>` for a source file, or run a command in a
+directory containing `crust.toml`:
 
 | Command | Action |
 | --- | --- |
@@ -67,4 +69,6 @@ cargo run -- examples/ownership.cr
 ## Documentation
 
 - [Language reference](docs/language.md)
+- [Projects](docs/projects.md)
 - [Compiler and development](docs/compiler.md)
+- [Roadmap](docs/roadmap.md)

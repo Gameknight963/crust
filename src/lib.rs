@@ -7,6 +7,7 @@ mod types;
 pub mod diagnostic;
 pub mod lexer;
 pub mod native;
+pub mod project;
 
 use diagnostic::Diagnostic;
 

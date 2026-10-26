@@ -1,7 +1,7 @@
 # Compiler
 
-The compiler processes one source file through tokenization, parsing, ownership
-checking, C generation, and native compilation.
+The compiler processes each target's entry file through tokenization, parsing,
+ownership checking, C generation, and native compilation.
 
 ## Source files
 
@@ -17,6 +17,7 @@ checking, C generation, and native compilation.
 | `src/types.rs` | Struct layouts and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
+| `src/project.rs` | TOML project loading, discovery, and target selection |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
 ## Native compilation
@@ -24,7 +25,8 @@ checking, C generation, and native compilation.
 - Generated C uses C11
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
-- Build output goes to `target/crust/`, using the source file's basename
+- Single-file build output goes to `target/crust/`, using the source file's basename
+- Project build output goes to `<project>/target/crust/<target>/`
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
 - Toolchain environment changes apply to the child compiler process
 - `run` forwards the low eight bits of the native program's exit code
