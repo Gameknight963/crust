@@ -27,6 +27,12 @@ struct Vector<T> {
     }
 
     void push(T value) {
+        size_t index = this->length;
+        this->insert(index, move(value));
+    }
+
+    void insert(size_t index, T value) {
+        if (index > this->length) { unsafe { abort(); } }
         if (this->length == this->capacity) {
             size_t next = 2;
             if (this->capacity > 0) {
@@ -35,7 +41,12 @@ struct Vector<T> {
             }
             this->reserve(next);
         }
-        unsafe { init(this->data + this->length, move(value)); }
+        unsafe {
+            for (size_t i = this->length; i > index; i -= 1) {
+                init(this->data + i, move(this->data[i - 1]));
+            }
+            init(this->data + index, move(value));
+        }
         this->length += 1;
     }
 
@@ -46,6 +57,28 @@ struct Vector<T> {
             this->length -= 1;
             return move(value);
         }
+    }
+
+    T remove(size_t index) {
+        if (index >= this->length) { unsafe { abort(); } }
+        unsafe {
+            T value = move(this->data[index]);
+            size_t length = this->length - 1;
+            for (size_t i = index; i < length; i += 1) {
+                init(this->data + i, move(this->data[i + 1]));
+            }
+            this->length = length;
+            return move(value);
+        }
+    }
+
+    void clear() {
+        unsafe {
+            for (size_t i = this->length; i > 0; i -= 1) {
+                destroy(this->data + (i - 1));
+            }
+        }
+        this->length = 0;
     }
 
     const T^ at(size_t index) const {
@@ -59,10 +92,8 @@ struct Vector<T> {
     }
 
     ~Vector() {
+        this->clear();
         unsafe {
-            for (size_t i = this->length; i > 0; i -= 1) {
-                destroy(this->data + (i - 1));
-            }
             free(this->data);
         }
     }

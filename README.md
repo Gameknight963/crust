@@ -35,6 +35,8 @@ with integers, characters, and structs.
 The [generic box](examples/generic_box.cr) owns heap values, including other owners.
 The [container project](examples/container_project/) uses buffers, boxes, and
 growable vectors from separate files through `import "buffer.cr";`.
+The [vector edit example](examples/vector_edits.cr) inserts, removes, and clears
+heap owners.
 The [header example](examples/header_project/) imports C declarations with
 `crust import-c` and wraps an opaque handle in a Crust owner.
 On Windows x86 and x64, the [calling-convention project](examples/calling_convention_project/)

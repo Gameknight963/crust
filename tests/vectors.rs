@@ -77,6 +77,9 @@ fn live_element_borrows_prevent_push_pop_reserve_and_whole_vector_moves() {
         "values.push(2);",
         "values.pop();",
         "values.reserve(42);",
+        "values.insert(0, 2);",
+        "values.remove(0);",
+        "values.clear();",
         "Vector<int> other = move(values);",
     ] {
         let source = format!(
@@ -117,4 +120,110 @@ fn vector_instances_preserve_different_element_widths_and_signed_boundaries() {
         "9223372036854775807\n-9223372036854775808\n99\n0\n",
         "drop:bytes:16\ndrop:bytes:2\ndrop:bytes:4\ndrop:bytes:32\n",
     );
+}
+
+#[test]
+fn insertion_and_removal_preserve_order_and_clear_reuses_the_allocation() {
+    run(
+        r#"
+        int main() {
+            Vector<int> values = Vector<int>::create();
+            values.insert(0, 10); values.insert(1, 30); values.insert(1, 20); values.insert(0, 5);
+            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i)); }
+            print(values.remove(1)); print(values.remove(2)); print(values.remove(0)); print(*values.at(0));
+            values.clear(); print(values.count());
+            values.push(42); print(*values.at(0));
+            return 0;
+        }
+    "#,
+        "5\n10\n20\n30\n10\n30\n5\n20\n0\n42\n",
+        "drop:bytes:8\ndrop:bytes:16\n",
+    );
+}
+
+#[test]
+fn shifting_owning_elements_transfers_values_and_clears_each_live_element_once() {
+    let width = std::mem::size_of::<usize>();
+    run(
+        r#"
+        struct Resource {
+            BoxInt value;
+            ~Resource() { print(*this->value); }
+        };
+        int main() {
+            Vector<Resource> values = Vector<Resource>::create(); values.reserve(4);
+            values.push((Resource){ .value = box_int(1) });
+            values.push((Resource){ .value = box_int(3) });
+            values.insert(1, (Resource){ .value = box_int(2) });
+            values.insert(0, (Resource){ .value = box_int(0) });
+            Resource removed = values.remove(1); print(*removed.value);
+            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i)->value); }
+            values.clear(); print(values.count());
+            values.insert(0, (Resource){ .value = box_int(4) });
+            Vector<Resource> next = move(values);
+            return 0;
+        }
+    "#,
+        "1\n0\n2\n3\n3\n2\n0\n0\n4\n1\n",
+        &format!(
+            "drop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:{}\ndrop:bytes:4\n",
+            width * 4
+        ),
+    );
+}
+
+#[test]
+fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() {
+    let width = std::mem::size_of::<usize>();
+    run(
+        r#"
+        struct Resource { BoxInt value; ~Resource() { print(*this->value); } };
+        typedef Resource Pair[2];
+        int main() {
+            Vector<Pair> values = Vector<Pair>::create(); values.reserve(3);
+            Pair first = { (Resource){ .value = box_int(1) }, (Resource){ .value = box_int(2) } };
+            Pair second = { (Resource){ .value = box_int(3) }, (Resource){ .value = box_int(4) } };
+            values.push(move(second)); values.insert(0, move(first));
+            Pair result = values.remove(1); print(*result[0].value); print(*result[1].value);
+            values.clear(); values.clear();
+            return 0;
+        }
+    "#,
+        "3\n4\n2\n1\n4\n3\n",
+        &format!(
+            "drop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:{}\n",
+            width * 6
+        ),
+    );
+}
+
+#[test]
+fn invalid_insertion_and_removal_stop_before_allocation_or_element_access() {
+    let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
+        "import \"memory.cr\";",
+        include_str!("../examples/container_project/src/memory.cr"),
+    );
+    for (action, allocations) in [
+        ("values.insert(1, 10);", 0),
+        ("values.insert(~(size_t)0, 10);", 0),
+        ("values.remove(0);", 0),
+        ("values.push(1); values.insert(2, 10);", 1),
+        ("values.push(1); values.remove(1);", 1),
+        ("values.push(1); values.clear(); values.remove(0);", 1),
+    ] {
+        let source = format!(
+            "{definitions} int main() {{ Vector<int> values = Vector<int>::create(); {action} return 0; }}"
+        );
+        let mut generated = crust::compile(&source)
+            .unwrap()
+            .replace("abort(", "crust_test_abort(");
+        generated.push_str(&format!("void crust_test_abort(void) {{ if (live_allocations != {allocations}) {{ exit(38); }} exit(37); }}"));
+        let output = common::tracked_generated_c(&generated, true);
+        assert_eq!(
+            output.status.code(),
+            Some(37),
+            "{action}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

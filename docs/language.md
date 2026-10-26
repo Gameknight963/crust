@@ -677,7 +677,17 @@ See [the generic box](../examples/generic_box.cr) for the complete owner, includ
 private storage and safe borrowed access.
 The [growable vector](../examples/container_project/src/vector.cr) transfers
 elements between allocations during growth and destroys its live elements in
-reverse order. `push`, `pop`, `reserve`, `at`, and `at_mut` use checked borrows.
+reverse order. Its methods use checked borrows.
+
+- `insert(index, value)` accepts positions from zero through `count()`, moves later elements to the right, and consumes an owning argument
+- `remove(index)` requires an existing element, moves it out, and closes the gap while preserving order
+- `clear()` destroys elements in reverse order and retains the allocation for reuse
+- Element borrows prevent insertion, removal, clearing, growth, and moves of the vector
+
+Insertion and removal take time proportional to the number of shifted elements.
+The [vector edit example](../examples/vector_edits.cr) uses these operations with
+heap owners.
+
 `Box<T>::take(Self this)` consumes a box and returns its stored value.
 
 `extern` declares a C function under its native symbol name. Parameters can be
