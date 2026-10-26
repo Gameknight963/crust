@@ -23,8 +23,8 @@ replacing newer text.
 The server also provides:
 
 - Hover for source declarations and checked expression types
-- Go to definition for functions, methods, fields, enum members, parameters, and locals
-- Source outlines for structs, unions, enums, fields, functions, and methods
+- Go to definition for values, functions, members, typedefs, type names, interfaces, and generic parameters
+- Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 
 Semantic requests use successfully checked programs and the current unsaved text.
 

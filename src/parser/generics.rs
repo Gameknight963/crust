@@ -6,6 +6,7 @@ pub(super) struct Template {
     start: usize,
     body: usize,
     parameters: Vec<String>,
+    parameter_spans: Vec<Span>,
     constraints: Vec<(String, String)>,
     span: Span,
 }
@@ -19,6 +20,8 @@ pub(super) struct Templates {
     functions: HashMap<String, Template>,
     pub(super) ends: HashMap<usize, usize>,
     pub(super) bindings: HashMap<String, Type>,
+    pub(super) binding_declarations: HashMap<String, Span>,
+    pub(super) constraint_references: Vec<(String, Span)>,
     pub(super) current_function: Option<String>,
     struct_instances: HashMap<(String, Vec<Type>), usize>,
     function_instances: HashMap<(String, Vec<Type>), String>,
@@ -29,6 +32,7 @@ pub(super) struct Templates {
 
 #[derive(Clone)]
 struct Interface {
+    name_span: Span,
     body: usize,
     all_static: bool,
 }
@@ -191,7 +195,14 @@ impl Parser {
                 if self
                     .generics
                     .interfaces
-                    .insert(name.clone(), Interface { body, all_static })
+                    .insert(
+                        name.clone(),
+                        Interface {
+                            body,
+                            all_static,
+                            name_span: *span,
+                        },
+                    )
                     .is_some()
                 {
                     return Err(Diagnostic::new(
@@ -199,6 +210,16 @@ impl Parser {
                         format!("interface '{name}' is already defined"),
                     ));
                 }
+                self.source_declarations.push(SourceDeclaration {
+                    kind: SourceDeclarationKind::Interface,
+                    name_span: *span,
+                    header_span: Span {
+                        end: self.tokens[body].span.start,
+                        ..self.tokens[position].span
+                    },
+                    span: self.tokens[position].span.through(self.tokens[end].span),
+                    container: None,
+                });
                 self.generics.ends.insert(position, end + 1);
                 position = end + 1;
                 declaration_start = position;
@@ -269,7 +290,28 @@ impl Parser {
                         ));
                     }
                 }
+                let parameter_spans =
+                    self.generic_parameter_declarations(name_position + 2, after, &name);
+                self.source_declarations.push(SourceDeclaration {
+                    kind: if is_struct {
+                        if self.tokens[position].kind == Token::Union {
+                            SourceDeclarationKind::Union
+                        } else {
+                            SourceDeclarationKind::Struct
+                        }
+                    } else {
+                        SourceDeclarationKind::Function
+                    },
+                    name_span: span,
+                    header_span: Span {
+                        end: self.tokens[body].span.start,
+                        ..self.tokens[start].span
+                    },
+                    span: self.tokens[start].span.through(self.tokens[end - 1].span),
+                    container: None,
+                });
                 let template = Template {
+                    parameter_spans,
                     is_union: is_struct && self.tokens[position].kind == Token::Union,
                     start,
                     body,
@@ -329,6 +371,14 @@ impl Parser {
                     ));
                 }
             }
+        }
+        for (name, span) in &self.generics.constraint_references {
+            self.type_references.push(TypeReference {
+                span: *span,
+                declaration: Some(TypeDeclaration::Source(
+                    self.generics.interfaces[name].name_span,
+                )),
+            });
         }
         return Ok(());
     }
@@ -433,6 +483,10 @@ impl Parser {
         arguments: Vec<Type>,
         span: Span,
     ) -> Result<Type, Diagnostic> {
+        self.type_references.push(TypeReference {
+            span,
+            declaration: Some(TypeDeclaration::Source(self.generics.structs[name].span)),
+        });
         let key = (name.to_owned(), arguments.clone());
         if let Some(id) = self.generics.struct_instances.get(&key) {
             return Ok(Type::Struct(*id));
@@ -513,6 +567,7 @@ impl Parser {
             };
             let interface = self.generics.interfaces[name].clone();
             let signature_template = Template {
+                parameter_spans: vec![interface.name_span],
                 is_union: false,
                 start: interface.body,
                 body: interface.body,
@@ -588,7 +643,7 @@ impl Parser {
         return Ok(requirements);
     }
 
-    pub(super) fn validate_interfaces(&self) -> Result<(), Diagnostic> {
+    pub(super) fn validate_interfaces(&mut self) -> Result<(), Diagnostic> {
         if self.generics.interfaces.is_empty() {
             return Ok(());
         }
@@ -599,14 +654,64 @@ impl Parser {
         validation
             .struct_names
             .push(("interface Self".to_owned(), self.current().span));
-        let mut interfaces: Vec<_> = validation.generics.interfaces.values().cloned().collect();
-        interfaces.sort_by_key(|interface| interface.body);
-        for interface in interfaces {
+        let mut interfaces: Vec<_> = validation
+            .generics
+            .interfaces
+            .iter()
+            .map(|(name, interface)| (name.clone(), interface.clone()))
+            .collect();
+        interfaces.sort_by_key(|(_, interface)| interface.body);
+        for (name, interface) in interfaces {
             validation.position = interface.body + 1;
             validation.pending_greater = None;
             validation.current_struct = Some(id);
             validation.generics.bindings = HashMap::from([("Self".to_owned(), Type::Struct(id))]);
-            validation.interface_requirements(id, interface.all_static)?;
+            validation.generics.binding_declarations =
+                HashMap::from([("Self".to_owned(), interface.name_span)]);
+            let references_start = validation.type_references.len();
+            let annotations_start = validation.type_annotations.len();
+            let members = validation.interface_requirements(id, interface.all_static)?;
+            self.type_references.extend(
+                validation.type_references[references_start..]
+                    .iter()
+                    .cloned(),
+            );
+            self.type_annotations.extend(
+                validation.type_annotations[annotations_start..]
+                    .iter()
+                    .filter(|(_, ty)| {
+                        matches!(
+                            ty,
+                            Type::Integer(_) | Type::Bool | Type::Void | Type::BoxInt
+                        )
+                    })
+                    .copied(),
+            );
+            for member in members {
+                self.source_declarations.push(SourceDeclaration {
+                    kind: SourceDeclarationKind::Method,
+                    name_span: member.name_span,
+                    header_span: Span {
+                        end: member.body.span.start,
+                        ..member.span
+                    },
+                    span: member.span,
+                    container: Some(name.clone()),
+                });
+                for parameter in member
+                    .parameters
+                    .into_iter()
+                    .filter(|parameter| !parameter.synthetic)
+                {
+                    self.source_declarations.push(SourceDeclaration {
+                        kind: SourceDeclarationKind::Parameter,
+                        name_span: parameter.span,
+                        header_span: parameter.declaration_span,
+                        span: parameter.declaration_span,
+                        container: Some(name.clone()),
+                    });
+                }
+            }
         }
         return Ok(());
     }
@@ -618,12 +723,22 @@ impl Parser {
         position: usize,
     ) -> Context {
         let bindings = template.parameters.iter().cloned().zip(arguments).collect();
+        let binding_declarations = template
+            .parameters
+            .iter()
+            .cloned()
+            .zip(template.parameter_spans.iter().copied())
+            .collect();
         let context = Context {
             position: self.position,
             pending: self.pending_greater.take(),
             owner: self.current_struct.take(),
             function: self.generics.current_function.take(),
             bindings: std::mem::replace(&mut self.generics.bindings, bindings),
+            binding_declarations: std::mem::replace(
+                &mut self.generics.binding_declarations,
+                binding_declarations,
+            ),
             scopes: std::mem::replace(&mut self.value_scopes, vec![HashSet::new()]),
         };
         self.position = position;
@@ -637,6 +752,7 @@ impl Parser {
         self.current_struct = context.owner;
         self.generics.current_function = context.function;
         self.generics.bindings = context.bindings;
+        self.generics.binding_declarations = context.binding_declarations;
         self.value_scopes = context.scopes;
         self.generics.depth -= 1;
     }
@@ -675,6 +791,7 @@ impl Parser {
 }
 
 struct Context {
+    binding_declarations: HashMap<String, Span>,
     position: usize,
     pending: Option<SpannedToken>,
     owner: Option<usize>,

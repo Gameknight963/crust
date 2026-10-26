@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::ast::{Block, Statement, StatementKind};
+use crate::ast::{Block, SourceDeclarationKind, Statement, StatementKind, Type, TypeDeclaration};
 use crate::check::CheckedProgram;
 use crate::diagnostic::Span;
 
@@ -17,7 +17,7 @@ pub struct Location {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
     Function,
     Method,
@@ -28,6 +28,9 @@ pub enum SymbolKind {
     Field,
     Parameter,
     Variable,
+    Interface,
+    Alias,
+    TypeParameter,
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +46,7 @@ pub struct Symbol {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
     pub location: Location,
-    pub declaration: Location,
+    pub declaration: Option<Location>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +91,7 @@ impl Analysis {
                             && reference.location.span.end - reference.location.span.start
                                 == shortest
                     })
-                    .map(|reference| reference.declaration)
+                    .filter_map(|reference| reference.declaration)
                     .collect();
                 return self
                     .symbols
@@ -118,6 +121,7 @@ impl Analysis {
 }
 
 struct Builder<'a, F> {
+    seen: HashSet<(Location, SymbolKind)>,
     analysis: Analysis,
     locate: &'a F,
 }
@@ -140,12 +144,7 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
         container: Option<String>,
     ) {
         let location = (self.locate)(span);
-        if self
-            .analysis
-            .symbols
-            .iter()
-            .any(|symbol| symbol.location == location && symbol.kind == kind)
-        {
+        if !self.seen.insert((location, kind)) {
             return;
         }
         self.analysis.symbols.push(Symbol {
@@ -209,6 +208,7 @@ pub(crate) fn build(
     locate: impl Fn(Span) -> Location,
 ) -> Analysis {
     let mut builder = Builder {
+        seen: HashSet::new(),
         analysis: Analysis {
             files,
             symbols: Vec::new(),
@@ -217,6 +217,50 @@ pub(crate) fn build(
         },
         locate: &locate,
     };
+    for declaration in &checked.program.source_declarations {
+        let kind = match declaration.kind {
+            SourceDeclarationKind::Function => SymbolKind::Function,
+            SourceDeclarationKind::Struct => SymbolKind::Struct,
+            SourceDeclarationKind::Union => SymbolKind::Union,
+            SourceDeclarationKind::Interface => SymbolKind::Interface,
+            SourceDeclarationKind::Alias => SymbolKind::Alias,
+            SourceDeclarationKind::TypeParameter => SymbolKind::TypeParameter,
+            SourceDeclarationKind::Method => SymbolKind::Method,
+            SourceDeclarationKind::Parameter => SymbolKind::Parameter,
+        };
+        builder.symbol(
+            builder.text(declaration.name_span),
+            kind,
+            declaration.name_span,
+            declaration.span,
+            builder.text(declaration.header_span),
+            declaration.container.clone(),
+        );
+    }
+    for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
+        if !checked.types.structs[id].complete {
+            let kind = if checked.types.structs[id].is_union {
+                SymbolKind::Union
+            } else {
+                SymbolKind::Struct
+            };
+            builder.symbol(
+                name.clone(),
+                kind,
+                *span,
+                *span,
+                format!(
+                    "{} {name}",
+                    if kind == SymbolKind::Union {
+                        "union"
+                    } else {
+                        "struct"
+                    }
+                ),
+                None,
+            );
+        }
+    }
     for definition in &checked.program.structs {
         let name = builder.text(definition.name_span);
         let kind = if checked.types.structs[definition.id].is_union {
@@ -316,19 +360,42 @@ pub(crate) fn build(
         }
         builder.block(&function.body);
     }
-    let mut descriptions: HashMap<Span, HashSet<String>> = HashMap::new();
+    let mut descriptions: HashMap<Span, HashSet<Type>> = HashMap::new();
+    for reference in &checked.program.type_references {
+        let declaration = match reference.declaration {
+            Some(TypeDeclaration::Source(span)) => Some(span),
+            Some(TypeDeclaration::Aggregate(id)) => checked
+                .program
+                .structs
+                .iter()
+                .find(|definition| definition.id == id)
+                .map(|definition| definition.name_span)
+                .or_else(|| checked.program.struct_names.get(id).map(|(_, span)| *span)),
+            Some(TypeDeclaration::Enum(id)) => checked
+                .program
+                .enums
+                .iter()
+                .find(|definition| definition.id == id)
+                .map(|definition| definition.name_span),
+            None => None,
+        };
+        builder.analysis.references.push(Reference {
+            location: locate(reference.span),
+            declaration: declaration.map(&locate),
+        });
+    }
+    for (span, ty) in &checked.program.type_annotations {
+        descriptions.entry(*span).or_default().insert(*ty);
+    }
     for function in checked.analyses.values() {
         for (span, declaration) in &function.symbol_uses {
             builder.analysis.references.push(Reference {
                 location: locate(*span),
-                declaration: locate(*declaration),
+                declaration: Some(locate(*declaration)),
             });
         }
         for (span, ty) in &function.expression_types {
-            descriptions
-                .entry(*span)
-                .or_default()
-                .insert(checked.types.describe(*ty));
+            descriptions.entry(*span).or_default().insert(*ty);
         }
     }
     for (span, descriptions) in descriptions {
@@ -337,7 +404,9 @@ pub(crate) fn build(
         if descriptions.len() == 1 {
             builder.analysis.types.push(TypeInfo {
                 location: locate(span),
-                description: descriptions.into_iter().next().unwrap(),
+                description: checked
+                    .types
+                    .describe(descriptions.into_iter().next().unwrap()),
             });
         }
     }
@@ -353,8 +422,14 @@ pub(crate) fn build(
             reference.location.file,
             reference.location.span.start,
             reference.location.span.end,
-            reference.declaration.file,
-            reference.declaration.span.start,
+            reference
+                .declaration
+                .map(|location| location.file)
+                .unwrap_or(usize::MAX),
+            reference
+                .declaration
+                .map(|location| location.span.start)
+                .unwrap_or(0),
         )
     });
     builder.analysis.references.dedup();

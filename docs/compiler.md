@@ -16,6 +16,7 @@ ownership checking, C generation, and native compilation.
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
 | `src/parser/integers.rs` | C integer type specifiers |
+| `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
@@ -43,6 +44,8 @@ to the original path and byte range.
 resolved references, and expression types. Locations identify a file index and a
 file-local byte span. Generic instances share their original declarations, and
 ambiguous concrete types in replayed bodies are omitted from type queries.
+Type references retain lexical typedef and generic-parameter bindings. Built-in
+types have no source declaration.
 
 ## Native compilation
 

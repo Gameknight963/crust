@@ -543,3 +543,63 @@ fn semantic_requests_validate_parameters_and_recover_after_compiler_errors() {
     );
     server.stop();
 }
+
+#[test]
+fn type_navigation_and_outlines_include_aliases_interfaces_and_unused_generics() {
+    let source = "typedef int Count; interface Readable { int read() const; }; struct Unused<T: Readable> { T value; }; int main() { Count value = 42; return value; }";
+    let uri = "untitled:types.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let result = server
+        .request(
+            "textDocument/definition",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "Count value")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(result[0]["range"]["start"], point(source, "Count;"));
+    let result = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "Count value")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        result["contents"]["value"],
+        "```crust\ntypedef int Count\n```"
+    );
+    let result = server
+        .request(
+            "textDocument/definition",
+            json!({"textDocument": {"uri": uri}, "position": point(source, "Readable>")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(result[0]["range"]["start"], point(source, "Readable {"));
+    let symbols = server
+        .request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .result
+        .unwrap();
+    let symbols = symbols.as_array().unwrap();
+    assert!(
+        symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "Unused" && symbol["kind"] == 23)
+    );
+    assert!(symbols.iter().any(|symbol| symbol["name"] == "Count"));
+    assert!(
+        symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "Readable" && symbol["kind"] == 11)
+    );
+    assert!(
+        symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "read" && symbol["containerName"] == "Readable")
+    );
+    server.stop();
+}

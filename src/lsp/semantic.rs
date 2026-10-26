@@ -75,12 +75,7 @@ impl Context {
 
     fn hover(&self, offset: usize) -> Value {
         let definitions = self.analysis.definitions_at(self.file, offset);
-        let text = &self.analysis.files[self.file].text;
-        let implicit_this = word_at(text, offset) == "this"
-            && definitions
-                .iter()
-                .any(|symbol| matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method));
-        if !definitions.is_empty() && !implicit_this {
+        if !definitions.is_empty() {
             let mut details = Vec::new();
             for symbol in &definitions {
                 if !details.contains(&symbol.detail) {
@@ -113,12 +108,13 @@ impl Context {
     }
 
     fn document_symbols(&self) -> Value {
-        return Value::Array(self.analysis.symbols.iter().filter(|symbol| symbol.location.file == self.file && !matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Parameter))
+        return Value::Array(self.analysis.symbols.iter().filter(|symbol| symbol.location.file == self.file && !matches!(symbol.kind, SymbolKind::Variable | SymbolKind::Parameter | SymbolKind::TypeParameter))
             .map(|symbol| {
                 let kind = match symbol.kind {
                     SymbolKind::Function => 12, SymbolKind::Method => 6,
                     SymbolKind::Struct | SymbolKind::Union => 23, SymbolKind::Enum => 10,
                     SymbolKind::EnumMember => 22, SymbolKind::Field => 8,
+                    SymbolKind::Interface => 11, SymbolKind::Alias => 26,
                     _ => 13,
                 };
                 let mut value = json!({ "name": symbol.name, "kind": kind, "location": self.location(symbol.location) });
@@ -168,23 +164,6 @@ fn code_block(text: &str) -> String {
         .unwrap_or(0);
     let fence = "`".repeat((length + 1).max(3));
     return format!("{fence}crust\n{text}\n{fence}");
-}
-
-fn word_at(text: &str, offset: usize) -> &str {
-    let mut start = offset.min(text.len());
-    let mut end = start;
-    while start > 0
-        && (text.as_bytes()[start - 1].is_ascii_alphanumeric()
-            || text.as_bytes()[start - 1] == b'_')
-    {
-        start -= 1;
-    }
-    while end < text.len()
-        && (text.as_bytes()[end].is_ascii_alphanumeric() || text.as_bytes()[end] == b'_')
-    {
-        end += 1;
-    }
-    return &text[start..end];
 }
 
 fn offset(text: &str, target: &Position) -> Option<usize> {

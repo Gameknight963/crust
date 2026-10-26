@@ -4,6 +4,7 @@ use crate::lexer::{SpannedToken, Token};
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 mod generics;
 mod integers;
+mod symbols;
 
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
@@ -24,6 +25,9 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         function_types: Vec::new(),
         generics: generics::Templates::default(),
         pending_greater: None,
+        source_declarations: Vec::new(),
+        type_references: Vec::new(),
+        type_annotations: Vec::new(),
     };
     parser.collect_templates()?;
     parser.collect_type_names()?;
@@ -79,6 +83,9 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
+        source_declarations: parser.source_declarations,
+        type_references: parser.type_references,
+        type_annotations: parser.type_annotations,
         union_tags: parser.union_tags,
         interface_checks: parser.generics.interface_checks,
         function_types: parser.function_types,
@@ -94,6 +101,9 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    source_declarations: Vec<SourceDeclaration>,
+    type_references: Vec<TypeReference>,
+    type_annotations: Vec<(Span, Type)>,
     generics: generics::Templates,
     pending_greater: Option<SpannedToken>,
     function_types: Vec<FunctionType>,
@@ -295,6 +305,16 @@ impl Parser {
                     position: start,
                     span,
                 };
+                self.source_declarations.push(SourceDeclaration {
+                    kind: SourceDeclarationKind::Alias,
+                    name_span: span,
+                    header_span: Span {
+                        end: self.tokens[end].span.start,
+                        ..token.span
+                    },
+                    span: token.span.through(self.tokens[end].span),
+                    container: None,
+                });
                 match self.aliases.entry(name) {
                     Entry::Occupied(entry) => {
                         self.repeated_aliases.push((entry.key().clone(), alias))
@@ -379,10 +399,12 @@ impl Parser {
         let previous = self.position;
         self.position = alias.position;
         let bindings = std::mem::take(&mut self.generics.bindings);
+        let binding_declarations = std::mem::take(&mut self.generics.binding_declarations);
         let owner = self.current_struct.take();
         let pending = self.pending_greater.take();
         let result = self.typedef_type();
         self.generics.bindings = bindings;
+        self.generics.binding_declarations = binding_declarations;
         self.current_struct = owner;
         self.pending_greater = pending;
         self.position = previous;
@@ -491,16 +513,31 @@ impl Parser {
     }
 
     fn named_type(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
-        if let Some(ty) = self.generics.bindings.get(name) {
-            return Ok(*ty);
+        if let Some(ty) = self.generics.bindings.get(name).copied() {
+            self.type_references.push(TypeReference {
+                span,
+                declaration: self
+                    .generics
+                    .binding_declarations
+                    .get(name)
+                    .copied()
+                    .map(TypeDeclaration::Source),
+            });
+            return Ok(ty);
         }
         if name == "Self" {
-            return self
+            let ty = self
                 .current_struct
                 .map(Type::Struct)
-                .ok_or_else(|| Diagnostic::new(span, "Self is only available inside a struct"));
+                .ok_or_else(|| Diagnostic::new(span, "Self is only available inside a struct"))?;
+            self.reference_type(span, ty);
+            return Ok(ty);
         }
         if self.aliases.contains_key(name) {
+            self.type_references.push(TypeReference {
+                span,
+                declaration: Some(TypeDeclaration::Source(self.aliases[name].span)),
+            });
             return self.alias_type(name);
         }
         if self.generics.structs.contains_key(name) {
@@ -508,12 +545,18 @@ impl Parser {
             return self.instantiate_struct(name, arguments, span);
         }
         if let Some(kind) = IntType::named(name) {
+            self.type_references.push(TypeReference {
+                span,
+                declaration: None,
+            });
             return Ok(Type::Integer(kind));
         }
         if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
+            self.reference_type(span, Type::Struct(id));
             return Ok(Type::Struct(id));
         }
         if let Some(id) = self.enum_names.iter().position(|entry| entry.0 == name) {
+            self.reference_type(span, Type::Enum(id));
             return Ok(Type::Enum(id));
         }
         return Err(Diagnostic::new(span, format!("unknown type '{name}'")));
@@ -1050,6 +1093,7 @@ impl Parser {
     }
 
     fn type_name(&mut self) -> Result<Type, Diagnostic> {
+        let start = self.current().span;
         let mut shared = self.consume(&Token::Const);
         let token = self.advance();
         let base = match token.kind {
@@ -1074,12 +1118,20 @@ impl Parser {
                     let arguments = self.type_arguments()?;
                     self.instantiate_struct(&name, arguments, span)?
                 } else {
-                    Type::Struct(self.tagged_struct_id(name, span, token.kind == Token::Union)?)
+                    let ty = Type::Struct(self.tagged_struct_id(
+                        name,
+                        span,
+                        token.kind == Token::Union,
+                    )?);
+                    self.reference_type(span, ty);
+                    ty
                 }
             }
             Token::Enum => {
                 let (name, span) = self.identifier()?;
-                Type::Enum(self.enum_id(name, span))
+                let ty = Type::Enum(self.enum_id(name, span));
+                self.reference_type(span, ty);
+                ty
             }
             Token::Identifier(ref name) => self.named_type(name, token.span)?,
             _ => {
@@ -1107,18 +1159,32 @@ impl Parser {
             shared = self.consume(&Token::Const);
         }
         let base = self.array_suffix(base)?;
-        if self.consume(&Token::Caret) {
-            return base
-                .borrowed(!shared)
-                .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"));
-        }
-        if shared {
-            return Err(Diagnostic::new(
-                token.span,
-                "const currently applies to borrows, such as 'const int^'",
-            ));
-        }
-        return Ok(base);
+        let ty = if self.consume(&Token::Caret) {
+            base.borrowed(!shared)
+                .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?
+        } else {
+            if shared {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "const currently applies to borrows, such as 'const int^'",
+                ));
+            }
+            base
+        };
+        let span = Span {
+            end: self
+                .pending_greater
+                .as_ref()
+                .map(|token| token.span.start)
+                .unwrap_or(self.tokens[self.position - 1].span.end),
+            ..start
+        };
+        self.type_annotations.push((span, ty));
+        self.type_references.push(TypeReference {
+            span,
+            declaration: None,
+        });
+        return Ok(ty);
     }
 
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
@@ -1367,10 +1433,10 @@ impl Parser {
         let target = self.expression(1)?;
         if self.consume(&Token::Equal) {
             let value = self.initializer()?;
-            if let ExpressionKind::Variable(name) = target.kind {
+            if let ExpressionKind::Variable { name, name_span } = target.kind {
                 return Ok(StatementKind::Assign {
                     name,
-                    name_span: target.span,
+                    name_span,
                     value,
                 });
             }
@@ -1718,7 +1784,10 @@ impl Parser {
                         }
                         return Ok(Expression {
                             span,
-                            kind: ExpressionKind::Variable(name),
+                            kind: ExpressionKind::Variable {
+                                name,
+                                name_span: token.span,
+                            },
                         });
                     }
                 }
@@ -1775,7 +1844,10 @@ impl Parser {
                 }
                 if !self.consume(&Token::LeftParen) {
                     return Ok(Expression {
-                        kind: ExpressionKind::Variable(name),
+                        kind: ExpressionKind::Variable {
+                            name,
+                            name_span: token.span,
+                        },
                         span: token.span,
                     });
                 }

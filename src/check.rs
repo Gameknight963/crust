@@ -43,7 +43,7 @@ enum State {
 
 #[derive(Clone, Copy)]
 struct Variable {
-    declaration: Span,
+    declaration: Option<Span>,
     ty: Type,
     state: State,
     reference: Option<usize>,
@@ -345,6 +345,11 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 parameter.ty,
                 State::Available,
                 parameter.span,
+                if parameter.synthetic {
+                    None
+                } else {
+                    Some(parameter.span)
+                },
             )?;
         }
 
@@ -458,7 +463,13 @@ impl FunctionChecker<'_> {
                         "this is reserved for the instance receiver",
                     ));
                 }
-                self.declare(name, *ty, State::Uninitialized, *name_span)?;
+                self.declare(
+                    name,
+                    *ty,
+                    State::Uninitialized,
+                    *name_span,
+                    Some(*name_span),
+                )?;
                 self.require_type(initializer, *ty)?;
                 if ty.is_borrow() {
                     let id = self.references[&initializer.span];
@@ -480,7 +491,7 @@ impl FunctionChecker<'_> {
             } => {
                 // Assignment may reinitialize an owner that has been moved.
                 let target = self.lookup(name, statement.span)?;
-                self.symbol_uses.insert(*name_span, target.declaration);
+                self.record_binding_symbol(*name_span, target);
                 if target.ty.is_borrow() {
                     return Err(Diagnostic::new(
                         statement.span,
@@ -1021,7 +1032,7 @@ impl FunctionChecker<'_> {
                 return Ok(place.ty);
             }
             ExpressionKind::Integer(_) => unreachable!("literal handled above"),
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, name_span } => {
                 if !self
                     .scopes
                     .iter()
@@ -1030,7 +1041,7 @@ impl FunctionChecker<'_> {
                     && let Some((id, variant)) = self.types.enumerator(name)
                 {
                     self.constants.insert(expression.span, variant.value);
-                    self.symbol_uses.insert(expression.span, variant.span);
+                    self.symbol_uses.insert(*name_span, variant.span);
                     return Ok(Type::Enum(id));
                 }
                 if !self
@@ -1040,12 +1051,11 @@ impl FunctionChecker<'_> {
                     .any(|scope| scope.contains_key(name))
                     && self.signatures.contains_key(name)
                 {
-                    self.record_function_symbol(name, expression.span);
+                    self.record_function_symbol(name, *name_span);
                     return self.function_reference(name, expression.span);
                 }
                 let variable = self.available(name, expression.span)?;
-                self.symbol_uses
-                    .insert(expression.span, variable.declaration);
+                self.record_binding_symbol(*name_span, variable);
                 if self.types.owns(variable.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -1084,7 +1094,10 @@ impl FunctionChecker<'_> {
                         kind: ExpressionKind::IndirectCall {
                             callee: Box::new(Expression {
                                 span: *name_span,
-                                kind: ExpressionKind::Variable(name.clone()),
+                                kind: ExpressionKind::Variable {
+                                    name: name.clone(),
+                                    name_span: *name_span,
+                                },
                             }),
                             arguments: arguments.clone(),
                         },
@@ -1131,10 +1144,13 @@ impl FunctionChecker<'_> {
                 }
 
                 if name == "move" {
-                    if let ExpressionKind::Variable(owner) = &arguments[0].kind {
+                    if let ExpressionKind::Variable {
+                        name: owner,
+                        name_span,
+                    } = &arguments[0].kind
+                    {
                         let variable = self.available(owner, arguments[0].span)?;
-                        self.symbol_uses
-                            .insert(arguments[0].span, variable.declaration);
+                        self.record_binding_symbol(*name_span, variable);
                         if !self.types.owns(variable.ty) {
                             if variable.ty.is_borrow() {
                                 return Err(Diagnostic::new(
@@ -1260,7 +1276,7 @@ impl FunctionChecker<'_> {
                         self.record_function_symbol(&static_method_name(*id, name), *name_span);
                         return self.static_reference(*id, name, expression.span);
                     }
-                    if let ExpressionKind::Variable(name) = &operand.kind
+                    if let ExpressionKind::Variable { name, name_span } = &operand.kind
                         && !self
                             .scopes
                             .iter()
@@ -1268,7 +1284,7 @@ impl FunctionChecker<'_> {
                             .any(|scope| scope.contains_key(name))
                         && self.signatures.contains_key(name)
                     {
-                        self.record_function_symbol(name, operand.span);
+                        self.record_function_symbol(name, *name_span);
                         return self.function_reference(name, expression.span);
                     }
                     self.require_unsafe(expression.span, "creating a raw pointer")?;
@@ -1564,6 +1580,12 @@ impl FunctionChecker<'_> {
         return Ok(self.types.pointer_to(function_type, true));
     }
 
+    fn record_binding_symbol(&mut self, span: Span, variable: Variable) {
+        if let Some(declaration) = variable.declaration {
+            self.symbol_uses.insert(span, declaration);
+        }
+    }
+
     fn record_function_symbol(&mut self, name: &str, span: Span) {
         if let Some(declaration) = self.function_declarations.get(name) {
             self.symbol_uses.insert(span, *declaration);
@@ -1756,7 +1778,7 @@ impl FunctionChecker<'_> {
                 if let ExpressionKind::StaticReference { id, name, .. } = &operand.kind {
                     return self.static_reference(*id, name, expression.span);
                 }
-                if let ExpressionKind::Variable(name) = &operand.kind
+                if let ExpressionKind::Variable { name, .. } = &operand.kind
                     && !self
                         .scopes
                         .iter()
@@ -1812,7 +1834,7 @@ impl FunctionChecker<'_> {
                 ));
             }
             ExpressionKind::Cast { ty, .. } => return Ok(*ty),
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, .. } => {
                 if !self
                     .scopes
                     .iter()
@@ -1928,7 +1950,7 @@ impl FunctionChecker<'_> {
 
     fn probe_mutability(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
         return match &expression.kind {
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, .. } => {
                 Ok(!self.available(name, expression.span)?.ty.is_borrow())
             }
             ExpressionKind::Field { base, .. } => self.probe_mutability(base),
@@ -2114,10 +2136,10 @@ impl FunctionChecker<'_> {
                     ..place
                 });
             }
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, name_span } => {
                 let place = self.place(expression)?;
-                let declaration = self.lookup(name, expression.span)?.declaration;
-                self.symbol_uses.insert(expression.span, declaration);
+                let variable = self.lookup(name, expression.span)?;
+                self.record_binding_symbol(*name_span, variable);
                 self.expression_types
                     .entry(expression.span)
                     .or_insert(place.ty);
@@ -2224,7 +2246,7 @@ impl FunctionChecker<'_> {
     }
 
     fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
-        let ExpressionKind::Variable(name) = &expression.kind else {
+        let ExpressionKind::Variable { name, .. } = &expression.kind else {
             return Err(Diagnostic::new(
                 expression.span,
                 "expected a named variable",
@@ -2325,6 +2347,7 @@ impl FunctionChecker<'_> {
         ty: Type,
         state: State,
         span: Span,
+        declaration: Option<Span>,
     ) -> Result<(), Diagnostic> {
         if !self.types.is_sized(ty) {
             return Err(Diagnostic::new(
@@ -2342,7 +2365,7 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
-                declaration: span,
+                declaration,
                 ty,
                 state,
                 reference: None,

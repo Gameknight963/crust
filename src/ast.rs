@@ -260,6 +260,9 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub source_declarations: Vec<SourceDeclaration>,
+    pub type_references: Vec<TypeReference>,
+    pub type_annotations: Vec<(Span, Type)>,
     pub union_tags: std::collections::HashSet<usize>,
     pub interface_checks: Vec<InterfaceCheck>,
     pub function_types: Vec<FunctionType>,
@@ -270,6 +273,40 @@ pub struct Program {
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TypeDeclaration {
+    Aggregate(usize),
+    Enum(usize),
+    Source(Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeReference {
+    pub span: Span,
+    pub declaration: Option<TypeDeclaration>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SourceDeclarationKind {
+    Function,
+    Struct,
+    Union,
+    Interface,
+    Alias,
+    TypeParameter,
+    Method,
+    Parameter,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceDeclaration {
+    pub kind: SourceDeclarationKind,
+    pub name_span: Span,
+    pub header_span: Span,
+    pub span: Span,
+    pub container: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -444,7 +481,7 @@ impl Expression {
     pub fn is_place(&self) -> bool {
         return matches!(
             self.kind,
-            ExpressionKind::Variable(_)
+            ExpressionKind::Variable { .. }
                 | ExpressionKind::Field { .. }
                 | ExpressionKind::Index { .. }
                 | ExpressionKind::Unary {
@@ -508,7 +545,10 @@ pub enum ExpressionKind {
         arguments: Vec<Expression>,
     },
     Integer(u64),
-    Variable(String),
+    Variable {
+        name: String,
+        name_span: Span,
+    },
     Field {
         name_span: Span,
         base: Box<Expression>,

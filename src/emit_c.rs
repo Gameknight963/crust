@@ -845,7 +845,7 @@ impl Emitter<'_> {
                 return Some(self.temporary(self.expression_type(expression), &place));
             }
             ExpressionKind::Integer(_) => unreachable!("checked literal has a constant value"),
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, .. } => {
                 let local = self.local(name);
                 let temporary = self.temporary(local.ty, &local.name);
                 return Some(temporary);
@@ -859,7 +859,7 @@ impl Emitter<'_> {
                     return self.expression(&call.clone());
                 }
                 if name == "move" {
-                    let ExpressionKind::Variable(owner) = &arguments[0].kind else {
+                    let ExpressionKind::Variable { name: owner, .. } = &arguments[0].kind else {
                         let place = self.place(&arguments[0]);
                         return Some(self.temporary(self.expression_type(expression), &place));
                     };
@@ -1073,7 +1073,7 @@ impl Emitter<'_> {
             ExpressionKind::Field { base, name, .. } => {
                 return format!("({}).crust_field_{name}", self.place(base));
             }
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, .. } => {
                 return self.local(name).name;
             }
             ExpressionKind::Unary {
@@ -1106,7 +1106,7 @@ impl Emitter<'_> {
                     .field(self.place_type(base), name, expression.span)
                     .expect("checked field");
             }
-            ExpressionKind::Variable(name) => {
+            ExpressionKind::Variable { name, .. } => {
                 return self.local(name).ty;
             }
             ExpressionKind::Unary {
@@ -1126,7 +1126,7 @@ impl Emitter<'_> {
 
     fn place_mutable(&self, expression: &Expression) -> bool {
         match &expression.kind {
-            ExpressionKind::Variable(name) => return !self.local(name).ty.is_borrow(),
+            ExpressionKind::Variable { name, .. } => return !self.local(name).ty.is_borrow(),
             ExpressionKind::Index { base, .. }
                 if matches!(self.place_type(base), Type::Pointer(_)) =>
             {
