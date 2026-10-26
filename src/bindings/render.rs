@@ -164,6 +164,10 @@ impl Renderer {
         return self.ty(node, false);
     }
 
+    pub fn object_type(&mut self, node: &Value) -> Result<String, String> {
+        return self.ty(node, false);
+    }
+
     fn ty(&mut self, node: &Value, opaque: bool) -> Result<String, String> {
         let node = Self::unwrap(node)?;
         match kind(node) {

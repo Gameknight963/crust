@@ -25,5 +25,6 @@ int main() {
     first.add(2);
     Counter second = move(first);
     print(second.value());
+    unsafe { print(native_limit); }
     return 0;
 }

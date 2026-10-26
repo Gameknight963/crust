@@ -252,16 +252,14 @@ fn cli_writes_utf8_bindings_and_protects_existing_outputs_and_headers() {
 #[test]
 fn header_example_uses_reproducible_bindings_and_destroys_its_moved_c_resource() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/header_project");
-    let generated = generate(
-        &root.join("native.h"),
-        &options(&[
-            "native_create",
-            "native_value",
-            "native_add",
-            "native_destroy",
-        ]),
-    )
-    .unwrap();
+    let mut selected = options(&[
+        "native_create",
+        "native_value",
+        "native_add",
+        "native_destroy",
+    ]);
+    selected.variables.push("native_limit".to_owned());
+    let generated = generate(&root.join("native.h"), &selected).unwrap();
     assert_eq!(
         generated.replace("\r\n", "\n"),
         include_str!("../examples/header_project/bindings.cr").replace("\r\n", "\n")
@@ -278,9 +276,96 @@ fn header_example_uses_reproducible_bindings_and_destroys_its_moved_c_resource()
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n100\n"
+    );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
         "drop:42\n"
     );
+}
+
+#[test]
+fn generates_native_mutable_const_pointer_and_callback_variables() {
+    let path = header(
+        r#"
+        typedef int (*Callback)(int);
+        extern int counter;
+        extern const int limit;
+        extern int *pointer;
+        extern int *const fixed;
+        extern Callback callback;
+    "#,
+    );
+    let mut options = options(&[]);
+    options.variables = ["counter", "limit", "pointer", "fixed", "callback"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let bindings = generate(&path, &options).unwrap();
+    assert!(bindings.contains("extern const int limit;"));
+    assert!(bindings.contains("extern int* const fixed;"));
+    let source = format!(
+        "{bindings} int main() {{ unsafe {{ counter = 40; *fixed += 2; print(callback(*pointer)); print(limit); }} return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("int counter = 1; const int limit = 100; int* pointer = &counter; int* const fixed = &counter; static int increment(int n) { return n + 1; } int (*callback)(int) = increment;");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "43\n100\n"
+    );
+}
+
+#[test]
+fn cli_can_select_functions_and_variables_from_one_header() {
+    let path = header("extern int init; int read_value(void);");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .args(["--variable", "init", "--function", "read_value"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bindings = String::from_utf8(output.stdout).unwrap();
+    assert!(bindings.contains("extern int c_init = \"init\";"));
+    assert!(bindings.contains("extern int read_value();"));
+}
+
+#[test]
+fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarations() {
+    for source in [
+        "static int value;",
+        "extern _Thread_local int value;",
+        "extern volatile int value;",
+        "extern int value[4];",
+        "struct Item { int n; }; extern struct Item value;",
+        "int value(void);",
+    ] {
+        let path = header(source);
+        let mut selected = options(&[]);
+        selected.variables.push("value".to_owned());
+        assert!(generate(&path, &selected).is_err(), "{source}");
+    }
+    let path = header("int selected(void); int selected(void) __asm__(\"actual_symbol\");");
+    assert!(generate(&path, &options(&["selected"])).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn dll_import_variable_attributes_on_later_declarations_require_a_native_wrapper() {
+    let path = header("extern int value; __declspec(dllimport) extern int value;");
+    let mut selected = options(&[]);
+    selected.variables.push("value".to_owned());
+    assert!(generate(&path, &selected).is_err());
 }

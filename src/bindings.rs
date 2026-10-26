@@ -13,6 +13,7 @@ pub struct Options {
     pub include_dirs: Vec<PathBuf>,
     pub defines: Vec<String>,
     pub functions: Vec<String>,
+    pub variables: Vec<String>,
 }
 
 fn identifier(name: &str) -> bool {
@@ -109,20 +110,26 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let header = header
         .canonicalize()
         .map_err(|error| format!("{}: {error}", header.display()))?;
-    if options.functions.is_empty() {
-        return Err("select at least one C function".to_owned());
+    let names: Vec<_> = options
+        .functions
+        .iter()
+        .chain(&options.variables)
+        .cloned()
+        .collect();
+    if names.is_empty() {
+        return Err("select at least one C function or variable".to_owned());
     }
     let mut selected = HashSet::new();
-    for name in &options.functions {
+    for name in &names {
         if !identifier(name) || name == "main" || name.starts_with("__builtin_") {
-            return Err(format!("invalid C function selection '{name}'"));
+            return Err(format!("invalid C declaration selection '{name}'"));
         }
         if !selected.insert(name) {
-            return Err(format!("C function '{name}' was selected twice"));
+            return Err(format!("C declaration '{name}' was selected twice"));
         }
     }
-    let mut prefix = options.functions[0].clone();
-    for name in &options.functions[1..] {
+    let mut prefix = names[0].clone();
+    for name in &names[1..] {
         while !name.starts_with(&prefix) {
             prefix.pop();
         }
@@ -130,7 +137,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let filters = if prefix.len() >= 3 {
         vec![prefix]
     } else {
-        options.functions.clone()
+        names.clone()
     };
     let mut declarations = Vec::new();
     for filter in filters {
@@ -142,32 +149,49 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                 .map_err(|error| error.to_string())?,
         );
     }
-    for name in &options.functions {
-        let declaration = declarations
+    for (index, name) in names.iter().enumerate() {
+        let function = index < options.functions.len();
+        let expected = if function { "FunctionDecl" } else { "VarDecl" };
+        let label = if function { "function" } else { "variable" };
+        let matches: Vec<_> = declarations
             .iter()
-            .find(|node| kind(node) == "FunctionDecl" && node["name"] == *name)
-            .ok_or_else(|| format!("C header has no function declaration named '{name}'"))?;
-        if declaration["storageClass"] == "static" {
+            .filter(|node| kind(node) == expected && node["name"] == *name)
+            .collect();
+        if matches.is_empty() {
             return Err(format!(
-                "C function '{name}' has internal linkage. Expose it through a native C wrapper"
+                "C header has no {label} declaration named '{name}'"
             ));
         }
-        if children(declaration)
-            .iter()
-            .any(|node| kind(node) == "AsmLabelAttr")
-        {
-            return Err(format!(
-                "C function '{name}' uses an assembler symbol label"
-            ));
+        for declaration in matches {
+            if declaration["storageClass"] == "static" {
+                return Err(format!(
+                    "C {label} '{name}' has internal linkage. Expose it through a native C wrapper"
+                ));
+            }
+            if children(declaration)
+                .iter()
+                .any(|node| kind(node) == "AsmLabelAttr")
+            {
+                return Err(format!("C {label} '{name}' uses an assembler symbol label"));
+            }
+            if !function
+                && (!declaration["tls"].is_null()
+                    || children(declaration)
+                        .iter()
+                        .any(|node| kind(node) == "DLLImportAttr"))
+            {
+                return Err(format!(
+                    "C variable '{name}' requires storage attributes. Expose it through a native C wrapper"
+                ));
+            }
         }
     }
-    let undefines = options
-        .functions
+    let undefines = names
         .iter()
         .map(|name| format!("#undef {name}\n"))
         .collect::<String>();
     let mut probes = undefines.clone();
-    for (index, name) in options.functions.iter().enumerate() {
+    for (index, name) in names.iter().enumerate() {
         probes.push_str(&format!(
             "typedef __typeof__({name}) __crust_import_probe_{index};\n"
         ));
@@ -183,27 +207,36 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .into_iter()
         .collect::<Result<_, _>>()
         .map_err(|error| error.to_string())?;
-    let mut renderer = render::Renderer::new(&declarations, &probes, &options.functions);
+    let mut renderer = render::Renderer::new(&declarations, &probes, &names);
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
+    let mut variable_checks = Vec::new();
     let mut locals = String::new();
-    for (index, native) in options.functions.iter().enumerate() {
+    for (index, native) in names.iter().enumerate() {
         let probe = probes
             .iter()
             .find(|node| node["name"] == format!("__crust_import_probe_{index}"))
             .ok_or_else(|| format!("Clang omitted the type of '{native}'"))?;
         let node = type_children(probe)
             .next()
-            .ok_or("Clang omitted a function type")?;
-        let signature = renderer
-            .signature(node)
-            .map_err(|error| format!("C function '{native}': {error}"))?;
+            .ok_or("Clang omitted a declaration type")?;
         let name = renderer.binding_name(native);
         let link = if name == *native {
             String::new()
         } else {
             format!(" = \"{native}\"")
         };
+        if index >= options.functions.len() {
+            let ty = renderer
+                .object_type(node)
+                .map_err(|error| format!("C variable '{native}': {error}"))?;
+            declarations.push(format!("extern {ty} {name}{link};"));
+            variable_checks.push((name, native));
+            continue;
+        }
+        let signature = renderer
+            .signature(node)
+            .map_err(|error| format!("C function '{native}': {error}"))?;
         declarations.push(format!(
             "extern {} {}{}({}){link};",
             signature.result, signature.convention, name, signature.parameters
@@ -244,6 +277,16 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             return Err("binding validation requires a function type".to_owned());
         };
         verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__({native}), crust_function_{function}), \"unsupported C ABI for {native}\");\n"));
+    }
+    for (name, native) in variable_checks {
+        let global = checked
+            .program
+            .globals
+            .iter()
+            .find(|global| global.name == name)
+            .ok_or("missing variable validation type")?;
+        let ty = crate::emit_c::c_type(global.ty);
+        verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__({native}), {ty}), \"unsupported C ABI for {native}\");\n"));
     }
     clang(&header, options, &verification, false, None)?;
     return Ok(output);

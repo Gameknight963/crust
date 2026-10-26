@@ -1,10 +1,15 @@
 # C header bindings
 
 `crust import-c` reads a C header through Clang and writes declarations for selected
-functions. The generated file can be imported by ordinary Crust source.
+functions and external variables. The generated file can be imported by ordinary
+Crust source.
 
 ```powershell
-cargo run -- import-c examples/header_project/native.h --function native_create --function native_value --function native_add --function native_destroy --output examples/header_project/bindings.cr --force
+cargo run -- import-c examples/header_project/native.h `
+  --function native_create --function native_value `
+  --function native_add --function native_destroy `
+  --variable native_limit `
+  --output examples/header_project/bindings.cr --force
 cargo run -- run examples/header_project
 ```
 
@@ -16,6 +21,7 @@ Crust struct with a destructor.
 | Option | Purpose |
 | --- | --- |
 | `--function <name>` | Select a C function, repeated for each export |
+| `--variable <name>` | Select external C storage, repeated for each variable |
 | `--output <file.cr>` | Write UTF-8 bindings to a file |
 | `--force` | Replace an existing output file |
 | `--include-dir <path>` | Add a C header search directory |
@@ -32,19 +38,21 @@ command protects its input header from replacement.
 - Raw pointers with const pointees and multiple pointer levels
 - Opaque struct and union tags
 - Function pointers, callback returns, and variadic functions
+- Mutable and const external variables, including pointers and callback globals
 - [Native calling conventions](language.md#calling-conventions)
 
 Clang preprocesses includes and macros before Crust reads the function types.
 Typedefs resolve to their native types. Structs and unions are exposed through
 opaque pointers. Names reserved by Crust receive a `c_` prefix and retain their
 native symbol through a renamed import.
-Function selection names the native declaration. A later macro with the same
+Selection names the native declaration. A later macro with the same
 name does not redirect the binding.
 
 The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.
 Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
+Thread-local and DLL-imported data require native C accessor functions.
 
 Link the C implementation or library through the target's
 [native options](projects.md). Use matching `defines` and `--define` values when

@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <limits.h>
 
+const int native_limit = 100;
+
 struct NativeCounter {
     int value;
 };

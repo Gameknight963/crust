@@ -163,7 +163,7 @@ fn function_name(name: &str) -> String {
     return format!("crust_fn_{name}");
 }
 
-fn c_type(ty: Type) -> String {
+pub(crate) fn c_type(ty: Type) -> String {
     return match ty {
         Type::Function(id) => format!("crust_function_{id}"),
         Type::Integer(kind) => kind.c_name().to_owned(),
