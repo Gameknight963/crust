@@ -74,6 +74,7 @@ pub enum Token {
     BangEqual,
     LessEqual,
     GreaterEqual,
+    GreaterGreater,
     AmpersandAmpersand,
     PipePipe,
     Arrow,
@@ -345,7 +346,7 @@ impl Lexer<'_> {
 
         // Even unsupported C operators must stay distinct from spaced tokens:
         // x++ is not the same token sequence as x + +y.
-        for operator in ["++", "--", "<<", ">>", "..."] {
+        for operator in ["++", "--", "<<", "..."] {
             if self.source[self.offset..].starts_with(operator) {
                 for _ in operator.chars() {
                     self.advance();
@@ -363,6 +364,7 @@ impl Lexer<'_> {
             (Some('!'), Some('=')) => Some(Token::BangEqual),
             (Some('<'), Some('=')) => Some(Token::LessEqual),
             (Some('>'), Some('=')) => Some(Token::GreaterEqual),
+            (Some('>'), Some('>')) => Some(Token::GreaterGreater),
             (Some('&'), Some('&')) => Some(Token::AmpersandAmpersand),
             (Some('|'), Some('|')) => Some(Token::PipePipe),
             (Some('-'), Some('>')) => Some(Token::Arrow),
@@ -737,7 +739,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_compound_operators_without_confusing_spaced_ones() {
-        for source in ["x++", "x--", "x<<=2", "x>>1", "..."] {
+        for source in ["x++", "x--", "x<<=2", "x<<1", "..."] {
             let error = tokenize(source).unwrap_err();
             assert!(error.message.contains("not supported yet"));
         }

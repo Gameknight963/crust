@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{SpannedToken, Token};
 use std::collections::{HashMap, HashSet};
+mod generics;
 
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
@@ -18,13 +19,19 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         enum_names: Vec::new(),
         pointers: Vec::new(),
         function_types: Vec::new(),
+        generics: generics::Templates::default(),
+        pending_greater: None,
     };
+    parser.collect_templates()?;
     parser.collect_type_names()?;
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut enums = Vec::new();
 
     while !parser.at(&Token::EndOfFile) {
+        if parser.skip_template() {
+            continue;
+        }
         if parser.consume(&Token::Typedef) {
             parser.typedef_type()?;
             parser.expect(Token::Semicolon, "expected ';' after typedef")?;
@@ -58,6 +65,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     }
 
     functions.append(&mut parser.methods);
+    functions.append(&mut parser.generics.function_definitions);
+    structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
         function_types: parser.function_types,
         pointers: parser.pointers,
@@ -71,6 +80,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 }
 
 struct Parser {
+    generics: generics::Templates,
+    pending_greater: Option<SpannedToken>,
     function_types: Vec<FunctionType>,
     pointers: Vec<PointerType>,
     enum_names: Vec<(String, Span)>,
@@ -99,6 +110,10 @@ impl Parser {
         let mut depth = 0usize;
         let mut position = 0;
         while position < self.tokens.len() {
+            if let Some(end) = self.generics.ends.get(&position) {
+                position = *end;
+                continue;
+            }
             let token = self.tokens[position].clone();
             if depth == 0
                 && token.kind == Token::Enum
@@ -225,6 +240,19 @@ impl Parser {
                 ));
             }
         }
+        for name in self.generics.structs.keys() {
+            if let Some((_, span)) = self
+                .struct_names
+                .iter()
+                .chain(&self.enum_names)
+                .find(|entry| entry.0 == *name)
+            {
+                return Err(Diagnostic::new(
+                    *span,
+                    format!("type tag '{name}' is already used by a generic struct"),
+                ));
+            }
+        }
         let mut aliases: Vec<_> = self
             .aliases
             .iter()
@@ -250,7 +278,14 @@ impl Parser {
         }
         let previous = self.position;
         self.position = alias.position;
-        let (parsed_name, ty) = self.typedef_type()?;
+        let bindings = std::mem::take(&mut self.generics.bindings);
+        let owner = self.current_struct.take();
+        let pending = self.pending_greater.take();
+        let result = self.typedef_type();
+        self.generics.bindings = bindings;
+        self.current_struct = owner;
+        self.pending_greater = pending;
+        let (parsed_name, ty) = result?;
         if parsed_name != name {
             return Err(Diagnostic::new(
                 self.current().span,
@@ -355,6 +390,9 @@ impl Parser {
     }
 
     fn named_type(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
+        if let Some(ty) = self.generics.bindings.get(name) {
+            return Ok(*ty);
+        }
         if name == "Self" {
             return self
                 .current_struct
@@ -363,6 +401,10 @@ impl Parser {
         }
         if self.aliases.contains_key(name) {
             return self.alias_type(name);
+        }
+        if self.generics.structs.contains_key(name) {
+            let arguments = self.type_arguments()?;
+            return self.instantiate_struct(name, arguments, span);
         }
         if let Some(kind) = IntType::named(name) {
             return Ok(Type::Integer(kind));
@@ -378,6 +420,8 @@ impl Parser {
 
     fn known_type(&self, name: &str) -> bool {
         return name == "Self"
+            || self.generics.bindings.contains_key(name)
+            || self.generics.structs.contains_key(name)
             || IntType::named(name).is_some()
             || self.aliases.contains_key(name)
             || self.struct_names.iter().any(|entry| entry.0 == name)
@@ -406,6 +450,11 @@ impl Parser {
     }
 
     fn local_type_name(&self) -> bool {
+        if matches!(&self.current().kind, Token::Identifier(name) if self.generics.structs.contains_key(name))
+            && self.next_at(&Token::Less)
+        {
+            return self.generic_declaration_ahead();
+        }
         if !matches!(&self.current().kind, Token::Identifier(name) if self.known_type(name)) {
             return false;
         }
@@ -529,7 +578,17 @@ impl Parser {
     fn struct_definition(&mut self) -> Result<StructDefinition, Diagnostic> {
         let start = self.advance().span;
         let (name, span) = self.identifier()?;
-        let id = self.struct_id(name, span);
+        let id = self.struct_id(name.clone(), span);
+        return self.struct_body(id, &name, start);
+    }
+
+    fn struct_body(
+        &mut self,
+        id: usize,
+        source_name: &str,
+        start: Span,
+    ) -> Result<StructDefinition, Diagnostic> {
+        let previous_owner = self.current_struct;
         self.current_struct = Some(id);
         self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
         let mut fields = Vec::new();
@@ -544,7 +603,7 @@ impl Parser {
             if self.at(&Token::Tilde) {
                 let start = self.advance().span;
                 let (name, name_span) = self.identifier()?;
-                if name != self.struct_names[id].0 {
+                if name != source_name {
                     return Err(Diagnostic::new(
                         name_span,
                         "the destructor name must match its enclosing struct",
@@ -616,7 +675,7 @@ impl Parser {
             });
         }
         self.advance();
-        self.current_struct = None;
+        self.current_struct = previous_owner;
         let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
         return Ok(StructDefinition {
             id,
@@ -630,7 +689,14 @@ impl Parser {
         let start = self.current().span;
         let external = self.consume(&Token::Extern);
         let return_type = self.type_name()?;
-        let (name, _) = self.identifier()?;
+        let (mut name, _) = self.identifier()?;
+        if self.at(&Token::Less) {
+            self.skip_type_parameters()?;
+            name =
+                self.generics.current_function.clone().ok_or_else(|| {
+                    Diagnostic::new(start, "generic function needs type arguments")
+                })?;
+        }
         return self.function_body(return_type, name, start, None, false, external);
     }
 
@@ -750,7 +816,12 @@ impl Parser {
             Token::BoxInt => Type::BoxInt,
             Token::Struct => {
                 let (name, span) = self.identifier()?;
-                Type::Struct(self.struct_id(name, span))
+                if self.generics.structs.contains_key(&name) {
+                    let arguments = self.type_arguments()?;
+                    self.instantiate_struct(&name, arguments, span)?
+                } else {
+                    Type::Struct(self.struct_id(name, span))
+                }
             }
             Token::Enum => {
                 let (name, span) = self.identifier()?;
@@ -1338,8 +1409,39 @@ impl Parser {
                 });
             }
             Token::Identifier(name) => {
+                let mut generic_type = None;
+                if self.next_generic_function(&name) {
+                    let arguments = self.type_arguments()?;
+                    if self.generics.structs.contains_key(&name) && self.at(&Token::ColonColon) {
+                        generic_type = Some(self.instantiate_struct(&name, arguments, token.span)?);
+                    } else {
+                        let span = token.span.through(self.tokens[self.position - 1].span);
+                        let name = self.instantiate_function(&name, arguments, token.span)?;
+                        if self.consume(&Token::LeftParen) {
+                            let (arguments, end) = self.arguments()?;
+                            return Ok(Expression {
+                                span: token.span.through(end),
+                                kind: ExpressionKind::Call { name, arguments },
+                            });
+                        }
+                        return Ok(Expression {
+                            span,
+                            kind: ExpressionKind::Variable(name),
+                        });
+                    }
+                }
+                if generic_type.is_none()
+                    && self.generics.structs.contains_key(&name)
+                    && self.at(&Token::Less)
+                {
+                    generic_type = Some(self.named_type(&name, token.span)?);
+                }
                 if self.consume(&Token::ColonColon) {
-                    let ty = self.named_type(&name, token.span)?;
+                    let ty = if let Some(ty) = generic_type {
+                        ty
+                    } else {
+                        self.named_type(&name, token.span)?
+                    };
                     if let Type::Enum(id) = ty {
                         let (name, end) = self.identifier()?;
                         return Ok(Expression {
@@ -1460,6 +1562,9 @@ impl Parser {
     }
 
     fn current(&self) -> &SpannedToken {
+        if let Some(token) = &self.pending_greater {
+            return token;
+        }
         return &self.tokens[self.position];
     }
 
@@ -1470,11 +1575,14 @@ impl Parser {
     fn next_at(&self, token: &Token) -> bool {
         return self
             .tokens
-            .get(self.position + 1)
+            .get(self.position + usize::from(self.pending_greater.is_none()))
             .is_some_and(|next| &next.kind == token);
     }
 
     fn advance(&mut self) -> SpannedToken {
+        if let Some(token) = self.pending_greater.take() {
+            return token;
+        }
         let token = self.current().clone();
         if token.kind != Token::EndOfFile {
             self.position += 1;

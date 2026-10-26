@@ -40,6 +40,43 @@ Compound assignments capture their destination before evaluating the right side.
 The right side can read the destination, while mutation or moves of its parent
 are rejected until assignment completes.
 
+## Generics
+
+Type parameters follow the struct or function name. Uses supply explicit type
+arguments, including calls to generic functions.
+
+```c
+struct Pair<T, U> {
+    T first;
+    U second;
+    T get_first() const { return this->first; }
+};
+
+T identity<T>(T value) { return value; }
+
+int main() {
+    Pair<int, char> pair = { .first = 42, .second = 'a' };
+    print(identity<int>(pair.get_first()));
+    return 0;
+}
+```
+
+Each used combination produces a concrete type or function. The compiler checks
+its body with those types, applying the ordinary ownership and borrow rules.
+For example, copying a field requires a copyable field type. A generic function
+that transfers ownership can return `move(value)`.
+
+- Generic structs support fields, instance methods, static methods, and `~Type()` destructors
+- `Self` denotes the current concrete struct, and destructors use the base name, such as `~Pair()`
+- Typedefs can name concrete instances, and equivalent type arguments share an instance
+- Type arguments can nest, such as `Pair<Pair<int, int>, char>`
+- Generic function instances can supply C callbacks through their function addresses
+- Type parameters belong to their declaration and do not capture names from the caller
+- Bodies are checked when instantiated, and recursive instantiation has a compiler limit
+
+See [the generic buffer](../examples/generic_buffer.cr) for a C-backed container
+with private storage, checked borrows, and automatic deallocation.
+
 ## Integers and conversions
 
 | Names | Representation |

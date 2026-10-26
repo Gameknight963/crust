@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::check::CheckedProgram;
+use crate::check::{CheckedProgram, FunctionAnalysis};
 use crate::diagnostic::Span;
 use crate::types::Types;
 
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
     let program = &checked.program;
+    let empty_analysis = FunctionAnalysis::default();
     let mut emitter = Emitter {
         output: format!("{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
@@ -18,10 +19,10 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .map(|function| (function.name.clone(), function.return_type))
             .collect(),
         types: &checked.types,
-        expression_types: &checked.expression_types,
-        method_calls: &checked.method_calls,
-        conversions: &checked.conversions,
-        constants: &checked.constants,
+        expression_types: &empty_analysis.expression_types,
+        method_calls: &empty_analysis.method_calls,
+        conversions: &empty_analysis.conversions,
+        constants: &empty_analysis.constants,
         loops: Vec::new(),
         external_names: program
             .functions
@@ -29,7 +30,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .filter(|function| function.external)
             .map(|function| function.name.clone())
             .collect(),
-        function_values: &checked.function_values,
+        function_values: &empty_analysis.function_values,
     };
     emitter
         .return_types
@@ -82,6 +83,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         if function.external {
             continue;
         }
+        let analysis = &checked.analyses[&function.name];
+        emitter.expression_types = &analysis.expression_types;
+        emitter.method_calls = &analysis.method_calls;
+        emitter.conversions = &analysis.conversions;
+        emitter.constants = &analysis.constants;
+        emitter.function_values = &analysis.function_values;
         emitter.line("");
         emitter.line(&header(function));
         let mut scope = Scope::default();
@@ -107,6 +114,9 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 }
 
 fn function_name(name: &str) -> String {
+    if let Some(generic) = name.strip_prefix('$') {
+        return format!("crust_generic_{generic}");
+    }
     if let Some(method) = name.strip_prefix('#') {
         return format!("crust_static_{method}");
     }

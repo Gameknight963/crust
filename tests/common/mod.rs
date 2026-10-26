@@ -7,7 +7,18 @@ static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
 
 // Instrument the generated C's allocator, rather than inferring cleanup from
 // text matching. Real compiled executions verify frees and their scope order.
+#[allow(dead_code)]
 pub fn tracked_run(source: &str) -> Output {
+    return run_with_tracking(source, false);
+}
+
+// Each integration test compiles this module independently.
+#[allow(dead_code)]
+pub fn tracked_run_sizes(source: &str) -> Output {
+    return run_with_tracking(source, true);
+}
+
+fn run_with_tracking(source: &str, sizes: bool) -> Output {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ownership-tests");
@@ -21,15 +32,36 @@ pub fn tracked_run(source: &str) -> Output {
         #include <stdio.h>
         #include <stdint.h>
         #include <inttypes.h>
+        #include <string.h>
+        struct tracked_allocation { void *pointer; size_t size; struct tracked_allocation *next; };
+        static struct tracked_allocation *allocations = NULL;
         static size_t live_allocations = 0;
         static void *tracked_malloc(size_t bytes) {
             void *value = malloc(bytes);
-            if (value != NULL) { live_allocations += 1; }
+            if (value != NULL) {
+                struct tracked_allocation *record = malloc(sizeof(*record));
+                if (record == NULL) { free(value); return NULL; }
+                record->pointer = value; record->size = bytes; record->next = allocations;
+                allocations = record;
+                live_allocations += 1;
+            }
             return value;
         }
         static void tracked_free(void *value) {
             if (value != NULL) {
-                fprintf(stderr, "drop:%" PRId32 "\n", *(int32_t *)value);
+                struct tracked_allocation **link = &allocations;
+                while (*link != NULL && (*link)->pointer != value) { link = &(*link)->next; }
+                if (*link == NULL) { fprintf(stderr, "invalid free\n"); exit(98); }
+                struct tracked_allocation *record = *link;
+                *link = record->next;
+                if (CRUST_TEST_LOG_SIZES || record->size < sizeof(int32_t)) {
+                    fprintf(stderr, "drop:bytes:%zu\n", record->size);
+                } else {
+                    int32_t contents;
+                    memcpy(&contents, value, sizeof(contents));
+                    fprintf(stderr, "drop:%" PRId32 "\n", contents);
+                }
+                free(record);
                 live_allocations -= 1;
             }
             free(value);
@@ -37,7 +69,8 @@ pub fn tracked_run(source: &str) -> Output {
         #define malloc tracked_malloc
         #define free tracked_free
         #define main crust_test_main
-    "#;
+    "#
+    .replace("CRUST_TEST_LOG_SIZES", if sizes { "1" } else { "0" });
     let suffix = r#"
         #undef main
         #undef malloc

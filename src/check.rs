@@ -6,12 +6,16 @@ use crate::types::Types;
 
 // Code generation accepts only a program that has passed this checker.
 pub(crate) struct CheckedProgram {
-    pub function_values: HashMap<Span, String>,
     pub program: Program,
     pub types: Types,
+    pub analyses: HashMap<String, FunctionAnalysis>,
+}
+
+#[derive(Default)]
+pub(crate) struct FunctionAnalysis {
+    pub function_values: HashMap<Span, String>,
     pub expression_types: HashMap<Span, Type>,
-    // Resolved methods reuse ordinary call checking and generation, including
-    // receiver-first evaluation, argument loans, moves, and parameter cleanup.
+    // Lowered calls retain receiver-first evaluation and ordinary call rules.
     pub method_calls: HashMap<Span, Expression>,
     pub conversions: HashMap<Span, Type>,
     pub constants: HashMap<Span, i128>,
@@ -68,11 +72,7 @@ struct LoopContext {
 
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let mut types = Types::build(&program)?;
-    let mut expression_types = HashMap::new();
-    let mut method_calls = HashMap::new();
-    let mut conversions = HashMap::new();
-    let mut constants = HashMap::new();
-    let mut function_values = HashMap::new();
+    let mut analyses = HashMap::new();
     let mut signatures = HashMap::new();
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
@@ -231,6 +231,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         if function.external {
             continue;
         }
+        let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
             signatures: &signatures,
             scopes: vec![HashMap::new()],
@@ -242,11 +243,11 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             next_loan: 0,
             references: HashMap::new(),
             types: &mut types,
-            expression_types: &mut expression_types,
-            method_calls: &mut method_calls,
+            expression_types: &mut analysis.expression_types,
+            method_calls: &mut analysis.method_calls,
             loops: Vec::new(),
-            conversions: &mut conversions,
-            constants: &mut constants,
+            conversions: &mut analysis.conversions,
+            constants: &mut analysis.constants,
             unevaluated: false,
             unsafe_depth: 0,
             current_struct: if let Some(method) = function
@@ -261,7 +262,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                     .strip_prefix('~')
                     .map(|id| id.parse().unwrap())
             },
-            function_values: &mut function_values,
+            function_values: &mut analysis.function_values,
         };
         for (index, parameter) in function.parameters.iter().enumerate() {
             if parameter.name == "this"
@@ -291,16 +292,13 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 ),
             ));
         }
+        analyses.insert(function.name.clone(), analysis);
     }
 
     return Ok(CheckedProgram {
-        function_values,
         program,
         types,
-        expression_types,
-        method_calls,
-        conversions,
-        constants,
+        analyses,
     });
 }
 

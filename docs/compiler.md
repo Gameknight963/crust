@@ -13,6 +13,7 @@ ownership checking, C generation, and native compilation.
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
+| `src/parser/generics.rs` | Generic declarations and concrete instantiation |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
@@ -32,6 +33,8 @@ ownership checking, C generation, and native compilation.
 - External declarations and calls retain their C symbol names
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
+- Generic declarations instantiate concrete structs and functions for each used combination of type arguments
+- Expression types, conversions, resolved calls, and constants are recorded separately for each function, including generic instances sharing source spans
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename

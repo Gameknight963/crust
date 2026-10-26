@@ -254,6 +254,9 @@ pub struct Function {
 
 impl Function {
     pub fn description(&self) -> String {
+        if let Some(generic) = self.name.strip_prefix('$') {
+            return format!("function '{}'", generic.split_once('_').unwrap().1);
+        }
         if self.name.starts_with('~') {
             return String::from("destructor");
         }

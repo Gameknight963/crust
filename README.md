@@ -30,6 +30,8 @@ Fixed-size arrays support checked indexing and resource cleanup. String literals
 use UTF-8 byte arrays.
 The [C owner example](examples/c_owner.cr) wraps C allocation with private fields,
 checked borrows, and a destructor.
+The [generic buffer example](examples/generic_buffer.cr) uses the same container
+with integers, characters, and structs.
 
 ## Getting started
 
