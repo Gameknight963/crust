@@ -14,6 +14,7 @@ ownership checking, C generation, and native compilation.
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/analysis/rename.rs` | Local and parameter rename with binding validation |
 | `src/bindings.rs` | Clang header analysis and generated binding validation |
+| `src/bindings/enums.rs` | Native enum discovery, integer representation, and constant probes |
 | `src/bindings/render.rs` | C type trees to Crust declarations |
 | `src/cli_bindings.rs` | Header binding command and output handling |
 | `src/ast.rs` | Syntax tree and type representation |
@@ -42,6 +43,10 @@ byte-offset range. Tokens retain their file-local lines and columns. File-end
 markers keep declarations within their source file, and frontend errors map back
 to the original path and byte range.
 
+Native header references resolve relative to their declaring source file.
+`SourceSet::native_headers` exposes their canonical paths for build-input
+protection, and generated C includes those paths directly.
+
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.
@@ -67,6 +72,8 @@ Declaration queries filter to selected names, and type queries carry the
 reachable typedef and pointer information needed by those functions.
 Independent Clang type-compatibility assertions verify generated function and
 object types against the original header. Binding tests require Clang on `PATH`.
+Reachable native enums retain their C tags through emitted header references.
+Clang constant probes determine their compatible integer types and member values.
 
 The CLI writes the generated UTF-8 file after validation. See
 [C header bindings](c-bindings.md) for commands and supported declarations.
@@ -75,6 +82,7 @@ The CLI writes the generated UTF-8 file after validation. See
 
 - Generated C uses C11
 - Enums lower to distinct generated typedef names with their declared integer representation
+- External enums alias native C tags and assert compatible integer types, size, and alignment
 - Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
 - Struct values use generated aliases, and opaque aliases preserve their native C tags
 - Union types share the aggregate type registry and generate native C unions, including opaque union tags
@@ -102,6 +110,10 @@ The CLI writes the generated UTF-8 file after validation. See
 - `char` follows the host C signedness, with a generated assertion checking the selected C compiler
 - Native integer spellings retain C type identity and conversion rank, and generated assertions check the host's integer widths and standard typedefs
 - `run` forwards the low eight bits of the native program's exit code
+
+MSVC treats enum types as distinct in `_Generic`. Native enum assertions under
+MSVC check signedness, size, and alignment. Clang also checks integer type
+compatibility.
 
 ## Ownership and cleanup
 

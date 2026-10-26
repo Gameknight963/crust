@@ -286,6 +286,21 @@ int main() {
 - Integer-to-enum casts check the underlying range and allow unnamed values
 - `sizeof` and `alignof` follow the underlying integer type
 
+Native C enums use `extern enum`, with a header reference providing the C tag:
+
+```c
+extern header "native.h";
+extern enum NativeStatus : int32_t {
+    NativeReady = 1,
+    NativeError = -1,
+};
+```
+
+`extern header` paths resolve relative to the declaring source file and become
+C includes. Native compilation checks the enum's compatible integer type, size,
+and alignment. A renamed tag uses `extern enum Status = "NativeStatus" : int32_t`.
+See [C header bindings](c-bindings.md) for generated declarations.
+
 ## Booleans
 
 ```c

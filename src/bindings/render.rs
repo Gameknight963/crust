@@ -13,6 +13,7 @@ pub(super) struct Renderer {
     callbacks: HashSet<String>,
     functions: HashMap<String, Signature>,
     records: HashSet<String>,
+    enums: HashMap<String, String>,
     names: HashSet<String>,
     next_alias: usize,
 }
@@ -33,6 +34,7 @@ impl Renderer {
             callbacks: HashSet::new(),
             functions: HashMap::new(),
             records: HashSet::new(),
+            enums: HashMap::new(),
             names,
             next_alias: 0,
         };
@@ -56,6 +58,33 @@ impl Renderer {
             name.push('_');
         }
         return name;
+    }
+
+    pub fn enums(&mut self, definitions: Vec<enums::Enum>) -> Result<(), String> {
+        for definition in &definitions {
+            self.names
+                .extend(definition.values.iter().map(|(name, _)| name.clone()));
+        }
+        for definition in definitions {
+            let name = self.binding_name(&definition.name);
+            let native_name = if name != definition.name {
+                format!(" = \"{}\"", definition.name)
+            } else {
+                String::new()
+            };
+            let mut declaration = format!(
+                "extern enum {name}{native_name} : {} {{\n",
+                definition.underlying.c_name()
+            );
+            for (native, value) in definition.values {
+                let member = self.binding_name(&native);
+                declaration.push_str(&format!("    {member} = {value},\n"));
+            }
+            declaration.push_str("};");
+            self.enums.insert(definition.name, name);
+            self.declarations.push((None, declaration));
+        }
+        return Ok(());
     }
 
     pub fn check_name(&mut self, index: usize) -> String {
@@ -203,6 +232,14 @@ impl Renderer {
                 } else {
                     format!("const {value}")
                 });
+            }
+            "EnumType" => {
+                let name = node["decl"]["name"].as_str().unwrap_or("");
+                return self
+                    .enums
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("missing representation for C enum '{name}'"));
             }
             "RecordType" => {
                 if !opaque {

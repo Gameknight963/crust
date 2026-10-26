@@ -79,6 +79,17 @@ struct LoopContext {
 }
 
 pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> {
+    if program.native_headers.is_empty()
+        && let Some(definition) = program
+            .enums
+            .iter()
+            .find(|definition| definition.native_name.is_some())
+    {
+        return Err(Diagnostic::new(
+            definition.span,
+            "native enums require an extern header declaration",
+        ));
+    }
     let imported: HashSet<_> = program
         .functions
         .iter()

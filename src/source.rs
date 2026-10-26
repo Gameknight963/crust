@@ -28,6 +28,7 @@ pub struct SourceFile {
 }
 
 pub struct SourceSet {
+    native_headers: Vec<PathBuf>,
     files: Vec<SourceFile>,
     tokens: Vec<SpannedToken>,
     loaded: HashSet<PathBuf>,
@@ -54,6 +55,28 @@ pub fn identity(path: &Path) -> io::Result<PathBuf> {
     return Ok(normalized);
 }
 
+pub(crate) fn header_name(path: &Path) -> io::Result<String> {
+    let name = path
+        .to_str()
+        .ok_or_else(|| io::Error::other("native header paths require UTF-8"))?;
+    #[cfg(windows)]
+    let name = if let Some(unc) = name.strip_prefix(r"\\?\UNC\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        name.strip_prefix(r"\\?\")
+            .unwrap_or(name)
+            .replace('\\', "/")
+    };
+    #[cfg(not(windows))]
+    let name = name.to_owned();
+    if name.is_empty() || name.contains(['\0', '\n', '\r', '"']) {
+        return Err(io::Error::other(
+            "native header path is not representable as a C include",
+        ));
+    }
+    return Ok(name);
+}
+
 impl SourceSet {
     pub fn load(entry: &Path) -> Result<Self, SourceError> {
         return Self::load_with(entry, |path| fs::read_to_string(path));
@@ -64,6 +87,7 @@ impl SourceSet {
         mut read: impl FnMut(&Path) -> io::Result<String>,
     ) -> Result<Self, SourceError> {
         let mut sources = Self {
+            native_headers: Vec::new(),
             files: Vec::new(),
             tokens: Vec::new(),
             loaded: HashSet::new(),
@@ -75,6 +99,10 @@ impl SourceSet {
 
     pub fn files(&self) -> &[SourceFile] {
         return &self.files;
+    }
+
+    pub fn native_headers(&self) -> &[PathBuf] {
+        return &self.native_headers;
     }
 
     pub fn check(&self) -> Result<(), SourceError> {
@@ -201,6 +229,63 @@ impl SourceSet {
         let mut declaration_start = true;
         while position < tokens.len() {
             let token = &tokens[position];
+            if declaration_start
+                && token.kind == Token::Extern
+                && matches!(tokens.get(position + 1).map(|token| &token.kind), Some(Token::Identifier(name)) if name == "header")
+                && let Some(SpannedToken {
+                    kind: Token::StringLiteral(bytes),
+                    span,
+                }) = tokens.get(position + 2)
+            {
+                let name = std::str::from_utf8(bytes).map_err(|_| {
+                    self.locate(Diagnostic::new(*span, "native header paths require UTF-8"))
+                })?;
+                if name.contains('\0') {
+                    return Err(self.locate(Diagnostic::new(
+                        *span,
+                        "native header paths cannot contain null bytes",
+                    )));
+                }
+                if !tokens
+                    .get(position + 3)
+                    .is_some_and(|token| token.kind == Token::Semicolon)
+                {
+                    return Err(self.locate(Diagnostic::new(
+                        *span,
+                        "expected ';' after native header reference",
+                    )));
+                }
+                let header = path
+                    .parent()
+                    .unwrap()
+                    .join(name)
+                    .canonicalize()
+                    .map_err(|error| {
+                        self.locate(Diagnostic::new(
+                            *span,
+                            format!("could not open native header '{name}': {error}"),
+                        ))
+                    })?;
+                if !header.is_file() {
+                    return Err(self.locate(Diagnostic::new(
+                        *span,
+                        "a native header reference requires a file",
+                    )));
+                }
+                let name = header_name(&header)
+                    .map_err(|error| self.locate(Diagnostic::new(*span, error.to_string())))?;
+                if !self.native_headers.contains(&header) {
+                    self.native_headers.push(header);
+                }
+                self.tokens
+                    .extend_from_slice(&tokens[position..position + 2]);
+                let mut token = tokens[position + 2].clone();
+                token.kind = Token::StringLiteral(name.into_bytes());
+                self.tokens.push(token);
+                self.tokens.push(tokens[position + 3].clone());
+                position += 4;
+                continue;
+            }
             if token.kind == Token::Import && depth == 0 {
                 if !declaration_start {
                     return Err(self.locate(Diagnostic::new(

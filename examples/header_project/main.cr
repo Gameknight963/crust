@@ -11,6 +11,10 @@ struct Counter {
         unsafe { return native_value(this->handle); }
     }
 
+    NativeStatus status() const {
+        unsafe { return native_status(this->handle); }
+    }
+
     void add(int amount) {
         unsafe { native_add(this->handle, amount); }
     }
@@ -26,5 +30,6 @@ int main() {
     Counter second = move(first);
     print(second.value());
     unsafe { print(native_limit); }
+    print(second.status() == NativeStatus::NativeReady);
     return 0;
 }

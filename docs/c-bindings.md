@@ -7,7 +7,7 @@ Crust source.
 ```powershell
 cargo run -- import-c examples/header_project/native.h `
   --function native_create --function native_value `
-  --function native_add --function native_destroy `
+  --function native_status --function native_add --function native_destroy `
   --variable native_limit `
   --output examples/header_project/bindings.cr --force
 cargo run -- run examples/header_project
@@ -37,6 +37,7 @@ command protects its input header from replacement.
 - Native C integers, booleans, and `void`
 - Raw pointers with const pointees and multiple pointer levels
 - Opaque struct and union tags
+- Named enums with native integer representations and member values
 - Function pointers, callback returns, and variadic functions
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
@@ -54,6 +55,34 @@ returning them. Types requiring further compiler support produce a diagnostic.
 Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
 Thread-local data require native C accessor functions.
+
+## Native enums and headers
+
+Bindings that use a native enum retain its C type through a header reference:
+
+```c
+extern header "native.h";
+
+extern enum NativeStatus : int32_t {
+    NativeReady = 1,
+    NativeError = -1,
+};
+
+extern NativeStatus native_status(const struct NativeCounter* counter);
+```
+
+The header path is relative to the generated binding file. Output written to
+stdout uses an absolute path. `extern header` adds a C include to the generated
+translation unit. Crust declarations describe the API exposed to Crust code.
+
+The generator reads enum values and representation through Clang. Native
+compilation checks the enum's compatible integer type, size, and alignment.
+This preserves native type identity for const enum pointers and objects.
+Renamed tags use `extern enum c_init = "init" : int32_t { ... };`.
+
+Anonymous enums and enum layouts with extra alignment require a C wrapper.
+
+## Linking
 
 Link the C implementation or library through the target's
 [native options](projects.md). Use matching `defines` and `--define` values when

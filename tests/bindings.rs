@@ -255,10 +255,12 @@ fn header_example_uses_reproducible_bindings_and_destroys_its_moved_c_resource()
     let mut selected = options(&[
         "native_create",
         "native_value",
+        "native_status",
         "native_add",
         "native_destroy",
     ]);
     selected.variables.push("native_limit".to_owned());
+    selected.binding_dir = Some(root.clone());
     let generated = generate(&root.join("native.h"), &selected).unwrap();
     assert_eq!(
         generated.replace("\r\n", "\n"),
@@ -278,7 +280,7 @@ fn header_example_uses_reproducible_bindings_and_destroys_its_moved_c_resource()
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "42\n100\n"
+        "42\n100\n1\n"
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
@@ -371,5 +373,224 @@ fn dll_import_variable_attributes_on_later_declarations_are_preserved() {
         generate(&path, &selected)
             .unwrap()
             .contains("extern __declspec(dllimport) int value;")
+    );
+}
+
+#[test]
+fn imports_enum_representations_values_callbacks_and_const_objects() {
+    let native = r#"
+        enum Status { Ready = 1 << 4, Failed = -3, Again = Ready + 1 };
+        typedef enum Status (*Callback)(enum Status);
+        enum Status status_echo(enum Status);
+        enum Status status_apply(Callback, enum Status);
+        extern const enum Status native_status;
+    "#;
+    let path = header(native);
+    let mut selected = options(&["status_echo", "status_apply"]);
+    selected.variables.push("native_status".to_owned());
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("Ready = 16"));
+    assert!(bindings.contains("Failed = -3"));
+    assert!(bindings.contains("Again = 17"));
+    let source = format!(
+        r#"
+        {bindings}
+        Status identity(Status value) {{ return value; }}
+        int main() {{
+            unsafe {{
+                print(status_echo(Status::Ready) == Status::Ready);
+                print(status_apply(identity, Status::Again) == Status::Again);
+                print(native_status == Status::Failed);
+            }}
+            return 0;
+        }}
+    "#
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("enum Status status_echo(enum Status value) { return value; } enum Status status_apply(Callback callback, enum Status value) { return callback(value); } const enum Status native_status = Failed;");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n1\n1\n"
+    );
+}
+
+#[test]
+fn enum_probes_preserve_native_conversion_of_large_unsigned_enumerators() {
+    let native = "enum Flags { High = 0xffffffff }; enum Flags flag_echo(enum Flags); long long flag_value(void); unsigned long long flag_size(void);";
+    let path = header(native);
+    let bindings = generate(&path, &options(&["flag_echo", "flag_value", "flag_size"])).unwrap();
+    let source = format!(
+        "{bindings} int main() {{ unsafe {{ print((int64_t)Flags::High == flag_value()); print(flag_echo(Flags::High) == Flags::High); print(sizeof(Flags) == flag_size()); }} return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("enum Flags flag_echo(enum Flags value) { return value; } long long flag_value(void) { return (long long)(enum Flags)High; } unsigned long long flag_size(void) { return sizeof(enum Flags); }");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n1\n1\n"
+    );
+}
+
+#[test]
+fn enum_member_renaming_reserves_native_names_before_allocating_escaped_names() {
+    let path = header("enum E { init = 1, c_init = 2 }; enum E echo(enum E);");
+    let bindings = generate(&path, &options(&["echo"])).unwrap();
+    assert!(bindings.contains("c_init_ = 1"));
+    assert!(bindings.contains("c_init = 2"));
+}
+
+#[test]
+fn native_enum_identity_preserves_const_pointer_parameters() {
+    let path = header(
+        "enum Status { Ready = 16, Failed = -3 }; int status_read(const enum Status*); void status_set(enum Status*, enum Status);",
+    );
+    let bindings = generate(&path, &options(&["status_read", "status_set"])).unwrap();
+    let source = format!(
+        "{bindings} int main() {{ Status value = Status::Ready; unsafe {{ print(status_read(&value)); status_set(&value, Status::Failed); }} print((int)value); return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("int status_read(const enum Status* value) { return (int)*value; } void status_set(enum Status* target, enum Status value) { *target = value; }");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "16\n-3\n"
+    );
+}
+
+#[test]
+fn native_enum_tags_reserved_by_crust_are_renamed_without_changing_c_identity() {
+    let path = header("enum init { One = 1, Two = 2 }; enum init echo(enum init);");
+    let bindings = generate(&path, &options(&["echo"])).unwrap();
+    assert!(bindings.contains("extern enum c_init = \"init\""));
+    let source = format!(
+        "{bindings} int main() {{ unsafe {{ print(echo(c_init::Two) == c_init::Two); }} return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("enum init echo(enum init value) { return value; }");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
+#[test]
+fn enum_probes_cover_narrow_and_full_width_native_integer_representations() {
+    let path = header(
+        r#"
+        enum __attribute__((packed)) Byte { ByteZero = 0, ByteMax = 255 };
+        enum Wide : unsigned long long { WideMax = 18446744073709551615ULL };
+        enum Byte byte_echo(enum Byte);
+        enum Wide wide_echo(enum Wide);
+    "#,
+    );
+    let bindings = generate(&path, &options(&["byte_echo", "wide_echo"])).unwrap();
+    let source = format!(
+        "{bindings} int main() {{ unsafe {{ print((int)byte_echo(Byte::ByteMax)); print((uint64_t)wide_echo(Wide::WideMax)); }} return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("enum Byte byte_echo(enum Byte value) { return value; } enum Wide wide_echo(enum Wide value) { return value; }");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "255\n18446744073709551615\n"
+    );
+}
+
+#[test]
+fn native_enum_tags_can_share_spelling_with_c_macros_and_crust_builtin_types() {
+    let path = header(
+        "enum bool { Yes = 1 }; enum size_t { Count = 2 }; enum bool boolean_echo(enum bool); enum size_t count_echo(enum size_t);\n#define bool unrelated_name\n",
+    );
+    let bindings = generate(&path, &options(&["boolean_echo", "count_echo"])).unwrap();
+    assert!(bindings.contains("extern enum c_bool = \"bool\""));
+    assert!(bindings.contains("extern enum c_size_t = \"size_t\""));
+}
+
+#[test]
+fn cli_emits_native_header_paths_relative_to_the_binding_file() {
+    let path = header("enum Status { Ready = 1, Failed = -1 }; enum Status echo(enum Status);");
+    let directory = path.parent().unwrap().join("generated");
+    std::fs::create_dir_all(&directory).unwrap();
+    let binding = directory.join("bindings.cr");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .args(["--function", "echo", "--output"])
+        .arg(&binding)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = std::fs::read_to_string(&binding).unwrap();
+    assert!(text.contains("extern header \"../native ü.h\";"), "{text}");
+    std::fs::write(
+        directory.join("main.cr"),
+        "import \"bindings.cr\"; int main() { return 0; }",
+    )
+    .unwrap();
+    crust::source::SourceSet::load(&directory.join("main.cr"))
+        .unwrap()
+        .check()
+        .unwrap();
+}
+
+#[test]
+fn unsupported_enum_shapes_fail_with_diagnostics() {
+    assert!(
+        crust::check("enum E = \"NativeE\" : int { A = 1 }; int main() { return 0; }")
+            .unwrap_err()
+            .message
+            .contains("requires extern")
+    );
+    for (source, expected) in [
+        (
+            "typedef enum { A = 1 } Anonymous; Anonymous echo(Anonymous);",
+            "anonymous C enums",
+        ),
+        (
+            "enum café { Ready = 1 }; enum café echo(enum café);",
+            "ASCII identifiers",
+        ),
+        (
+            "enum E { café = 1 }; enum E echo(enum E);",
+            "ASCII identifiers",
+        ),
+        (
+            "enum __attribute__((aligned(32))) E { A = 1, B = -1 }; enum E echo(enum E);",
+            "native enum layout",
+        ),
+    ] {
+        let path = header(source);
+        let error = generate(&path, &options(&["echo"])).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+    assert!(
+        crust::check("extern enum E : int { A = 1 }; int main() { return 0; }")
+            .unwrap_err()
+            .message
+            .contains("extern header")
     );
 }

@@ -158,6 +158,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
             let sources =
                 crust::source::SourceSet::load(&target.entry).map_err(|error| error.to_string())?;
             protected.extend(sources.files().iter().map(|file| file.path.clone()));
+            protected.extend_from_slice(sources.native_headers());
         }
     }
     for target in targets {
@@ -224,6 +225,7 @@ fn process_source(
         .iter()
         .cloned()
         .chain(sources.files().iter().map(|file| file.path.clone()))
+        .chain(sources.native_headers().iter().cloned())
         .collect();
     let executable = build(&generated, output, &protected, native)?;
     if mode == Mode::Build {

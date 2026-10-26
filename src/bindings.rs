@@ -5,10 +5,12 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+mod enums;
 mod render;
 
 #[derive(Debug, Default)]
 pub struct Options {
+    pub binding_dir: Option<PathBuf>,
     pub clang: Option<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
     pub defines: Vec<String>,
@@ -30,6 +32,7 @@ fn crust_identifier(name: &str) -> bool {
     };
     return tokens.len() == 2
         && matches!(&tokens[0].kind, crate::lexer::Token::Identifier(value) if value == name)
+        && crate::ast::IntType::named(name).is_none()
         && !matches!(name, "Self" | "this" | "print" | "box_int" | "move");
 }
 
@@ -54,6 +57,17 @@ fn clang(
     ast: bool,
     filter: Option<&str>,
 ) -> Result<Vec<u8>, String> {
+    return invoke_clang(header, options, source, ast, filter, true);
+}
+
+fn invoke_clang(
+    header: &Path,
+    options: &Options,
+    source: &str,
+    ast: bool,
+    filter: Option<&str>,
+    include: bool,
+) -> Result<Vec<u8>, String> {
     let executable = options
         .clang
         .clone()
@@ -73,7 +87,9 @@ fn clang(
     for define in &options.defines {
         command.arg("-D").arg(define);
     }
-    command.arg("-include").arg(header);
+    if include {
+        command.arg("-include").arg(header);
+    }
     if ast {
         command.args(["-Xclang", "-ast-dump=json"]);
     }
@@ -103,6 +119,33 @@ fn clang(
     }
     written.map_err(|error| error.to_string())?;
     return Ok(output.stdout);
+}
+
+fn header_reference(header: &Path, directory: Option<&Path>) -> Result<String, String> {
+    if let Some(directory) = directory {
+        let base = crate::source::identity(directory).map_err(|error| error.to_string())?;
+        let target: Vec<_> = header.components().collect();
+        let base: Vec<_> = base.components().collect();
+        let common = target.iter().zip(&base).take_while(|(a, b)| a == b).count();
+        if common > 0
+            && !target[common..].iter().chain(&base[common..]).any(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+        {
+            let mut relative = PathBuf::new();
+            for _ in &base[common..] {
+                relative.push("..");
+            }
+            for part in &target[common..] {
+                relative.push(part.as_os_str());
+            }
+            return crate::source::header_name(&relative).map_err(|error| error.to_string());
+        }
+    }
+    return crate::source::header_name(header).map_err(|error| error.to_string());
 }
 
 pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
@@ -219,6 +262,9 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .collect::<Result<_, _>>()
         .map_err(|error| error.to_string())?;
     let mut renderer = render::Renderer::new(&declarations, &probes, &names);
+    let enums = enums::load(&header, options, &probes)?;
+    let has_native_types = !enums.is_empty();
+    renderer.enums(enums)?;
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
     let mut variable_checks = Vec::new();
@@ -261,14 +307,34 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         locals.push_str(&format!("{}* {check_name} = {name};\n", signature.alias));
         checks.push((name, native));
     }
-    let mut output = renderer.declarations(true);
+    let mut output = if has_native_types {
+        format!(
+            "extern header {};\n",
+            serde_json::to_string(&header_reference(&header, options.binding_dir.as_deref())?)
+                .map_err(|error| error.to_string())?
+        )
+    } else {
+        String::new()
+    };
+    output.push_str(&renderer.declarations(true));
     if !output.is_empty() {
         output.push('\n');
     }
     output.push_str(&declarations.join("\n"));
     output.push('\n');
+    let header_declaration = if has_native_types {
+        format!(
+            "extern header {};\n",
+            serde_json::to_string(
+                &crate::source::header_name(&header).map_err(|error| error.to_string())?
+            )
+            .map_err(|error| error.to_string())?
+        )
+    } else {
+        String::new()
+    };
     let checked_source = format!(
-        "{}\n{}\nint main() {{ {locals} return 0; }}\n",
+        "{header_declaration}{}\n{}\nint main() {{ {locals} return 0; }}\n",
         renderer.declarations(false),
         declarations.join("\n")
     );
@@ -304,6 +370,13 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         let ty = crate::emit_c::c_type(global.ty);
         verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__({native}), {ty}), \"unsupported C ABI for {native}\");\n"));
     }
-    clang(&header, options, &verification, false, None)?;
+    invoke_clang(
+        &header,
+        options,
+        &verification,
+        false,
+        None,
+        !has_native_types,
+    )?;
     return Ok(output);
 }

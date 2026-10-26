@@ -91,7 +91,7 @@ impl Parser {
                 && token.kind == Token::Enum
                 && matches!(
                     self.tokens[position + 2].kind,
-                    Token::LeftBrace | Token::Colon
+                    Token::LeftBrace | Token::Colon | Token::Equal
                 )
                 && let Token::Identifier(name) = &self.tokens[position + 1].kind
             {
@@ -175,6 +175,9 @@ impl Parser {
             ));
         };
         let ty = self.global_constant_context(position + 2, |parser| {
+            if parser.consume(&Token::Equal) {
+                parser.advance();
+            }
             if parser.consume(&Token::Colon) {
                 return parser.type_name();
             }

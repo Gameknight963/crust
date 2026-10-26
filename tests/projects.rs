@@ -283,6 +283,24 @@ fn build_outputs_preserve_native_sources_and_explicit_link_inputs() {
 }
 
 #[test]
+fn project_builds_protect_native_headers_referenced_by_any_target() {
+    let fixture = Fixture::new();
+    fixture.write("first.cr", "int main() { return 0; }");
+    fixture.write(
+        "second.cr",
+        "extern header \"target/crust/first/first.c\"; int main() { return 0; }",
+    );
+    fixture.write("target/crust/first/first.c", "/* native header input */\n");
+    fixture.manifest("[[targets]]\nname='first'\nkind='executable'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='executable'\nentry='second.cr'\n");
+    let output = fixture.invoke(&["build", "--target", "first"]);
+    assert!(!output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(fixture.directory.join("target/crust/first/first.c")).unwrap(),
+        "/* native header input */\n"
+    );
+}
+
+#[test]
 fn projects_support_frontend_commands_without_invoking_a_c_compiler() {
     let fixture = Fixture::new();
     fixture.write("src/main.cr", "int main() { return 0; }");

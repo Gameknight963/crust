@@ -19,6 +19,10 @@ int native_value(const NativeCounter *counter) {
     return counter->value;
 }
 
+enum NativeStatus native_status(const NativeCounter *counter) {
+    return counter != NULL ? NativeReady : NativeError;
+}
+
 void native_add(NativeCounter *counter, int amount) {
     if ((amount > 0 && counter->value > INT_MAX - amount) ||
         (amount < 0 && counter->value < INT_MIN - amount)) {

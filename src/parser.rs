@@ -42,6 +42,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut globals = Vec::new();
+    let mut native_headers = Vec::new();
 
     loop {
         if parser.at(&Token::EndOfFile) {
@@ -54,16 +55,57 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         if parser.skip_template() {
             continue;
         }
-        if parser.consume(&Token::Typedef) {
+        if parser.at(&Token::Extern)
+            && matches!(parser.tokens.get(parser.position + 1).map(|token| &token.kind), Some(Token::Identifier(name)) if name == "header")
+            && matches!(
+                parser
+                    .tokens
+                    .get(parser.position + 2)
+                    .map(|token| &token.kind),
+                Some(Token::StringLiteral(_))
+            )
+        {
+            parser.advance();
+            parser.advance();
+            let token = parser.advance();
+            let Token::StringLiteral(bytes) = token.kind else {
+                unreachable!();
+            };
+            let name = String::from_utf8(bytes)
+                .map_err(|_| Diagnostic::new(token.span, "native header paths require UTF-8"))?;
+            let name = crate::source::header_name(std::path::Path::new(&name))
+                .map_err(|error| Diagnostic::new(token.span, error.to_string()))?;
+            parser.expect(
+                Token::Semicolon,
+                "expected ';' after native header reference",
+            )?;
+            if !native_headers.contains(&name) {
+                native_headers.push(name);
+            }
+        } else if parser.at(&Token::Extern)
+            && parser.next_at(&Token::Enum)
+            && parser.tokens.get(parser.position + 3).is_some_and(|token| {
+                matches!(token.kind, Token::LeftBrace | Token::Colon | Token::Equal)
+            })
+        {
+            let start = parser.advance().span;
+            let mut definition = parser.enum_definition(true)?;
+            definition.span = start.through(definition.span);
+            definition.header_span = start.through(definition.header_span);
+            let name = parser.enum_names[definition.id].0.clone();
+            if definition.native_name.is_none() {
+                definition.native_name = Some(name);
+            }
+            enums.push(definition);
+        } else if parser.consume(&Token::Typedef) {
             parser.typedef_type()?;
             parser.expect(Token::Semicolon, "expected ';' after typedef")?;
         } else if parser.at(&Token::Enum)
-            && parser
-                .tokens
-                .get(parser.position + 2)
-                .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Colon))
+            && parser.tokens.get(parser.position + 2).is_some_and(|token| {
+                matches!(token.kind, Token::LeftBrace | Token::Colon | Token::Equal)
+            })
         {
-            enums.push(parser.enum_definition()?);
+            enums.push(parser.enum_definition(false)?);
         } else if matches!(parser.current().kind, Token::Struct | Token::Union)
             && parser
                 .tokens
@@ -94,6 +136,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
+        native_headers,
         globals,
         source_declarations: parser.source_declarations,
         type_references: parser.type_references,
@@ -234,10 +277,9 @@ impl Parser {
             let token = self.tokens[position].clone();
             if depth == 0
                 && token.kind == Token::Enum
-                && self
-                    .tokens
-                    .get(position + 2)
-                    .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Colon))
+                && self.tokens.get(position + 2).is_some_and(|token| {
+                    matches!(token.kind, Token::LeftBrace | Token::Colon | Token::Equal)
+                })
                 && let Some(SpannedToken {
                     kind: Token::Identifier(name),
                     span,
@@ -752,14 +794,47 @@ impl Parser {
         return id;
     }
 
-    fn enum_definition(&mut self) -> Result<EnumDefinition, Diagnostic> {
-        return self.enum_definition_until(None);
+    fn enum_definition(&mut self, external: bool) -> Result<EnumDefinition, Diagnostic> {
+        let definition = self.enum_definition_until(None)?;
+        if !external && definition.native_name.is_some() {
+            return Err(Diagnostic::new(
+                definition.name_span,
+                "a renamed native enum requires extern",
+            ));
+        }
+        return Ok(definition);
     }
 
     fn enum_definition_until(&mut self, stop: Option<&str>) -> Result<EnumDefinition, Diagnostic> {
         let start = self.advance().span;
         let (name, span) = self.identifier()?;
         let id = self.enum_id(name, span);
+        let native_name = if self.consume(&Token::Equal) {
+            let token = self.advance();
+            let Token::StringLiteral(bytes) = token.kind else {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "expected a quoted native enum tag",
+                ));
+            };
+            let name = String::from_utf8(bytes).map_err(|_| {
+                Diagnostic::new(token.span, "native enum tags require ASCII identifiers")
+            })?;
+            let mut bytes = name.bytes();
+            if !bytes
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "native enum tags require ASCII identifiers",
+                ));
+            }
+            Some(name)
+        } else {
+            None
+        };
         self.evaluating_enums.insert(id);
         let underlying = if self.consume(&Token::Colon) {
             let ty = self.type_name()?;
@@ -817,6 +892,7 @@ impl Parser {
         };
         self.evaluating_enums.remove(&id);
         return Ok(EnumDefinition {
+            native_name,
             name_span: span,
             header_span: Span {
                 end: body_start.start,

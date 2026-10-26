@@ -90,6 +90,13 @@ pub(super) fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
             ));
         }
     }
+    options.binding_dir = output.as_ref().map(|path| {
+        return path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."))
+            .to_owned();
+    });
     let bindings = crust::bindings::generate(&header, &options)?;
     if let Some(output) = output {
         std::fs::write(&output, bindings)

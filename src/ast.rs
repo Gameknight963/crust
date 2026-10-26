@@ -260,6 +260,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub native_headers: Vec<String>,
     pub globals: Vec<ExternalVariable>,
     pub source_declarations: Vec<SourceDeclaration>,
     pub type_references: Vec<TypeReference>,
@@ -375,6 +376,7 @@ pub struct PointerType {
 
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
+    pub native_name: Option<String>,
     pub name_span: Span,
     pub header_span: Span,
     pub id: usize,

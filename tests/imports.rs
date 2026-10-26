@@ -6,6 +6,50 @@ use std::path::Path;
 
 use crust::source::{SourceSet, identity};
 
+#[test]
+fn native_headers_resolve_from_imported_sources_and_are_loaded_once() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/native-header-imports")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(root.join("native")).unwrap();
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::write(
+        root.join("native/native ü.h"),
+        "enum Status { Ready = 42, Failed = -1 }; extern const enum Status native_status;",
+    )
+    .unwrap();
+    std::fs::write(root.join("lib/bindings.cr"), "extern header \"../native/native ü.h\"; extern header \"../native/./native ü.h\"; extern enum Status : int { Ready = 42, Failed = -1 }; extern const Status native_status;").unwrap();
+    std::fs::write(root.join("main.cr"), "import \"lib/bindings.cr\"; int main() { unsafe { print((int)native_status); } return 0; }").unwrap();
+    let sources = SourceSet::load(&root.join("main.cr")).unwrap();
+    assert_eq!(sources.native_headers().len(), 1);
+    assert_eq!(
+        sources.native_headers()[0],
+        root.join("native/native ü.h").canonicalize().unwrap()
+    );
+    let mut c = sources.compile().unwrap();
+    c.push_str("const enum Status native_status = Ready;");
+    let output = common::tracked_generated_c(&c, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+}
+
+#[test]
+fn missing_native_headers_report_the_crust_file_and_reference_location() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/virtual-missing-native-header");
+    let error = SourceSet::load_with(&root.join("main.cr"), |_| {
+        Ok("// comment\nextern header \"missing.h\"; int main() { return 0; }".to_owned())
+    })
+    .err()
+    .unwrap();
+    assert!(error.path.ends_with("main.cr"));
+    assert_eq!(error.diagnostic.span.line, 2);
+    assert!(error.diagnostic.message.contains("native header"));
+}
+
 fn load(files: &[(&str, &str)]) -> Result<SourceSet, crust::source::SourceError> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/virtual-imports");
     let files: HashMap<_, _> = files

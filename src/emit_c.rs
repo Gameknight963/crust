@@ -7,9 +7,24 @@ use crate::types::Types;
 
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
     let program = &checked.program;
+    let mut native_headers = program
+        .native_headers
+        .iter()
+        .map(|name| format!("#include \"{name}\"\n"))
+        .collect::<String>();
+    if !native_headers.is_empty() {
+        for name in program
+            .functions
+            .iter()
+            .filter_map(|function| function.link_name.as_ref())
+            .chain(program.globals.iter().map(|global| &global.link_name))
+        {
+            native_headers.push_str(&format!("#undef {name}\n"));
+        }
+    }
     let empty_analysis = FunctionAnalysis::default();
     let mut emitter = Emitter {
-        output: format!("{RUNTIME}{NUMERIC_RUNTIME}"),
+        output: format!("{native_headers}{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
         next_name: 0,
         scopes: vec![Scope::default()],
@@ -60,6 +75,23 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         emitter.line(&format!("_Static_assert(_Generic(({name})0, {}: 1, default: 0), \"C {name} must match the Crust host ABI\");", IntType::named(name).unwrap().c_name()));
     }
     for definition in &checked.types.enums {
+        if let Some(name) = &definition.native_name {
+            emitter.line(&format!("#pragma push_macro(\"{name}\")\n#undef {name}"));
+            emitter.line(&format!(
+                "typedef enum {name} crust_enum_{};",
+                definition.id
+            ));
+            let underlying = definition.underlying.c_name();
+            // MSVC treats native enums as distinct types in _Generic. Its
+            // representation is checked through signedness, size, and alignment.
+            emitter.line("#if !defined(_MSC_VER) || defined(__clang__)");
+            emitter.line(&format!("_Static_assert(_Generic((enum {name})0, {underlying}: 1, default: 0), \"native enum integer representation must match its declaration\");"));
+            emitter.line("#endif");
+            emitter.line(&format!("_Static_assert(((enum {name})-1 < (enum {name})0) == {}, \"native enum signedness must match its declaration\");", i32::from(definition.underlying.signed())));
+            emitter.line(&format!("_Static_assert(sizeof(enum {name}) == sizeof({underlying}) && _Alignof(enum {name}) == _Alignof({underlying}), \"native enum layout must match its integer representation\");"));
+            emitter.line(&format!("#pragma pop_macro(\"{name}\")"));
+            continue;
+        }
         emitter.line(&format!(
             "typedef {} crust_enum_{};",
             definition.underlying.c_name(),

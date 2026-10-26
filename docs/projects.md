@@ -92,6 +92,10 @@ link-inputs = ["native/extra.o"]
 - Macro names are validated and each name appears once per target
 - `check`, `tokens`, and `emit-c` validate configuration without invoking a C compiler
 
+`extern header "path/to/native.h";` resolves relative to its Crust source file.
+Build commands protect referenced native headers, imported Crust sources, and
+native source and link inputs from being overwritten by generated output.
+
 Crust calls native functions through matching `extern` declarations. Calls use an
 `unsafe` block. See [examples/native_project](../examples/native_project/) for a
 program linked with a C source file and header.
