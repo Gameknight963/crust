@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    ArrayType, EnumDefinition, EnumVariant, Field, FunctionType, IntType, PointerType, Program,
-    Type,
+    ArrayType, CallingConvention, EnumDefinition, EnumVariant, Field, FunctionType, IntType,
+    PointerType, Program, Type,
 };
 use crate::diagnostic::{Diagnostic, Span};
 
@@ -269,9 +269,11 @@ impl Types {
         result: Type,
         parameters: Vec<Type>,
         variadic: bool,
+        calling_convention: CallingConvention,
         span: Span,
     ) -> Result<Type, Diagnostic> {
         let function_type = FunctionType {
+            calling_convention,
             variadic,
             result,
             parameters,
@@ -282,6 +284,7 @@ impl Types {
             existing.result == result
                 && existing.parameters == function_type.parameters
                 && existing.variadic == variadic
+                && existing.calling_convention == calling_convention
         }) {
             id
         } else {
@@ -364,8 +367,9 @@ impl Types {
                     parameters.push("...".to_owned());
                 }
                 format!(
-                    "{} ({})",
+                    "{} {}({})",
                     self.describe(function.result),
+                    function.calling_convention.c_prefix(),
                     parameters.join(", ")
                 )
             }

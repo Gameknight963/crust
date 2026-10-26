@@ -602,6 +602,7 @@ impl Parser {
             let is_static = self.consume(&Token::Static) || all_static;
             let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix;
             let result = self.type_name()?;
+            let convention = self.calling_convention()?.unwrap_or(CallingConvention::C);
             let (name, span) = self.identifier()?;
             if !names.insert(name.clone()) {
                 return Err(Diagnostic::new(
@@ -623,6 +624,8 @@ impl Parser {
                 FunctionDeclaration::Requirement,
             )?;
             function.requires_unsafe = requires_unsafe;
+            function.calling_convention =
+                Self::signature_convention(convention, function.variadic, span)?;
             if function.variadic {
                 return Err(Diagnostic::new(
                     start,

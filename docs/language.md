@@ -697,6 +697,29 @@ The [native callback example](../examples/callback_project/) passes Crust functi
 to C and calls a function pointer returned by C. Callers of indirect functions
 are responsible for a valid function pointer and the target's unsafe requirements.
 
+## Calling conventions
+
+```c
+typedef int (__vectorcall *Callback)(int);
+extern int __vectorcall apply_native(Callback callback, int value);
+int __vectorcall increment(int value) { return value + 1; }
+```
+
+- Place a calling convention after the return type or inside a function-pointer declarator before `*`
+- `__cdecl` selects the ordinary C convention and is accepted on every target
+- Windows targets also support `__stdcall`, `__fastcall`, and `__vectorcall`
+- `__vectorcall` requires x86 or x64 and a fixed parameter list
+- On x64 and ARM, `__stdcall` and `__fastcall` share the ordinary C ABI
+- Variadic `__stdcall` and `__fastcall` declarations use the C variadic ABI
+- Function pointers, repeated C declarations, and interface requirements compare the effective convention
+- Ordinary functions, generic functions, and methods can declare a convention
+
+The Windows [calling-convention project](../examples/calling_convention_project/)
+passes callbacks in both directions using separate Crust and C sources.
+These rules follow the native conventions documented for
+[`__stdcall`](https://learn.microsoft.com/en-us/cpp/cpp/stdcall) and
+[`__vectorcall`](https://learn.microsoft.com/en-us/cpp/cpp/vectorcall).
+
 ## Destructors
 
 ```c
@@ -778,7 +801,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

@@ -16,6 +16,7 @@ ownership checking, C generation, and native compilation.
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
+| `src/parser/calling_conventions.rs` | Target calling conventions and signature normalization |
 | `src/parser/integers.rs` | C integer type specifiers |
 | `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
@@ -64,6 +65,7 @@ reject name capture. LSP clients receive a workspace edit for review and applica
 - External declarations and calls retain their C symbol names
 - Renamed imports keep separate Crust and C names, and declarations sharing a C symbol are checked for compatible signatures
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
+- Function declarations and callback typedefs emit their effective calling convention, with matching checks for native symbols and interface requirements
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
 - Variadic function types retain the fixed parameter list and ellipsis, and additional call arguments receive C integer promotions before emission
 - Generic declarations instantiate concrete structs and functions for each used combination of type arguments

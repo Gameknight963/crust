@@ -1,0 +1,10 @@
+[project]
+name = "calling_conventions"
+
+[[targets]]
+name = "callbacks"
+kind = "executable"
+entry = "main.cr"
+
+[targets.native]
+sources = ["callbacks.c"]

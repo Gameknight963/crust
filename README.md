@@ -35,6 +35,8 @@ with integers, characters, and structs.
 The [generic box](examples/generic_box.cr) owns heap values, including other owners.
 The [container project](examples/container_project/) uses buffers, boxes, and
 growable vectors from separate files through `import "buffer.cr";`.
+On Windows x86 and x64, the [calling-convention project](examples/calling_convention_project/)
+passes `__vectorcall` callbacks between Crust and C.
 
 ## Getting started
 

@@ -24,6 +24,7 @@ pub(crate) struct FunctionAnalysis {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Signature {
+    calling_convention: CallingConvention,
     link_name: Option<String>,
     variadic: bool,
     requires_unsafe: bool,
@@ -94,6 +95,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             name.to_owned(),
             Signature {
+                calling_convention: CallingConvention::C,
                 link_name: None,
                 variadic: false,
                 requires_unsafe: false,
@@ -193,6 +195,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             None
         };
         let signature = Signature {
+            calling_convention: function.calling_convention,
             link_name: function.link_name.clone(),
             variadic: function.variadic,
             requires_unsafe: function.requires_unsafe,
@@ -244,6 +247,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             let satisfied = signatures.get(&requirement.name).is_some_and(|signature| {
                 signature.return_type == requirement.return_type
                     && signature.variadic == requirement.variadic
+                    && signature.calling_convention == requirement.calling_convention
                     && signature.parameters == expected
                     && (!signature.requires_unsafe || requirement.requires_unsafe)
             });
@@ -266,6 +270,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             if signature.return_type == Type::Integer(IntType::I32)
                 && !signature.external
                 && !signature.requires_unsafe
+                && signature.calling_convention == CallingConvention::C
                 && signature.parameters.is_empty() => {}
         Some(_) => {
             let function = program
@@ -1574,6 +1579,7 @@ impl FunctionChecker<'_> {
             signature.return_type,
             signature.parameters,
             signature.variadic,
+            signature.calling_convention,
             span,
         )?;
         self.function_values.insert(span, name.to_owned());

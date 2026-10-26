@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{SpannedToken, Token};
 use std::collections::{HashMap, HashSet, hash_map::Entry};
+mod calling_conventions;
 mod generics;
 mod integers;
 mod symbols;
@@ -263,12 +264,21 @@ impl Parser {
                 }
                 let paren = (start..end).find(|&index| self.tokens[index].kind == Token::LeftParen);
                 let name_position = if let Some(paren) = paren {
+                    let mut declarator = paren + 1;
+                    if self.tokens.get(declarator).is_some_and(|token| {
+                        matches!(
+                            token.kind,
+                            Token::Cdecl | Token::Stdcall | Token::Fastcall | Token::Vectorcall
+                        )
+                    }) {
+                        declarator += 1;
+                    }
                     if self
                         .tokens
-                        .get(paren + 1)
+                        .get(declarator)
                         .is_some_and(|token| token.kind == Token::Star)
                     {
-                        let mut position = paren + 1;
+                        let mut position = declarator;
                         while self
                             .tokens
                             .get(position)
@@ -413,7 +423,20 @@ impl Parser {
 
     fn typedef_type(&mut self) -> Result<(String, Type), Diagnostic> {
         let mut ty = self.type_name()?;
+        let convention = self.calling_convention()?;
         if self.consume(&Token::LeftParen) {
+            let inner_convention = self.calling_convention()?;
+            let convention = if let Some(inner_convention) = inner_convention {
+                if convention.is_some_and(|convention| inner_convention != convention) {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "conflicting calling conventions",
+                    ));
+                }
+                Some(inner_convention)
+            } else {
+                convention
+            };
             let mut stars = 0;
             while self.consume(&Token::Star) {
                 stars += 1;
@@ -429,7 +452,7 @@ impl Parser {
                 Token::RightParen,
                 "expected ')' after function pointer name",
             )?;
-            ty = self.function_type_suffix(ty, span)?;
+            ty = self.function_type_suffix(ty, span, convention.unwrap_or(CallingConvention::C))?;
             for _ in 0..stars {
                 ty = self.pointer_type(ty, true);
             }
@@ -438,7 +461,12 @@ impl Parser {
         let (name, span) = self.identifier()?;
         ty = self.array_suffix(ty)?;
         if self.at(&Token::LeftParen) {
-            ty = self.function_type_suffix(ty, span)?;
+            ty = self.function_type_suffix(ty, span, convention.unwrap_or(CallingConvention::C))?;
+        } else if convention.is_some() {
+            return Err(Diagnostic::new(
+                span,
+                "a calling convention requires a function type",
+            ));
         }
         return Ok((name, ty));
     }
@@ -459,7 +487,12 @@ impl Parser {
         return Type::Pointer(id);
     }
 
-    fn function_type_suffix(&mut self, result: Type, span: Span) -> Result<Type, Diagnostic> {
+    fn function_type_suffix(
+        &mut self,
+        result: Type,
+        span: Span,
+        convention: CallingConvention,
+    ) -> Result<Type, Diagnostic> {
         self.expect(
             Token::LeftParen,
             "expected '(' before callback parameter types",
@@ -495,13 +528,18 @@ impl Parser {
             Token::RightParen,
             "expected ')' after callback parameter types",
         )?;
+        let calling_convention = Self::signature_convention(convention, variadic, span)?;
         let id = if let Some(id) = self.function_types.iter().position(|ty| {
-            ty.result == result && ty.parameters == parameters && ty.variadic == variadic
+            ty.result == result
+                && ty.parameters == parameters
+                && ty.variadic == variadic
+                && ty.calling_convention == calling_convention
         }) {
             id
         } else {
             let id = self.function_types.len();
             self.function_types.push(FunctionType {
+                calling_convention,
                 variadic,
                 result,
                 parameters,
@@ -814,6 +852,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    calling_convention: CallingConvention::C,
                     name_span,
                     link_name: None,
                     variadic: false,
@@ -842,6 +881,7 @@ impl Parser {
             let is_static = self.consume(&Token::Static);
             let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix;
             let ty = self.type_name()?;
+            let convention = self.calling_convention()?;
             let (name, span) = self.identifier()?;
             if self.at(&Token::LeftParen) {
                 if private {
@@ -861,8 +901,19 @@ impl Parser {
                     FunctionDeclaration::Definition,
                 )?;
                 method.requires_unsafe = requires_unsafe;
+                method.calling_convention = Self::signature_convention(
+                    convention.unwrap_or(CallingConvention::C),
+                    method.variadic,
+                    span,
+                )?;
                 self.methods.push(method);
                 continue;
+            }
+            if convention.is_some() {
+                return Err(Diagnostic::new(
+                    span,
+                    "a calling convention requires a method",
+                ));
             }
             if is_static {
                 return Err(Diagnostic::new(span, "static currently applies to methods"));
@@ -909,6 +960,7 @@ impl Parser {
         let external = self.consume(&Token::Extern);
         let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix || external;
         let return_type = self.type_name()?;
+        let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
         if self.at(&Token::Less) {
             self.skip_type_parameters()?;
@@ -931,6 +983,11 @@ impl Parser {
             declaration,
         )?;
         function.requires_unsafe = requires_unsafe;
+        function.calling_convention = Self::signature_convention(
+            convention.unwrap_or(CallingConvention::C),
+            function.variadic,
+            start,
+        )?;
         return Ok(function);
     }
 
@@ -1079,6 +1136,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            calling_convention: CallingConvention::C,
             name_span,
             link_name,
             variadic,

@@ -187,7 +187,12 @@ fn header(function: &Function) -> String {
         parameters.push_str(", ...");
     }
     return format!(
-        "{result} {}({parameters})",
+        "{result} {}{}({parameters})",
+        if function.name == "main" {
+            ""
+        } else {
+            function.calling_convention.c_prefix()
+        },
         if function.external {
             function.link_name.clone().unwrap()
         } else {
@@ -274,8 +279,9 @@ impl Emitter<'_> {
                     parameters.push_str(", ...");
                 }
                 self.line(&format!(
-                    "typedef {} crust_function_{id}({parameters});",
-                    c_type(function.result)
+                    "typedef {} {}crust_function_{id}({parameters});",
+                    c_type(function.result),
+                    function.calling_convention.c_prefix()
                 ));
             }
             _ => {}

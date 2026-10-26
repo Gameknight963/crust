@@ -319,10 +319,40 @@ pub struct InterfaceCheck {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
+    pub calling_convention: CallingConvention,
     pub variadic: bool,
     pub result: Type,
     pub parameters: Vec<Type>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallingConvention {
+    C,
+    Stdcall,
+    Fastcall,
+    Vectorcall,
+}
+
+impl CallingConvention {
+    pub fn canonical(self, variadic: bool) -> Self {
+        if matches!(self, Self::Stdcall | Self::Fastcall)
+            && (variadic || !cfg!(target_arch = "x86"))
+        {
+            return Self::C;
+        }
+        return self;
+    }
+
+    pub fn c_prefix(self) -> &'static str {
+        return match self {
+            Self::C if cfg!(windows) => "__cdecl ",
+            Self::C => "",
+            Self::Stdcall => "__stdcall ",
+            Self::Fastcall => "__fastcall ",
+            Self::Vectorcall => "__vectorcall ",
+        };
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -376,6 +406,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub calling_convention: CallingConvention,
     pub name_span: Span,
     pub link_name: Option<String>,
     pub variadic: bool,

@@ -34,6 +34,7 @@
 - Native-layout unions, opaque union tags, generic unions, and overlapping field-borrow checks
 - Native C integer spellings and conversion ranks, plus compatible repeated typedefs and external declarations
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
+- Explicit C and Windows calling conventions for native declarations, callbacks, functions, and methods
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping
@@ -46,7 +47,7 @@
 
 1. Add module namespaces, visibility, project dependencies, and library targets
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-3. Extend C header importing and ABI coverage to calling conventions and layout attributes
+3. Extend C header importing and ABI coverage to layout attributes and further C declarations
 
 A substantial validation target is a multi-file program using a generic container
 backed by C allocation, with automatic cleanup and safe access to its contents.
