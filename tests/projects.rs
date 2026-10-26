@@ -150,6 +150,30 @@ fn native_options_are_selected_independently_for_each_target() {
 }
 
 #[test]
+fn opaque_c_handles_have_private_wrappers_and_destroy_once_after_a_move() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "crust.toml",
+        include_str!("../examples/opaque_project/crust.toml"),
+    );
+    fixture.write(
+        "src/main.cr",
+        include_str!("../examples/opaque_project/src/main.cr"),
+    );
+    fixture.write(
+        "include/native_counter.h",
+        include_str!("../examples/opaque_project/include/native_counter.h"),
+    );
+    fixture.write(
+        "native/counter.c",
+        include_str!("../examples/opaque_project/native/counter.c"),
+    );
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\ndestroy:42\n");
+}
+
+#[test]
 fn native_configuration_checks_paths_kinds_duplicates_and_unknown_fields() {
     let fixture = Fixture::new();
     fixture.write("main.cr", "int main() { return 0; }");

@@ -183,7 +183,7 @@ fn rejects_invalid_layouts_and_initializers_before_generating_c() {
     let cases = [
         (
             "struct Missing make() { return (struct Missing){ .x = 1 }; } int main() { return 0; }",
-            "unknown struct 'Missing'",
+            "complete object types",
         ),
         (
             "struct Empty {}; int main() { return 0; }",

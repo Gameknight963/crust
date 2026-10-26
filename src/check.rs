@@ -90,6 +90,17 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     // Signatures are known before bodies, allowing forward calls and recursion.
     for function in &program.functions {
+        if (function.return_type != Type::Void && !types.is_sized(function.return_type))
+            || function
+                .parameters
+                .iter()
+                .any(|parameter| !types.is_sized(parameter.ty))
+        {
+            return Err(Diagnostic::new(
+                function.span,
+                "function values require complete object types. Use pointers for opaque structs",
+            ));
+        }
         if function.external
             && (function.return_type.is_borrow()
                 || types.owns(function.return_type)
@@ -708,6 +719,12 @@ impl FunctionChecker<'_> {
                         "void has no object size or alignment",
                     ));
                 }
+                if !self.types.is_sized(*ty) {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "size and alignment queries require a complete object type",
+                    ));
+                }
                 return Ok(Type::Integer(IntType::named("size_t").unwrap()));
             }
             ExpressionKind::SizeofValue(operand) => {
@@ -1026,6 +1043,12 @@ impl FunctionChecker<'_> {
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.checked_place(expression)?;
+                    if !self.types.is_sized(place.ty) {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "an incomplete object cannot be read as a value",
+                        ));
+                    }
                     self.access(
                         &place.root,
                         &place.fields,
@@ -1084,7 +1107,7 @@ impl FunctionChecker<'_> {
                         let Type::Pointer(right_id) = right_type else {
                             unreachable!()
                         };
-                        if self.types.pointers[left_id].pointee == Type::Void
+                        if !self.types.is_sized(self.types.pointers[left_id].pointee)
                             || self.types.pointers[left_id].pointee
                                 != self.types.pointers[right_id].pointee
                         {
@@ -1325,10 +1348,10 @@ impl FunctionChecker<'_> {
         let Type::Pointer(id) = pointer else {
             unreachable!()
         };
-        if self.types.pointers[id].pointee == Type::Void {
+        if !self.types.is_sized(self.types.pointers[id].pointee) {
             return Err(Diagnostic::new(
                 offset.span,
-                "void pointers must be cast before arithmetic or indexing",
+                "pointer arithmetic and indexing require a complete object type",
             ));
         }
         self.integer(offset_type, offset.span)?;
@@ -1569,6 +1592,12 @@ impl FunctionChecker<'_> {
                 ));
             }
         };
+        if !self.types.structs[id].complete {
+            return Err(Diagnostic::new(
+                expression.span,
+                "cannot initialize an incomplete struct",
+            ));
+        }
         let declared = self.types.structs[id].fields.clone();
         let mut seen = std::collections::HashSet::new();
         for field in fields {
@@ -1852,6 +1881,12 @@ impl FunctionChecker<'_> {
         state: State,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        if !self.types.is_sized(ty) {
+            return Err(Diagnostic::new(
+                span,
+                "a value declaration requires a complete object type",
+            ));
+        }
         let scope = self.scopes.last_mut().unwrap();
         if scope.contains_key(name) {
             return Err(Diagnostic::new(

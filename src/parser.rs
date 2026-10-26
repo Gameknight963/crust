@@ -40,6 +40,16 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
             && parser
                 .tokens
                 .get(parser.position + 2)
+                .is_some_and(|token| token.kind == Token::Semicolon)
+        {
+            parser.advance();
+            let (name, span) = parser.identifier()?;
+            parser.struct_id(name, span);
+            parser.advance();
+        } else if parser.at(&Token::Struct)
+            && parser
+                .tokens
+                .get(parser.position + 2)
                 .is_some_and(|token| token.kind == Token::LeftBrace)
         {
             structs.push(parser.struct_definition()?);
@@ -111,7 +121,7 @@ impl Parser {
                 && self
                     .tokens
                     .get(position + 2)
-                    .is_some_and(|token| token.kind == Token::LeftBrace)
+                    .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Semicolon))
                 && let Some(SpannedToken {
                     kind: Token::Identifier(name),
                     span,

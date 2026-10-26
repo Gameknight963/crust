@@ -6,6 +6,7 @@ use crate::ast::{
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
+    pub complete: bool,
     pub name: String,
     pub fields: Vec<Field>,
     pub owns: bool,
@@ -79,9 +80,17 @@ impl Types {
         }
 
         let mut structs = Vec::new();
-        for (id, (name, first_use)) in program.struct_names.iter().enumerate() {
-            let definition = definitions[id]
-                .ok_or_else(|| Diagnostic::new(*first_use, format!("unknown struct '{name}'")))?;
+        for (id, (name, _)) in program.struct_names.iter().enumerate() {
+            let Some(definition) = definitions[id] else {
+                structs.push(StructInfo {
+                    name: name.clone(),
+                    complete: false,
+                    fields: Vec::new(),
+                    owns: false,
+                    has_destructor: false,
+                });
+                continue;
+            };
             if definition.fields.is_empty() {
                 return Err(Diagnostic::new(
                     definition.span,
@@ -107,6 +116,7 @@ impl Types {
                 }
             }
             structs.push(StructInfo {
+                complete: true,
                 name: name.clone(),
                 fields: definition.fields.clone(),
                 owns: false,
@@ -138,6 +148,12 @@ impl Types {
             )?;
         }
         for id in 0..array_states.len() {
+            if !types.is_sized(types.arrays[id].element) {
+                return Err(Diagnostic::new(
+                    types.arrays[id].span,
+                    "array elements require a complete object type",
+                ));
+            }
             types.visit(
                 Type::Array(id),
                 &mut states,
@@ -181,6 +197,12 @@ impl Types {
         states[id] = 1;
         let mut owns = self.structs[id].has_destructor;
         for field in self.structs[id].fields.clone() {
+            if !self.is_sized(field.ty) {
+                return Err(Diagnostic::new(
+                    field.span,
+                    "struct fields require a complete object type",
+                ));
+            }
             owns |= self.visit(field.ty, states, array_states, field.span)?;
         }
         self.structs[id].owns = owns;
@@ -195,6 +217,15 @@ impl Types {
             Type::Struct(id) => self.structs[id].owns,
             Type::Array(id) => self.array_owns[id],
             _ => false,
+        };
+    }
+
+    pub fn is_sized(&self, ty: Type) -> bool {
+        return match ty {
+            Type::Void => false,
+            Type::Struct(id) => self.structs[id].complete,
+            Type::Array(id) => self.is_sized(self.arrays[id].element),
+            _ => true,
         };
     }
 
@@ -281,6 +312,12 @@ impl Types {
 
     pub fn field(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
         if let Type::Struct(id) = ty {
+            if !self.structs[id].complete {
+                return Err(Diagnostic::new(
+                    span,
+                    "field access requires a complete struct type",
+                ));
+            }
             return self.structs[id]
                 .fields
                 .iter()

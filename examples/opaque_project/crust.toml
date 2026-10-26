@@ -1,0 +1,11 @@
+[project]
+name = "opaque-example"
+
+[[targets]]
+name = "opaque-example"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["native/counter.c"]
+include-dirs = ["include"]

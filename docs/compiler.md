@@ -28,6 +28,7 @@ ownership checking, C generation, and native compilation.
 - Generated C uses C11
 - Enums lower to distinct generated typedef names with their declared integer representation
 - Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
+- Struct values use generated aliases, and opaque aliases preserve their native C tags
 - External declarations and calls retain their C symbol names
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention

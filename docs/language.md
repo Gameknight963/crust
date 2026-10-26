@@ -252,6 +252,24 @@ Field access and borrowed method receivers use a named variable, field, or
 pointee, including a returned borrow. Empty structs, borrowed fields, partial initialization, and
 partial field moves need further language support.
 
+### Opaque structs
+
+```c
+struct NativeHandle;
+extern NativeHandle* create_handle();
+extern void destroy_handle(NativeHandle* handle);
+```
+
+- A forward declaration introduces a type whose layout is supplied by C
+- `typedef struct NativeHandle Handle;` can introduce an alias for an opaque tag
+- Raw pointers and borrows can refer to an incomplete struct
+- A later definition completes the type across the compilation unit
+- Values, fields, array elements, size queries, and pointer arithmetic require a complete object type
+- Generated C preserves an opaque tag's C name for native declarations
+
+The [opaque handle example](../examples/opaque_project/) wraps a C-owned counter
+with private storage, methods, and move-only destruction.
+
 ## Typedefs
 
 ```c

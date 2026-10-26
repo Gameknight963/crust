@@ -54,7 +54,13 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         ));
     }
     for id in 0..checked.types.structs.len() {
-        emitter.line(&format!("struct crust_struct_{id};"));
+        let info = &checked.types.structs[id];
+        let tag = if info.complete {
+            format!("crust_struct_{id}")
+        } else {
+            info.name.clone()
+        };
+        emitter.line(&format!("typedef struct {tag} crust_type_{id};"));
     }
     for id in 0..checked.types.arrays.len() {
         emitter.line(&format!("struct crust_array_{id};"));
@@ -124,7 +130,7 @@ fn c_type(ty: Type) -> String {
         Type::Bool => String::from("bool"),
         Type::Void => String::from("void"),
         Type::BoxInt => String::from("int32_t *"),
-        Type::Struct(id) => format!("struct crust_struct_{id}"),
+        Type::Struct(id) => format!("crust_type_{id}"),
         Type::Array(id) => format!("struct crust_array_{id}"),
         Type::Enum(id) => format!("crust_enum_{id}"),
         Type::Pointer(id) => format!("crust_ptr_{id}"),
@@ -251,6 +257,9 @@ impl Emitter<'_> {
             }
             let Type::Struct(id) = ty else { unreachable!() };
             let info = &self.types.structs[*id];
+            if !info.complete {
+                continue;
+            }
             self.line(&format!("struct crust_struct_{id} {{"));
             self.indent += 1;
             for field in &info.fields {
