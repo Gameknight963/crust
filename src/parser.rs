@@ -7,6 +7,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         tokens,
         position: 0,
         struct_names: Vec::new(),
+        current_struct: None,
+        methods: Vec::new(),
     };
     let mut functions = Vec::new();
     let mut structs = Vec::new();
@@ -24,6 +26,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         }
     }
 
+    functions.append(&mut parser.methods);
     return Ok(Program {
         functions,
         structs,
@@ -35,6 +38,8 @@ struct Parser {
     tokens: Vec<SpannedToken>,
     position: usize,
     struct_names: Vec<(String, Span)>,
+    current_struct: Option<usize>,
+    methods: Vec<Function>,
 }
 
 impl Parser {
@@ -51,6 +56,7 @@ impl Parser {
         let start = self.advance().span;
         let (name, span) = self.identifier()?;
         let id = self.struct_id(name, span);
+        self.current_struct = Some(id);
         self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
         let mut fields = Vec::new();
         while !self.at(&Token::RightBrace) {
@@ -62,10 +68,16 @@ impl Parser {
             }
             let ty = self.type_name()?;
             let (name, span) = self.identifier()?;
+            if self.at(&Token::LeftParen) {
+                let method = self.function_body(ty, method_name(id, &name), span, Some(id))?;
+                self.methods.push(method);
+                continue;
+            }
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field { name, ty, span });
         }
         self.advance();
+        self.current_struct = None;
         let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
         return Ok(StructDefinition {
             id,
@@ -78,6 +90,16 @@ impl Parser {
         let start = self.current().span;
         let return_type = self.type_name()?;
         let (name, _) = self.identifier()?;
+        return self.function_body(return_type, name, start, None);
+    }
+
+    fn function_body(
+        &mut self,
+        return_type: Type,
+        name: String,
+        start: Span,
+        owner: Option<usize>,
+    ) -> Result<Function, Diagnostic> {
         self.expect(Token::LeftParen, "expected '(' after the function name")?;
         let mut parameters = Vec::new();
 
@@ -101,6 +123,37 @@ impl Parser {
         }
 
         self.expect(Token::RightParen, "expected ')' after the parameters")?;
+        let shared = self.consume(&Token::Const);
+        if let Some(id) = owner {
+            if parameters
+                .first()
+                .is_some_and(|parameter| parameter.name == "this")
+            {
+                if shared || parameters[0].ty != Type::Struct(id) {
+                    return Err(Diagnostic::new(
+                        start,
+                        "an explicit receiver must be 'Self this' and cannot have a const method qualifier",
+                    ));
+                }
+            } else {
+                parameters.insert(
+                    0,
+                    Parameter {
+                        name: String::from("this"),
+                        ty: Type::StructBorrow {
+                            id,
+                            mutable: !shared,
+                        },
+                        span: start,
+                    },
+                );
+            }
+        } else if shared {
+            return Err(Diagnostic::new(
+                start,
+                "only instance methods can have a const method qualifier",
+            ));
+        }
         let body = self.block()?;
         let span = start.through(body.span);
         return Ok(Function {
@@ -122,6 +175,11 @@ impl Parser {
             Token::Struct => {
                 let (name, span) = self.identifier()?;
                 Type::Struct(self.struct_id(name, span))
+            }
+            Token::Identifier(ref name) if name == "Self" => {
+                Type::Struct(self.current_struct.ok_or_else(|| {
+                    Diagnostic::new(token.span, "Self is only available inside a struct")
+                })?)
             }
             _ => {
                 return Err(Diagnostic::new(
@@ -213,6 +271,7 @@ impl Parser {
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Struct)
+            || matches!(&self.current().kind, Token::Identifier(name) if name == "Self")
         {
             let ty = self.type_name()?;
             let (name, _) = self.identifier()?;
@@ -334,6 +393,18 @@ impl Parser {
                     },
                 };
             }
+            if self.consume(&Token::LeftParen) {
+                let (arguments, end) = self.arguments()?;
+                expression = Expression {
+                    span: expression.span.through(end),
+                    kind: ExpressionKind::MethodCall {
+                        receiver: Box::new(expression),
+                        name,
+                        arguments,
+                    },
+                };
+                continue;
+            }
             expression = Expression {
                 span: expression.span.through(span),
                 kind: ExpressionKind::Field {
@@ -350,6 +421,20 @@ impl Parser {
             return self.struct_literal(None);
         }
         return self.expression(1);
+    }
+
+    fn arguments(&mut self) -> Result<(Vec<Expression>, Span), Diagnostic> {
+        let mut arguments = Vec::new();
+        if !self.at(&Token::RightParen) {
+            loop {
+                arguments.push(self.expression(1)?);
+                if !self.consume(&Token::Comma) {
+                    break;
+                }
+            }
+        }
+        let end = self.expect(Token::RightParen, "expected ')' after the arguments")?;
+        return Ok((arguments, end));
     }
 
     fn struct_literal(&mut self, id: Option<usize>) -> Result<Expression, Diagnostic> {
@@ -401,23 +486,16 @@ impl Parser {
                         span: token.span,
                     });
                 }
-                let mut arguments = Vec::new();
-                if !self.at(&Token::RightParen) {
-                    loop {
-                        arguments.push(self.expression(1)?);
-                        if !self.consume(&Token::Comma) {
-                            break;
-                        }
-                    }
-                }
-                let end = self.expect(Token::RightParen, "expected ')' after the arguments")?;
+                let (arguments, end) = self.arguments()?;
                 return Ok(Expression {
                     span: token.span.through(end),
                     kind: ExpressionKind::Call { name, arguments },
                 });
             }
             Token::LeftParen => {
-                if self.at(&Token::Struct) {
+                if self.at(&Token::Struct)
+                    || matches!(&self.current().kind, Token::Identifier(name) if name == "Self")
+                {
                     let ty = self.type_name()?;
                     let Type::Struct(id) = ty else {
                         return Err(Diagnostic::new(

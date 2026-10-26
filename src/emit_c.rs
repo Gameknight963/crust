@@ -19,6 +19,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .collect(),
         types: &checked.types,
         expression_types: &checked.expression_types,
+        method_calls: &checked.method_calls,
     };
     emitter
         .return_types
@@ -53,6 +54,9 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 }
 
 fn function_name(name: &str) -> String {
+    if let Some(method) = name.strip_prefix('@') {
+        return format!("crust_method_{method}");
+    }
     if name == "main" {
         return String::from("main");
     }
@@ -131,6 +135,7 @@ struct Emitter<'checked> {
     return_types: HashMap<String, Type>,
     types: &'checked Types,
     expression_types: &'checked HashMap<Span, Type>,
+    method_calls: &'checked HashMap<Span, Expression>,
 }
 
 impl Emitter<'_> {
@@ -278,6 +283,10 @@ impl Emitter<'_> {
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
         match &expression.kind {
+            ExpressionKind::MethodCall { .. } => {
+                let call = self.method_calls[&expression.span].clone();
+                return self.expression(&call);
+            }
             ExpressionKind::StructLiteral { fields, .. } => {
                 let ty = self.expression_type(expression);
                 let mut values = Vec::new();

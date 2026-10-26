@@ -4,7 +4,7 @@ An experimental C-like language with ownership checking, implemented in Rust.
 
 Crust currently compiles a small language through C and runs the resulting
 native executable. It supports functions, integer expressions, control flow,
-user-defined structs with owning fields, a built-in owning heap type, and
+user-defined structs with instance methods and owning fields, a built-in owning heap type, and
 shared/exclusive function-argument borrows.
 This is a prototype of the language design, not a complete C-compatible language.
 
@@ -24,6 +24,7 @@ cargo run -- examples/factorial.cr
 cargo run -- examples/ownership.cr
 cargo run -- examples/borrowing.cr
 cargo run -- examples/structs.cr
+cargo run -- examples/methods.cr
 cargo check
 cargo test
 cargo fmt
@@ -39,6 +40,7 @@ to the program as an argument. A bare source filename means compile and run.
 | `ownership.cr` | `42`, `42`, `7` |
 | `borrowing.cr` | `42`, `8`, `99` |
 | `structs.cr` | `1`, `42`, `2`, `43` |
+| `methods.cr` | `42`, `7`, `7` |
 
 The CLI also exposes individual stages:
 
@@ -202,6 +204,60 @@ int main()
 
 A custom cleanup hook would be a user-defined destructor for resources the
 compiler cannot infer, such as a file handle. Those hooks remain a future feature.
+
+## Instance methods
+
+Methods are defined inside structs and use an implicit receiver named `this`:
+
+```c
+struct Counter {
+    int value;
+
+    int get() const {
+        return this->value;
+    }
+
+    void increment() {
+        this->value = this->value + 1;
+    }
+};
+
+int main() {
+    struct Counter counter = { .value = 41 };
+    counter.increment();
+    print(counter.get());
+    return 0;
+}
+```
+
+- A trailing `const` gives the method a shared `const Self^ this` receiver.
+  An ordinary method receives an exclusive mutable `Self^ this` instead.
+  The compiler checks these permissions even if a method never writes anything.
+- `Self` denotes the enclosing struct in its fields, method signatures, and
+  method bodies. Use `this->field` and `this->method()` for borrowed receivers.
+  Through a struct-borrow parameter, calls also use `borrow->method()`.
+- Method calls automatically borrow their receiver. Receiver access is checked
+  before the arguments, which evaluate left to right. The borrow lasts through
+  the call, including evaluation of later arguments. Consequently,
+  `counter.set(counter.get())` is rejected if `set` is exclusive; read the value
+  into a local before calling `set`. Multiple shared receiver borrows may coexist.
+- To take the receiver by value, explicitly declare `Self this` as the first
+  parameter. For example, `int finish(Self this) { return *this.value; }` in a
+  struct with a `BoxInt value` field consumes the receiver and cleans up its fields
+  on return. Call it with `move(resource).finish()` for an owning struct.
+  Copyable structs can be passed by value without a move, preserving the caller's
+  copy. An explicit value receiver cannot also have a trailing `const` qualifier.
+- Consuming methods may return `Self`, forward ownership with `return move(this);`,
+  and consume temporary struct results. Their value receiver uses `this.field`.
+  Borrowed methods currently require a named variable, field, or pointee as their
+  receiver; borrowing temporary struct results needs temporary-lifetime support.
+- Methods use static dispatch and lower to ordinary C functions. Forward method
+  calls and recursion work. Method names are separate from free functions and
+  from methods on other structs. Each struct permits one method per name; method
+  overloading and field/method name collisions are rejected.
+- Borrowed returns and borrowed local variables remain unsupported. `this` is
+  reserved for receivers and cannot be shadowed by local variables or parameters.
+  There is no `readonly` or `constexpr` keyword in this prototype.
 
 ## Borrowing prototype
 

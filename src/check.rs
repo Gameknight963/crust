@@ -9,6 +9,9 @@ pub(crate) struct CheckedProgram {
     pub program: Program,
     pub types: Types,
     pub expression_types: HashMap<Span, Type>,
+    // Resolved methods reuse ordinary call checking and generation, including
+    // receiver-first evaluation, argument loans, moves, and parameter cleanup.
+    pub method_calls: HashMap<Span, Expression>,
 }
 
 #[derive(Clone)]
@@ -47,6 +50,7 @@ struct Loan {
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let types = Types::build(&program)?;
     let mut expression_types = HashMap::new();
+    let mut method_calls = HashMap::new();
     let mut signatures = HashMap::new();
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Int]),
@@ -64,6 +68,19 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     // Signatures are known before bodies, allowing forward calls and recursion.
     for function in &program.functions {
+        if let Some(method) = function.name.strip_prefix('@') {
+            let (id, name) = method.split_once('_').unwrap();
+            let info = &types.structs[id.parse::<usize>().unwrap()];
+            if info.fields.iter().any(|field| field.name == name) {
+                return Err(Diagnostic::new(
+                    function.span,
+                    format!(
+                        "method '{name}' conflicts with a field in struct '{}'",
+                        info.name
+                    ),
+                ));
+            }
+        }
         if function.return_type.is_borrow() {
             return Err(Diagnostic::new(
                 function.span,
@@ -73,10 +90,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         if signatures.contains_key(&function.name) {
             return Err(Diagnostic::new(
                 function.span,
-                format!(
-                    "function '{}' is already defined or reserved",
-                    function.name
-                ),
+                format!("{} is already defined or reserved", function.description()),
             ));
         }
         signatures.insert(
@@ -127,8 +141,15 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             loans: Vec::new(),
             types: &types,
             expression_types: &mut expression_types,
+            method_calls: &mut method_calls,
         };
-        for parameter in &function.parameters {
+        for (index, parameter) in function.parameters.iter().enumerate() {
+            if parameter.name == "this" && !(index == 0 && function.name.starts_with('@')) {
+                return Err(Diagnostic::new(
+                    parameter.span,
+                    "this is reserved for the instance receiver",
+                ));
+            }
             checker.declare(
                 &parameter.name,
                 parameter.ty,
@@ -142,8 +163,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             return Err(Diagnostic::new(
                 function.span,
                 format!(
-                    "function '{}' must return a value on every path",
-                    function.name
+                    "{} must return a value on every path",
+                    function.description()
                 ),
             ));
         }
@@ -153,6 +174,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         program,
         types,
         expression_types,
+        method_calls,
     });
 }
 
@@ -165,6 +187,7 @@ struct FunctionChecker<'program> {
     loans: Vec<Loan>,
     types: &'program Types,
     expression_types: &'program mut HashMap<Span, Type>,
+    method_calls: &'program mut HashMap<Span, Expression>,
 }
 
 impl FunctionChecker<'_> {
@@ -191,6 +214,12 @@ impl FunctionChecker<'_> {
                 ty,
                 initializer,
             } => {
+                if name == "this" {
+                    return Err(Diagnostic::new(
+                        statement.span,
+                        "this is reserved for the instance receiver",
+                    ));
+                }
                 if ty.is_borrow() {
                     return Err(Diagnostic::new(
                         statement.span,
@@ -317,6 +346,59 @@ impl FunctionChecker<'_> {
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::MethodCall {
+                receiver,
+                name,
+                arguments,
+            } => {
+                let ty = self.receiver_type(receiver)?;
+                let Type::Struct(id) = ty else {
+                    return Err(Diagnostic::new(
+                        receiver.span,
+                        "a method receiver must be a struct value; use '->' through a struct borrow",
+                    ));
+                };
+                let key = method_name(id, name);
+                let signature = self.signatures.get(&key).ok_or_else(|| {
+                    Diagnostic::new(
+                        expression.span,
+                        format!("unknown method '{name}' on {}", self.types.describe(ty)),
+                    )
+                })?;
+                if arguments.len() + 1 != signature.parameters.len() {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        format!(
+                            "method '{name}' expects {} argument(s), got {}",
+                            signature.parameters.len() - 1,
+                            arguments.len()
+                        ),
+                    ));
+                }
+                let receiver = match signature.parameters[0] {
+                    Type::StructBorrow { mutable, .. } => Expression {
+                        span: receiver.span,
+                        kind: ExpressionKind::Unary {
+                            operator: UnaryOperator::Borrow { mutable },
+                            operand: receiver.clone(),
+                        },
+                    },
+                    Type::Struct(_) => receiver.as_ref().clone(),
+                    _ => unreachable!("method has a struct receiver"),
+                };
+                let mut lowered_arguments = vec![receiver];
+                lowered_arguments.extend(arguments.iter().cloned());
+                let call = Expression {
+                    span: expression.span,
+                    kind: ExpressionKind::Call {
+                        name: key,
+                        arguments: lowered_arguments,
+                    },
+                };
+                let result = self.expression(&call)?;
+                self.method_calls.insert(expression.span, call);
+                return Ok(result);
+            }
             ExpressionKind::StructLiteral { .. } => {
                 return self.struct_literal(expression, None);
             }
@@ -489,6 +571,38 @@ impl FunctionChecker<'_> {
             ));
         }
         return Ok(());
+    }
+
+    // Resolve the receiver's type without evaluating it. In particular, probing
+    // move(value).method() must not move value before checking the actual call.
+    fn receiver_type(&self, expression: &Expression) -> Result<Type, Diagnostic> {
+        match &expression.kind {
+            ExpressionKind::Call { name, arguments } if name == "move" && arguments.len() == 1 => {
+                return self.receiver_type(&arguments[0]);
+            }
+            ExpressionKind::Call { name, .. } => {
+                return self
+                    .signatures
+                    .get(name)
+                    .map(|signature| signature.return_type)
+                    .ok_or_else(|| {
+                        Diagnostic::new(expression.span, format!("unknown function '{name}'"))
+                    });
+            }
+            ExpressionKind::MethodCall { receiver, name, .. } => {
+                if let Type::Struct(id) = self.receiver_type(receiver)?
+                    && let Some(signature) = self.signatures.get(&method_name(id, name))
+                {
+                    return Ok(signature.return_type);
+                }
+                return Err(Diagnostic::new(
+                    expression.span,
+                    format!("unknown method '{name}'"),
+                ));
+            }
+            ExpressionKind::StructLiteral { id: Some(id), .. } => return Ok(Type::Struct(*id)),
+            _ => return Ok(self.place(expression)?.ty),
+        }
     }
 
     fn struct_literal(

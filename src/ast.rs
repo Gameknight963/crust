@@ -74,6 +74,16 @@ pub struct Function {
     pub span: Span,
 }
 
+impl Function {
+    pub fn description(&self) -> String {
+        if let Some(method) = self.name.strip_prefix('@') {
+            let (_, name) = method.split_once('_').expect("internal method name");
+            return format!("method '{name}'");
+        }
+        return format!("function '{}'", self.name);
+    }
+}
+
 #[derive(Debug)]
 pub struct Parameter {
     pub name: String,
@@ -123,14 +133,19 @@ pub enum StatementKind {
     Empty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    MethodCall {
+        receiver: Box<Expression>,
+        name: String,
+        arguments: Vec<Expression>,
+    },
     Integer(i64),
     Variable(String),
     Field {
@@ -156,7 +171,7 @@ pub enum ExpressionKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldInitializer {
     pub name: String,
     pub value: Expression,
@@ -190,4 +205,10 @@ pub enum BinaryOperator {
     BitAnd,
     BitOr,
     BitXor,
+}
+
+// The '@' cannot occur in a source identifier, keeping methods separate from
+// free functions, builtins, and methods on other structs.
+pub fn method_name(id: usize, name: &str) -> String {
+    return format!("@{id}_{name}");
 }
