@@ -45,6 +45,7 @@ to the original path and byte range.
 - External declarations and calls retain their C symbol names
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
+- Variadic function types retain the fixed parameter list and ellipsis, and additional call arguments receive C integer promotions before emission
 - Generic declarations instantiate concrete structs and functions for each used combination of type arguments
 - Expression types, conversions, resolved calls, and constants are recorded separately for each function, including generic instances sharing source spans
 - Interface constraints compare concrete method signatures before function bodies are checked, and calls retain ordinary direct dispatch

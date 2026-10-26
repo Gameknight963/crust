@@ -30,6 +30,7 @@
 - Unsafe function and method contracts, including generic instances and interface requirements
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
 - Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
+- Variadic C declarations and callbacks with default integer argument promotions
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
@@ -38,7 +39,7 @@
 
 1. Add module namespaces, visibility, project dependencies, and library targets
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-3. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
+3. Extend C header importing and ABI coverage to unions, calling conventions, and layout attributes
 
 A substantial validation target is a multi-file program using a generic container
 backed by C allocation, with automatic cleanup and safe access to its contents.

@@ -49,6 +49,7 @@ pub enum Token {
     Semicolon,
     Comma,
     Dot,
+    Ellipsis,
     Colon,
     ColonColon,
 
@@ -347,6 +348,12 @@ impl Lexer<'_> {
     }
 
     fn operator_or_punctuation(&mut self, start: Span) -> Result<Token, LexError> {
+        if self.source[self.offset..].starts_with("...") {
+            for _ in 0..3 {
+                self.advance();
+            }
+            return Ok(Token::Ellipsis);
+        }
         if self.peek() == Some('.') && self.peek_next().is_some_and(|next| next.is_ascii_digit()) {
             self.advance();
             return Err(self.error(start, "floating-point literals are not supported yet"));
@@ -354,7 +361,7 @@ impl Lexer<'_> {
 
         // Even unsupported C operators must stay distinct from spaced tokens:
         // x++ is not the same token sequence as x + +y.
-        for operator in ["++", "--", "<<", "..."] {
+        for operator in ["++", "--", "<<"] {
             if self.source[self.offset..].starts_with(operator) {
                 for _ in operator.chars() {
                     self.advance();
@@ -747,7 +754,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_compound_operators_without_confusing_spaced_ones() {
-        for source in ["x++", "x--", "x<<=2", "x<<1", "..."] {
+        for source in ["x++", "x--", "x<<=2", "x<<1"] {
             let error = tokenize(source).unwrap_err();
             assert!(error.message.contains("not supported yet"));
         }

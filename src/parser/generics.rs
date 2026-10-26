@@ -554,6 +554,12 @@ impl Parser {
             };
             let mut function = self.function_body(result, key, start, Some(id), is_static, true)?;
             function.requires_unsafe = requires_unsafe;
+            if function.variadic {
+                return Err(Diagnostic::new(
+                    start,
+                    "interface members require fixed parameter lists",
+                ));
+            }
             let mut parameters = HashSet::new();
             for parameter in &function.parameters {
                 if !parameters.insert(&parameter.name) || (is_static && parameter.name == "this") {

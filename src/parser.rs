@@ -362,10 +362,21 @@ impl Parser {
             "expected '(' before callback parameter types",
         )?;
         let mut parameters = Vec::new();
+        let mut variadic = false;
         if self.at(&Token::Void) && self.next_at(&Token::RightParen) {
             self.advance();
         } else if !self.at(&Token::RightParen) {
             loop {
+                if self.consume(&Token::Ellipsis) {
+                    if parameters.is_empty() {
+                        return Err(Diagnostic::new(
+                            span,
+                            "variadic function types require a fixed parameter",
+                        ));
+                    }
+                    variadic = true;
+                    break;
+                }
                 let mut ty = self.type_name()?;
                 if matches!(self.current().kind, Token::Identifier(_)) {
                     self.advance();
@@ -381,15 +392,14 @@ impl Parser {
             Token::RightParen,
             "expected ')' after callback parameter types",
         )?;
-        let id = if let Some(id) = self
-            .function_types
-            .iter()
-            .position(|ty| ty.result == result && ty.parameters == parameters)
-        {
+        let id = if let Some(id) = self.function_types.iter().position(|ty| {
+            ty.result == result && ty.parameters == parameters && ty.variadic == variadic
+        }) {
             id
         } else {
             let id = self.function_types.len();
             self.function_types.push(FunctionType {
+                variadic,
                 result,
                 parameters,
                 span,
@@ -638,6 +648,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    variadic: false,
                     requires_unsafe: false,
                     external: false,
                     name: destructor_name(id),
@@ -735,11 +746,22 @@ impl Parser {
     ) -> Result<Function, Diagnostic> {
         self.expect(Token::LeftParen, "expected '(' after the function name")?;
         let mut parameters = Vec::new();
+        let mut variadic = false;
 
         if self.at(&Token::Void) && self.next_at(&Token::RightParen) {
             self.advance();
         } else if !self.at(&Token::RightParen) {
             loop {
+                if self.consume(&Token::Ellipsis) {
+                    if parameters.is_empty() || !external {
+                        return Err(Diagnostic::new(
+                            start,
+                            "variadic declarations require extern and a fixed parameter",
+                        ));
+                    }
+                    variadic = true;
+                    break;
+                }
                 let ty = self.type_name()?;
                 if ty == Type::Void {
                     return Err(Diagnostic::new(
@@ -821,6 +843,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            variadic,
             requires_unsafe: external,
             external,
             name,

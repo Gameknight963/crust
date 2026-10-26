@@ -202,6 +202,7 @@ pub struct InterfaceCheck {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
+    pub variadic: bool,
     pub result: Type,
     pub parameters: Vec<Type>,
     pub span: Span,
@@ -253,6 +254,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub variadic: bool,
     pub requires_unsafe: bool,
     pub external: bool,
     pub name: String,

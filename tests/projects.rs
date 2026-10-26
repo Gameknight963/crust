@@ -431,6 +431,70 @@ fn generated_outputs_preserve_imported_sources_in_selected_and_other_targets() {
 }
 
 #[test]
+fn native_variadic_functions_receive_promoted_wide_and_function_pointer_arguments() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nsources=['native.c']\n");
+    fixture.write(
+        "native.c",
+        r#"
+        #include <stdarg.h>
+        #include <stdint.h>
+        int sum_promoted(int count, ...) {
+            va_list args; va_start(args, count); int sum = 0;
+            for (int i = 0; i < count; ++i) { sum += va_arg(args, int); }
+            va_end(args); return sum;
+        }
+        int64_t sum_wide(int count, ...) {
+            va_list args; va_start(args, count); int64_t sum = 0;
+            for (int i = 0; i < count; ++i) { sum += va_arg(args, int64_t); }
+            va_end(args); return sum;
+        }
+        uint64_t unsigned_value(int ignored, ...) {
+            va_list args; va_start(args, ignored); uint64_t value = va_arg(args, uint64_t);
+            va_end(args); return value;
+        }
+        typedef int (*Reader)(int*);
+        int invoke(int ignored, ...) {
+            va_list args; va_start(args, ignored); Reader read = va_arg(args, Reader);
+            int *value = va_arg(args, int*); va_end(args); return read(value);
+        }
+        typedef int (*Sum)(int, ...);
+        Sum get_sum(void) { return sum_promoted; }
+    "#,
+    );
+    fixture.write(
+        "main.cr",
+        r#"
+        extern int sum_promoted(int count, ...);
+        extern int64_t sum_wide(int count, ...);
+        extern uint64_t unsigned_value(int ignored, ...);
+        extern int invoke(int ignored, ...);
+        typedef int (*Sum)(int, ...);
+        extern Sum get_sum();
+        unsafe int read(int* value) { return *value; }
+        enum Small : uint8_t { Ready = 7 };
+        int main() {
+            uint8_t byte = 255; uint16_t half = 65535; bool flag = true;
+            int64_t wide = 2147483648; uint64_t largest = 18446744073709551615;
+            int value = 42;
+            unsafe {
+                print(sum_promoted(0)); print(sum_promoted(4, byte, half, flag, Small::Ready));
+                print(sum_wide(2, wide, (int64_t)1)); print(unsigned_value(0, largest));
+                print(invoke(0, read, &value)); print(get_sum()(2, (char)'a', (uint8_t)1));
+            }
+            return 0;
+        }
+    "#,
+    );
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(
+        text(&output),
+        "0\n65798\n2147483649\n18446744073709551615\n42\n98\n"
+    );
+}
+
+#[test]
 fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     let fixture = Fixture::new();
     for arguments in [

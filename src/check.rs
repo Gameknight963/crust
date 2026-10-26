@@ -23,6 +23,7 @@ pub(crate) struct FunctionAnalysis {
 
 #[derive(Clone)]
 struct Signature {
+    variadic: bool,
     requires_unsafe: bool,
     external: bool,
     return_type: Type,
@@ -83,6 +84,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             name.to_owned(),
             Signature {
+                variadic: false,
                 requires_unsafe: false,
                 external: false,
                 return_type,
@@ -188,6 +190,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             function.name.clone(),
             Signature {
+                variadic: function.variadic,
                 requires_unsafe: function.requires_unsafe,
                 external: function.external,
                 return_type: function.return_type,
@@ -210,6 +213,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 .collect();
             let satisfied = signatures.get(&requirement.name).is_some_and(|signature| {
                 signature.return_type == requirement.return_type
+                    && signature.variadic == requirement.variadic
                     && signature.parameters == expected
                     && (!signature.requires_unsafe || requirement.requires_unsafe)
             });
@@ -692,20 +696,24 @@ impl FunctionChecker<'_> {
                 let signature = self.types.callback(ty).cloned().ok_or_else(|| {
                     Diagnostic::new(callee.span, "indirect calls require a function pointer")
                 })?;
-                if arguments.len() != signature.parameters.len() {
+                if arguments.len() < signature.parameters.len()
+                    || (!signature.variadic && arguments.len() != signature.parameters.len())
+                {
                     return Err(Diagnostic::new(
                         expression.span,
                         format!(
-                            "callback expects {} argument(s), got {}",
+                            "callback expects {}{} argument(s), got {}",
+                            if signature.variadic { "at least " } else { "" },
                             signature.parameters.len(),
                             arguments.len()
                         ),
                     ));
                 }
                 self.require_unsafe(expression.span, "calling a function pointer")?;
-                for (argument, expected) in arguments.iter().zip(signature.parameters) {
-                    self.require_type(argument, expected)?;
+                for (argument, expected) in arguments.iter().zip(&signature.parameters) {
+                    self.require_type(argument, *expected)?;
                 }
+                self.variadic_arguments(&arguments[signature.parameters.len()..])?;
                 self.loans.truncate(previous_loans);
                 return Ok(signature.result);
             }
@@ -1042,11 +1050,14 @@ impl FunctionChecker<'_> {
                         ));
                     }
                 };
-                if arguments.len() != signature.parameters.len() {
+                if arguments.len() < signature.parameters.len()
+                    || (!signature.variadic && arguments.len() != signature.parameters.len())
+                {
                     return Err(Diagnostic::new(
                         expression.span,
                         format!(
-                            "function '{name}' expects {} argument(s), got {}",
+                            "function '{name}' expects {}{} argument(s), got {}",
+                            if signature.variadic { "at least " } else { "" },
                             signature.parameters.len(),
                             arguments.len()
                         ),
@@ -1132,6 +1143,7 @@ impl FunctionChecker<'_> {
                 for (argument, expected) in arguments.iter().zip(&signature.parameters) {
                     self.require_type(argument, *expected)?;
                 }
+                self.variadic_arguments(&arguments[signature.parameters.len()..])?;
                 let returned = signature
                     .return_borrow
                     .filter(|_| !self.unevaluated)
@@ -1473,11 +1485,37 @@ impl FunctionChecker<'_> {
             ));
         }
         let signature = self.signatures[name].clone();
-        let function_type =
-            self.types
-                .function_type(signature.return_type, signature.parameters, span)?;
+        let function_type = self.types.function_type(
+            signature.return_type,
+            signature.parameters,
+            signature.variadic,
+            span,
+        )?;
         self.function_values.insert(span, name.to_owned());
         return Ok(self.types.pointer_to(function_type, true));
+    }
+
+    fn variadic_arguments(&mut self, arguments: &[Expression]) -> Result<(), Diagnostic> {
+        for argument in arguments {
+            let ty = self.expression(argument)?;
+            if ty.is_borrow()
+                || self.types.owns(ty)
+                || !self.types.is_sized(ty)
+                || matches!(ty, Type::Array(_))
+            {
+                return Err(Diagnostic::new(
+                    argument.span,
+                    "variadic arguments require C values or raw pointers",
+                ));
+            }
+            if let Some(kind) = self.types.integer_representation(ty) {
+                let promoted = Type::Integer(kind.promoted());
+                if promoted != ty {
+                    self.conversions.insert(argument.span, promoted);
+                }
+            }
+        }
+        return Ok(());
     }
 
     fn static_reference(&mut self, id: usize, name: &str, span: Span) -> Result<Type, Diagnostic> {

@@ -254,16 +254,20 @@ impl Types {
         &mut self,
         result: Type,
         parameters: Vec<Type>,
+        variadic: bool,
         span: Span,
     ) -> Result<Type, Diagnostic> {
         let function_type = FunctionType {
+            variadic,
             result,
             parameters,
             span,
         };
         self.check_function_type(&function_type)?;
         let id = if let Some(id) = self.function_types.iter().position(|existing| {
-            existing.result == result && existing.parameters == function_type.parameters
+            existing.result == result
+                && existing.parameters == function_type.parameters
+                && existing.variadic == variadic
         }) {
             id
         } else {
@@ -335,16 +339,22 @@ impl Types {
 
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
-            Type::Function(id) => format!(
-                "{} ({})",
-                self.describe(self.function_types[id].result),
-                self.function_types[id]
+            Type::Function(id) => {
+                let function = &self.function_types[id];
+                let mut parameters: Vec<_> = function
                     .parameters
                     .iter()
                     .map(|ty| self.describe(*ty))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+                    .collect();
+                if function.variadic {
+                    parameters.push("...".to_owned());
+                }
+                format!(
+                    "{} ({})",
+                    self.describe(function.result),
+                    parameters.join(", ")
+                )
+            }
             Type::Integer(IntType::I32) => String::from("int"),
             Type::Integer(kind) => kind.c_name().to_owned(),
             Type::Bool => String::from("bool"),

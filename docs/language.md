@@ -695,6 +695,30 @@ struct Resource {
 - Explicit destructor calls are rejected
 - `drop` is an ordinary method name
 
+## Variadic C calls
+
+External declarations and function pointer typedefs can end their parameter list
+with `...`, following at least one fixed parameter:
+
+```c
+extern int snprintf(char* destination, size_t capacity, const char* format, ...);
+typedef int (*Formatter)(char*, size_t, const char*, ...);
+```
+
+Calls check the fixed parameters and apply C's default promotions to additional
+arguments. Booleans, `char`, and 8- or 16-bit integers promote to `int`. Enums
+promote according to their underlying integer representation. Wider integers,
+raw pointers, and copyable C structs retain their types.
+
+Additional arguments must be C values or raw pointers. Arrays require an explicit
+pointer, and owners and borrows require a suitable C representation. Calls retain
+left-to-right evaluation and require an unsafe context. The caller supplies the
+types expected by the C function's argument protocol after promotion.
+
+Variadic and fixed function pointer signatures are distinct types. See
+[the variadic example](../examples/variadic.cr) for direct and callback calls to
+`snprintf`.
+
 ## Lexical rules
 
 - Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
@@ -709,6 +733,7 @@ struct Resource {
 - Signed minimum literals such as `-2147483648` and `-9223372036854775808` are supported
 - Operators: `= + - * / % ! < > & | ^ == != <= >= && || -> ::`
 - `~` complements integer bits in expressions and introduces destructor declarations
+- `...` marks the variable argument tail in C declarations and function pointer types
 - Comments use `//` or non-nesting `/* ... */`
 - Whitespace supports LF, CRLF, and CR line endings
 - Unicode is accepted in comments and UTF-8 string literals

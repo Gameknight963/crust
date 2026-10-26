@@ -160,7 +160,7 @@ fn header(function: &Function) -> String {
     } else {
         c_type(function.return_type)
     };
-    let parameters = if function.parameters.is_empty() {
+    let mut parameters = if function.parameters.is_empty() {
         String::from("void")
     } else {
         function
@@ -171,6 +171,9 @@ fn header(function: &Function) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
+    if function.variadic {
+        parameters.push_str(", ...");
+    }
     return format!(
         "{result} {}({parameters})",
         if function.external {
@@ -245,7 +248,7 @@ impl Emitter<'_> {
                 for parameter in &function.parameters {
                     self.type_declaration(*parameter, declared);
                 }
-                let parameters = if function.parameters.is_empty() {
+                let mut parameters = if function.parameters.is_empty() {
                     String::from("void")
                 } else {
                     function
@@ -255,6 +258,9 @@ impl Emitter<'_> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
+                if function.variadic {
+                    parameters.push_str(", ...");
+                }
                 self.line(&format!(
                     "typedef {} crust_function_{id}({parameters});",
                     c_type(function.result)
