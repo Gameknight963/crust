@@ -80,11 +80,8 @@ fn site(text: &str, cursor: usize) -> Option<Site> {
 }
 
 fn context(uri: &str, site: &Site, documents: &HashMap<String, Document>) -> Option<Context> {
-    if let Some(context) = Context::load_completion(uri, documents) {
-        return Some(context);
-    }
     // Repair just the word being completed, keeping byte offsets stable when
-    // it has enough space. This snapshot is used only for completion requests.
+    // it has enough space. This snapshot is used only for editor analysis.
     let replacements: &[&str] = if site.member.is_some() {
         &["__crust_completion", "__crust_completion;"]
     } else {
@@ -102,6 +99,18 @@ fn context(uri: &str, site: &Site, documents: &HashMap<String, Document>) -> Opt
         }
     }
     return None;
+}
+
+pub(super) fn context_at(
+    uri: &str,
+    cursor: usize,
+    documents: &HashMap<String, Document>,
+) -> Option<Context> {
+    if let Some(context) = Context::load_completion(uri, documents) {
+        return Some(context);
+    }
+    let site = site(&documents.get(uri)?.text, cursor)?;
+    return context(uri, &site, documents);
 }
 
 fn kind(kind: SymbolKind) -> u8 {
@@ -146,7 +155,7 @@ fn complete(params: CompletionParams, documents: &HashMap<String, Document>) -> 
     let prefix = &document.text[site.start..site.cursor];
     let range = json!({ "start": position(&document.text, site.start), "end": position(&document.text, site.end) });
     let mut items = std::collections::BTreeMap::new();
-    if let Some(context) = context(&params.text_document.uri, &site, documents) {
+    if let Some(context) = context_at(&params.text_document.uri, site.cursor, documents) {
         let symbols = if let Some((offset, access)) = site.member {
             context
                 .analysis

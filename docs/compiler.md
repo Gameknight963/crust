@@ -15,6 +15,7 @@ ownership checking, C generation, and native compilation.
 | `src/analysis/rename.rs` | Local and parameter rename with binding validation |
 | `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
 | `src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
+| `src/analysis/signatures.rs` | Resolved call signatures, argument boundaries, and parameter label ranges |
 | `src/bindings.rs` | Clang header analysis and generated binding validation |
 | `src/bindings/enums.rs` | Native enum discovery, integer representation, and constant probes |
 | `src/bindings/render.rs` | C type trees to Crust declarations |
@@ -37,6 +38,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
 | `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
 | `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
+| `src/lsp/signature.rs` | Signature-help responses and active parameters |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -84,6 +86,12 @@ Completion analysis retains function information gathered before a body error.
 This produces an `AnalyzedProgram`. Native emission accepts a `CheckedProgram`,
 which is constructed after full validation. Other semantic requests continue to
 require a successfully checked program.
+
+Call analysis records resolved function or callback targets before argument
+validation. `Analysis::signature_help_at` selects the innermost call containing
+the cursor. Parsed argument spans separate argument commas from nested syntax,
+and parameter label ranges use UTF-16 offsets. Lowered instance calls retain
+their original argument list for signature help.
 
 Workspace symbol queries load every target in the configured workspace projects
 and combine them with open-document source graphs. Unsaved documents override

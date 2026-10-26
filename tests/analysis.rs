@@ -1,6 +1,91 @@
 use crust::analysis::{Analysis, SymbolKind};
 
 #[test]
+fn signature_help_resolves_functions_methods_generics_callbacks_and_parameter_ranges() {
+    let source = r#"
+        int add(int left, int right) { return left + right; }
+        T identity<T>(T value) { return value; }
+        typedef int (*Callback)(int, int);
+        struct Item {
+            int value;
+            static Self create(int value) { return (Self){ .value = value }; }
+            int get(int amount) const { return this->value + amount; }
+            int take(Self this, int extra) { return this.value + extra; }
+        };
+        int main() {
+            print(add(1, add(2, 3)));
+            print(identity<int>(4));
+            Item item = Item::create(5);
+            print(item.get(6)); print(item.take(7));
+            Callback callback = add;
+            unsafe { print(callback(8, 9)); }
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    for (needle, advance, expected, argument) in [
+        ("add(2, 3)", 4, "int add(int left, int right)", 0),
+        ("add(2, 3)", 7, "int add(int left, int right)", 1),
+        ("3)))", 2, "int add(int left, int right)", 1),
+        ("identity<int>(4)", 14, "int identity(int value)", 0),
+        (
+            "Item::create(5)",
+            13,
+            "struct Item Item::create(int value)",
+            0,
+        ),
+        ("item.get(6)", 9, "int Item.get(int amount) const", 0),
+        ("item.take(7)", 10, "int Item.take(int extra)", 0),
+    ] {
+        let help = analysis
+            .signature_help_at(0, source.find(needle).unwrap() + advance)
+            .unwrap();
+        assert_eq!(help.signatures[0].label, expected, "{needle}");
+        assert_eq!(help.argument, argument, "{needle}");
+        for signature in help.signatures {
+            let label: Vec<_> = signature.label.encode_utf16().collect();
+            for parameter in signature.parameters {
+                assert_eq!(
+                    String::from_utf16(&label[parameter.start..parameter.end]).unwrap(),
+                    parameter.label
+                );
+            }
+        }
+    }
+    let help = analysis
+        .signature_help_at(0, source.find("callback(8, 9)").unwrap() + 12)
+        .unwrap();
+    assert!(help.signatures[0].label.contains("callback(int, int)"));
+    assert_eq!(help.argument, 1);
+    assert!(analysis.signature_help_at(0, source.len()).is_none());
+}
+
+#[test]
+fn signature_help_counts_argument_boundaries_across_generic_commas_and_nested_initializers() {
+    let source = r#"
+        struct Pair<A, B> { A first; B second; };
+        int value<A, B>(Pair<A, B> pair) { return (int)pair.first; }
+        int add(int first, int second) { return first + second; }
+        int main() {
+            Pair<int, char> pair = { .first = 1, .second = 'a' };
+            print(add(value<int, char>((Pair<int, char>){ .first = 1, .second = 'a' }), 3));
+            return add(value<int, char>(pair), 2);
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let offset = source.find("char>(pair)").unwrap() + 2;
+    let help = analysis.signature_help_at(0, offset).unwrap();
+    assert_eq!(help.argument, 0);
+    assert_eq!(help.signatures[0].label, "int add(int first, int second)");
+    let offset = source.find("pair), 2").unwrap() + 7;
+    assert_eq!(analysis.signature_help_at(0, offset).unwrap().argument, 1);
+    let offset = source.find("'a' }), 3").unwrap();
+    let help = analysis.signature_help_at(0, offset).unwrap();
+    assert_eq!(help.argument, 0);
+    assert!(help.signatures[0].label.contains("value("));
+}
+
+#[test]
 fn member_completion_resolves_types_aliases_static_members_borrows_and_private_access() {
     use crust::analysis::MemberAccess;
     let source = r#"

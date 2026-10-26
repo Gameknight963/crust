@@ -51,6 +51,7 @@
 - Scope completion with shadowing, imported declarations, generic parameters, and partial-word recovery
 - Resolved member completion for fields, methods, and enums, including generic receivers and private-field visibility
 - Workspace symbol search across unopened project targets and shared imports, with unsaved source overlays and folder updates
+- Signature help with resolved generic and callback signatures, parsed argument boundaries, and partial-argument recovery
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
@@ -66,7 +67,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 ## Editor support
 
-- Extend rename to additional symbol kinds and add signature help
+- Extend rename to additional symbol kinds
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Build Visual Studio integration on the same language server
 - Use `crust.toml` as the authoritative project configuration
@@ -75,7 +76,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
 source outlines, reference searches, local rename, and scope and member completion.
-Signature help and broader rename support can extend the same analysis.
+Signature help uses the same resolved call analysis. Broader rename support can
+extend the symbol index.
 
 ## Further design
 

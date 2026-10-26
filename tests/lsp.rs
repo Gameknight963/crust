@@ -57,6 +57,10 @@ impl Server {
         assert_eq!(capabilities["documentSymbolProvider"], true);
         assert_eq!(capabilities["workspaceSymbolProvider"], true);
         assert_eq!(
+            capabilities["signatureHelpProvider"]["triggerCharacters"],
+            json!(["(", ","])
+        );
+        assert_eq!(
             capabilities["workspace"]["workspaceFolders"]["supported"],
             true
         );
@@ -791,6 +795,122 @@ fn workspace_folder_changes_update_symbol_search_without_opening_documents() {
         }}),
     );
     assert_eq!(workspace_symbols(&mut server, "searchable").len(), 1);
+    server.stop();
+}
+
+#[test]
+fn signature_help_tracks_nested_calls_partial_arguments_methods_callbacks_and_variadics() {
+    let definitions = "int sum(int left, int right) { return left + right; } int lone(int value) { return value; } typedef int (*Callback)(int, int); extern int native(int tag, ...); struct Item { int value; int get(int amount) const { return this->value + amount; } };";
+    let uri = "untitled:signatures.cr";
+    let mut server = Server::start();
+    for (version, (body, needle, expected, argument)) in [
+        ("return sum();", "sum(", "int sum(int left, int right)", 0),
+        (
+            "return sum(1, );",
+            "sum(1, ",
+            "int sum(int left, int right)",
+            1,
+        ),
+        ("return sum(1, lone(2));", "lone(", "int lone(int value)", 0),
+        (
+            "return sum(1, lone(2));",
+            "lone(2)",
+            "int sum(int left, int right)",
+            1,
+        ),
+        (
+            "Item item = { .value = 1 }; return item.get();",
+            "item.get(",
+            "int Item.get(int amount) const",
+            0,
+        ),
+        (
+            "Callback cb = sum; unsafe { return cb(); }",
+            "cb(",
+            "cb(int, int)",
+            0,
+        ),
+        (
+            "unsafe { return native(1, 2, 3); }",
+            "native(1, 2, ",
+            "extern int native(int tag, ...)",
+            1,
+        ),
+        (
+            "return sum(1, missing);",
+            "sum(1, ",
+            "int sum(int left, int right)",
+            1,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = format!("{definitions} int main() {{ {body} }}");
+        if version == 0 {
+            server.open(uri, 1, &source);
+        } else {
+            server.change(uri, version as i32 + 1, &source);
+            server.diagnostics();
+        }
+        let cursor = source.rfind(needle).unwrap() + needle.len();
+        let response = server.request(
+            "textDocument/signatureHelp",
+            json!({
+                "textDocument": {"uri": uri}, "position": at(&source, cursor)
+            }),
+        );
+        assert!(response.error.is_none());
+        let result = response.result.unwrap_or(Value::Null);
+        assert!(
+            result["signatures"][0]["label"]
+                .as_str()
+                .is_some_and(|label| label.ends_with(expected)),
+            "{needle}: {result}"
+        );
+        assert_eq!(result["activeParameter"], argument, "{needle}");
+        let signature = &result["signatures"][0];
+        let range = &signature["parameters"][argument as usize]["label"];
+        assert!(range[0].as_u64().unwrap() < range[1].as_u64().unwrap());
+    }
+    let response = server.request(
+        "textDocument/signatureHelp",
+        json!({"textDocument": {"uri": uri}, "position": {"line": 1000, "character": 0}}),
+    );
+    assert_eq!(response.result.unwrap_or(Value::Null), Value::Null);
+    let response = server.request("textDocument/signatureHelp", json!({"position": null}));
+    assert_eq!(response.error.unwrap().code, -32602);
+    server.stop();
+}
+
+#[test]
+fn signature_help_uses_current_unsaved_imported_parameter_types() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-signatures")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let helper = root.join("helper.cr");
+    std::fs::write(&helper, "int convert(int value) { return value; }").unwrap();
+    let source = "import \"helper.cr\"; int main() { return convert(); }";
+    let uri = file_uri(&root.join("main.cr"));
+    let mut server = Server::start();
+    server.open(&uri, 1, source);
+    let params = json!({"textDocument": {"uri": uri}, "position": at(source, source.find("convert(").unwrap() + 8)});
+    let response = server.request("textDocument/signatureHelp", params.clone());
+    assert_eq!(
+        response.result.unwrap()["signatures"][0]["label"],
+        "int convert(int value)"
+    );
+    server.open(
+        &file_uri(&helper),
+        1,
+        "int convert(char byte) { return byte; }",
+    );
+    let response = server.request("textDocument/signatureHelp", params);
+    assert_eq!(
+        response.result.unwrap()["signatures"][0]["label"],
+        "int convert(char byte)"
+    );
     server.stop();
 }
 

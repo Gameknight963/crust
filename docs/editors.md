@@ -30,6 +30,7 @@ The server also provides:
 - Rename for locals and explicit parameters, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
+- Signature help for functions, methods, callbacks, and built-in calls
 
 Semantic requests use the current unsaved text and checked compiler analysis.
 Reference searches include reads, writes, and calls. Compatible repeated
@@ -47,6 +48,12 @@ generic instances. `::` offers enum values and static methods. `.` and `->` offe
 fields and instance methods, with private fields visible inside their struct's
 methods. Completion can use type information gathered before an unfinished
 member produces a body error.
+
+Signature help highlights the current parameter using parsed argument boundaries.
+It follows nested calls and concrete generic instances, and keeps the receiver
+out of an instance method's argument list. Callback signatures retain their
+calling convention. Variadic arguments highlight `...`.
+Partial argument lists use the same temporary analysis repair as completion.
 
 Workspace search loads `crust.toml` targets from the editor's workspace folders,
 including unopened files. It also searches open source files and their projects.

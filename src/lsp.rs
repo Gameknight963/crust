@@ -6,6 +6,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
 mod semantic;
+mod signature;
 mod workspace;
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -78,6 +79,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
                 "workspaceSymbolProvider": true,
+                "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
                 "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
                 "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">"] },
                 "textDocumentSync": { "openClose": true, "change": 1 }
@@ -119,6 +121,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/documentSymbol"
                         | "textDocument/completion"
                         | "workspace/symbol"
+                        | "textDocument/signatureHelp"
                 ) {
                     match semantic::request(
                         &request.method,

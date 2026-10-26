@@ -7,7 +7,9 @@ use crate::diagnostic::Span;
 mod completion;
 mod members;
 mod rename;
+mod signatures;
 pub use members::MemberAccess;
+pub use signatures::{Signature, SignatureHelp, SignatureParameter};
 
 #[derive(Debug, Clone)]
 pub struct TextEdit {
@@ -75,6 +77,7 @@ pub struct Analysis {
     pub types: Vec<TypeInfo>,
     completion_scopes: Vec<completion::Scope>,
     members: members::Index,
+    signatures: signatures::Index,
 }
 
 fn contains(location: Location, file: usize, offset: usize, include_end: bool) -> bool {
@@ -256,6 +259,7 @@ pub(crate) fn build(
     files: Vec<File>,
     locate: impl Fn(Span) -> Location,
 ) -> Analysis {
+    let signatures = signatures::Index::build(checked, &files, &locate);
     let mut builder = Builder {
         seen: HashSet::new(),
         analysis: Analysis {
@@ -265,6 +269,7 @@ pub(crate) fn build(
             types: Vec::new(),
             completion_scopes: completion::scopes(checked, &locate),
             members: members::Index::build(checked, &locate),
+            signatures,
         },
         locate: &locate,
     };

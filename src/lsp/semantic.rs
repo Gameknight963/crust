@@ -258,6 +258,9 @@ pub(super) fn request(
     document_changes: bool,
     workspace_roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
+    if method == "textDocument/signatureHelp" {
+        return super::signature::request(params, documents);
+    }
     if method == "workspace/symbol" {
         return super::workspace::symbols(params, documents, workspace_roots);
     }

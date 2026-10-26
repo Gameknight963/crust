@@ -31,6 +31,7 @@ pub(crate) struct AnalyzedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub calls: HashMap<Span, CallSite>,
     pub receiver_types: HashMap<Span, Type>,
     pub symbol_uses: HashMap<Span, Span>,
     pub function_values: HashMap<Span, String>,
@@ -39,6 +40,17 @@ pub(crate) struct FunctionAnalysis {
     pub method_calls: HashMap<Span, Expression>,
     pub conversions: HashMap<Span, Type>,
     pub constants: HashMap<Span, i128>,
+}
+
+pub(crate) struct CallSite {
+    pub callee: Span,
+    pub target: CallTarget,
+    pub arguments: Vec<Span>,
+}
+
+pub(crate) enum CallTarget {
+    Function(String),
+    Callback(Type),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -431,6 +443,7 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            calls: &mut analysis.calls,
             completion,
             receiver_types: &mut analysis.receiver_types,
             function_declarations: &function_declarations,
@@ -515,6 +528,7 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
 }
 
 struct FunctionChecker<'program> {
+    calls: &'program mut HashMap<Span, CallSite>,
     completion: bool,
     receiver_types: &'program mut HashMap<Span, Type>,
     global_symbols: &'program HashMap<String, String>,
@@ -902,6 +916,12 @@ impl FunctionChecker<'_> {
                 let signature = self.types.callback(ty).cloned().ok_or_else(|| {
                     Diagnostic::new(callee.span, "indirect calls require a function pointer")
                 })?;
+                self.record_call(
+                    expression.span,
+                    callee.span,
+                    CallTarget::Callback(ty),
+                    arguments,
+                );
                 if arguments.len() < signature.parameters.len()
                     || (!signature.variadic && arguments.len() != signature.parameters.len())
                 {
@@ -1050,6 +1070,12 @@ impl FunctionChecker<'_> {
                 arguments,
             } => {
                 let key = static_method_name(*id, name);
+                self.record_call(
+                    expression.span,
+                    *name_span,
+                    CallTarget::Function(key.clone()),
+                    arguments,
+                );
                 let signature = self.signatures.get(&key).ok_or_else(|| {
                     Diagnostic::new(
                         expression.span,
@@ -1121,6 +1147,12 @@ impl FunctionChecker<'_> {
                     }
                 }
                 let key = method_name(id, name);
+                self.record_call(
+                    expression.span,
+                    *name_span,
+                    CallTarget::Function(key.clone()),
+                    arguments,
+                );
                 let signature = self.signatures.get(&key).ok_or_else(|| {
                     Diagnostic::new(
                         expression.span,
@@ -1277,6 +1309,12 @@ impl FunctionChecker<'_> {
                     }
                 };
                 self.record_function_symbol(name, *name_span);
+                self.record_call(
+                    expression.span,
+                    *name_span,
+                    CallTarget::Function(name.clone()),
+                    arguments,
+                );
                 if arguments.len() < signature.parameters.len()
                     || (!signature.variadic && arguments.len() != signature.parameters.len())
                 {
@@ -1751,6 +1789,20 @@ impl FunctionChecker<'_> {
         if let Some(declaration) = self.function_declarations.get(name) {
             self.symbol_uses.insert(span, *declaration);
         }
+    }
+
+    fn record_call(
+        &mut self,
+        span: Span,
+        callee: Span,
+        target: CallTarget,
+        arguments: &[Expression],
+    ) {
+        self.calls.entry(span).or_insert_with(|| CallSite {
+            callee,
+            target,
+            arguments: arguments.iter().map(|argument| argument.span).collect(),
+        });
     }
 
     fn record_field_symbol(&mut self, ty: Type, name: &str, span: Span) {
