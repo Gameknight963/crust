@@ -642,6 +642,14 @@ pub enum BinaryOperator {
     BitAnd,
     BitOr,
     BitXor,
+    ShiftLeft,
+    ShiftRight,
+}
+
+impl BinaryOperator {
+    pub fn is_shift(self) -> bool {
+        return matches!(self, Self::ShiftLeft | Self::ShiftRight);
+    }
 }
 
 // The '@' cannot occur in a source identifier, keeping methods separate from

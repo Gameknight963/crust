@@ -33,6 +33,7 @@
 - Variadic C declarations and callbacks with default integer argument promotions
 - Native-layout unions, opaque union tags, generic unions, and overlapping field-borrow checks
 - Native C integer spellings and conversion ranks, plus compatible repeated typedefs and external declarations
+- Integer shifts and compound shifts with C promotions, checked counts, and signed overflow checks
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
 - Explicit C and Windows calling conventions for native declarations, callbacks, functions, and methods
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests

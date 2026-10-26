@@ -502,10 +502,12 @@ impl Emitter<'_> {
                     self.line(&format!("*{address} = {result};"));
                     return;
                 }
-                let common = target_type
-                    .integer()
-                    .unwrap()
-                    .common(self.expression_type(value).integer().unwrap());
+                let left_kind = target_type.integer().unwrap();
+                let common = if operator.is_shift() {
+                    left_kind.promoted()
+                } else {
+                    left_kind.common(self.expression_type(value).integer().unwrap())
+                };
                 let place = self.place(target);
                 let address =
                     self.temporary(target_type.borrowed(true).unwrap(), &format!("&({place})"));
@@ -664,6 +666,20 @@ impl Emitter<'_> {
         right: &str,
         span: Span,
     ) -> String {
+        if operator.is_shift() {
+            let direction = if operator == BinaryOperator::ShiftLeft {
+                "left"
+            } else {
+                "right"
+            };
+            let sign = if kind.signed() { "signed" } else { "unsigned" };
+            return format!(
+                "crust_rt_shift_{direction}_{sign}({left}, (uint64_t)({right}), {}, {}, {})",
+                kind.bits(),
+                span.line,
+                span.column
+            );
+        }
         let helper = match operator {
             BinaryOperator::Add => Some("add"),
             BinaryOperator::Subtract => Some("sub"),
@@ -1014,7 +1030,9 @@ impl Emitter<'_> {
                         &format!("{left_value} {symbol} {right}"),
                     ));
                 }
-                let kind = if matches!(self.expression_type(left), Type::Pointer(_))
+                let kind = if operator.is_shift() {
+                    self.expression_type(left).integer().unwrap().promoted()
+                } else if matches!(self.expression_type(left), Type::Pointer(_))
                     || matches!(self.expression_type(right), Type::Pointer(_))
                 {
                     IntType::I32

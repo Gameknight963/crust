@@ -1,4 +1,39 @@
 /* Numeric helpers embedded in generated C after the basic runtime. */
+static inline void crust_rt_shift_count(uint64_t count, unsigned bits, size_t line, size_t column)
+{
+    if (count >= bits) { crust_rt_fail("shift count out of range", line, column); }
+}
+
+static inline int64_t crust_rt_shift_left_signed(int64_t value, uint64_t count, unsigned bits, size_t line, size_t column)
+{
+    crust_rt_shift_count(count, bits, line, column);
+    uint64_t maximum = bits == 32 ? INT32_MAX : INT64_MAX;
+    uint64_t magnitude = value < 0 ? (uint64_t)(-(value + 1)) + UINT64_C(1) : (uint64_t)value;
+    uint64_t limit = maximum + (value < 0 ? UINT64_C(1) : UINT64_C(0));
+    if (magnitude > (limit >> count)) { crust_rt_fail("integer overflow", line, column); }
+    magnitude <<= count;
+    return value < 0 ? -(int64_t)(magnitude - 1) - 1 : (int64_t)magnitude;
+}
+
+static inline uint64_t crust_rt_shift_left_unsigned(uint64_t value, uint64_t count, unsigned bits, size_t line, size_t column)
+{
+    crust_rt_shift_count(count, bits, line, column);
+    uint64_t maximum = bits == 32 ? UINT32_MAX : UINT64_MAX;
+    return (value << count) & maximum;
+}
+
+static inline int64_t crust_rt_shift_right_signed(int64_t value, uint64_t count, unsigned bits, size_t line, size_t column)
+{
+    crust_rt_shift_count(count, bits, line, column);
+    return value < 0 ? -1 - ((-(value + 1)) >> count) : value >> count;
+}
+
+static inline uint64_t crust_rt_shift_right_unsigned(uint64_t value, uint64_t count, unsigned bits, size_t line, size_t column)
+{
+    crust_rt_shift_count(count, bits, line, column);
+    return value >> count;
+}
+
 static inline void crust_rt_print_bytes(const void *text, size_t capacity)
 {
     const uint8_t *bytes = (const uint8_t *)text;

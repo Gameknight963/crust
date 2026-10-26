@@ -1509,6 +1509,8 @@ impl Parser {
             Token::AmpersandEqual => Some(BinaryOperator::BitAnd),
             Token::PipeEqual => Some(BinaryOperator::BitOr),
             Token::CaretEqual => Some(BinaryOperator::BitXor),
+            Token::LessLessEqual => Some(BinaryOperator::ShiftLeft),
+            Token::GreaterGreaterEqual => Some(BinaryOperator::ShiftRight),
             _ => None,
         };
         if let Some(operator) = operator {
@@ -1979,11 +1981,13 @@ impl Parser {
             Token::LessEqual => Some((BinaryOperator::LessEqual, 7)),
             Token::Greater => Some((BinaryOperator::Greater, 7)),
             Token::GreaterEqual => Some((BinaryOperator::GreaterEqual, 7)),
-            Token::Plus => Some((BinaryOperator::Add, 8)),
-            Token::Minus => Some((BinaryOperator::Subtract, 8)),
-            Token::Star => Some((BinaryOperator::Multiply, 9)),
-            Token::Slash => Some((BinaryOperator::Divide, 9)),
-            Token::Percent => Some((BinaryOperator::Remainder, 9)),
+            Token::LessLess => Some((BinaryOperator::ShiftLeft, 8)),
+            Token::GreaterGreater => Some((BinaryOperator::ShiftRight, 8)),
+            Token::Plus => Some((BinaryOperator::Add, 9)),
+            Token::Minus => Some((BinaryOperator::Subtract, 9)),
+            Token::Star => Some((BinaryOperator::Multiply, 10)),
+            Token::Slash => Some((BinaryOperator::Divide, 10)),
+            Token::Percent => Some((BinaryOperator::Remainder, 10)),
             _ => None,
         };
     }

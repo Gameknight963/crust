@@ -90,6 +90,9 @@ pub enum Token {
     LessEqual,
     GreaterEqual,
     GreaterGreater,
+    LessLess,
+    LessLessEqual,
+    GreaterGreaterEqual,
     AmpersandAmpersand,
     PipePipe,
     Arrow,
@@ -381,7 +384,7 @@ impl Lexer<'_> {
 
         // Even unsupported C operators must stay distinct from spaced tokens:
         // x++ is not the same token sequence as x + +y.
-        for operator in ["++", "--", "<<"] {
+        for operator in ["++", "--"] {
             if self.source[self.offset..].starts_with(operator) {
                 for _ in operator.chars() {
                     self.advance();
@@ -393,6 +396,17 @@ impl Lexer<'_> {
             }
         }
 
+        for (operator, token) in [
+            ("<<=", Token::LessLessEqual),
+            (">>=", Token::GreaterGreaterEqual),
+        ] {
+            if self.source[self.offset..].starts_with(operator) {
+                for _ in 0..3 {
+                    self.advance();
+                }
+                return Ok(token);
+            }
+        }
         // Try longer operators first, so == becomes one token instead of two.
         let pair = match (self.peek(), self.peek_next()) {
             (Some('='), Some('=')) => Some(Token::EqualEqual),
@@ -400,6 +414,7 @@ impl Lexer<'_> {
             (Some('<'), Some('=')) => Some(Token::LessEqual),
             (Some('>'), Some('=')) => Some(Token::GreaterEqual),
             (Some('>'), Some('>')) => Some(Token::GreaterGreater),
+            (Some('<'), Some('<')) => Some(Token::LessLess),
             (Some('&'), Some('&')) => Some(Token::AmpersandAmpersand),
             (Some('|'), Some('|')) => Some(Token::PipePipe),
             (Some('-'), Some('>')) => Some(Token::Arrow),
@@ -620,6 +635,24 @@ mod tests {
     }
 
     #[test]
+    fn keeps_shifts_compound_shifts_and_spaced_angles_distinct() {
+        assert_eq!(
+            kinds("<< >> <<= >>= < < > >"),
+            vec![
+                Token::LessLess,
+                Token::GreaterGreater,
+                Token::LessLessEqual,
+                Token::GreaterGreaterEqual,
+                Token::Less,
+                Token::Less,
+                Token::Greater,
+                Token::Greater,
+                Token::EndOfFile,
+            ]
+        );
+    }
+
+    #[test]
     fn comments_separate_tokens_without_hiding_division() {
         assert_eq!(
             kinds("int/* comment */value = 8 / 2; // until EOF"),
@@ -774,7 +807,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_compound_operators_without_confusing_spaced_ones() {
-        for source in ["x++", "x--", "x<<=2", "x<<1"] {
+        for source in ["x++", "x--"] {
             let error = tokenize(source).unwrap_err();
             assert!(error.message.contains("not supported yet"));
         }

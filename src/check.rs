@@ -538,6 +538,10 @@ impl FunctionChecker<'_> {
                         ));
                     }
                     self.pointer_offset(place.ty, value, actual)?;
+                } else if operator.is_shift() {
+                    self.integer(place.ty, target.span)?;
+                    let right = self.integer(actual, value.span)?.promoted();
+                    self.convert(value, actual, Type::Integer(right))?;
                 } else {
                     let common = self
                         .integer(place.ty, target.span)?
@@ -1492,6 +1496,12 @@ impl FunctionChecker<'_> {
                     return Ok(Type::Integer(IntType::I32));
                 }
                 let right_kind = self.integer(right_type, right.span)?;
+                if operator.is_shift() {
+                    let promoted = left_kind.promoted();
+                    self.convert(left, left_type, Type::Integer(promoted))?;
+                    self.convert(right, right_type, Type::Integer(right_kind.promoted()))?;
+                    return Ok(Type::Integer(promoted));
+                }
                 let common = left_kind.common(right_kind);
                 self.convert(left, left_type, Type::Integer(common))?;
                 self.convert(right, right_type, Type::Integer(common))?;
@@ -1833,6 +1843,10 @@ impl FunctionChecker<'_> {
                     if *operator == BinaryOperator::Add && matches!(b, Type::Pointer(_)) {
                         return Ok(b);
                     }
+                }
+                if operator.is_shift() {
+                    self.integer(b, right.span)?;
+                    return Ok(Type::Integer(self.integer(a, left.span)?.promoted()));
                 }
                 return Ok(Type::Integer(
                     self.integer(a, left.span)?

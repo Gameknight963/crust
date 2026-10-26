@@ -25,7 +25,7 @@ and file-based commands report errors with the original filename and location.
 - `break` exits the innermost loop, and `continue` advances to its next iteration
 - `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
 - Loop control destroys locals in the scopes being exited
-- Compound assignments: `+= -= *= /= %= &= |= ^=`
+- Compound assignments: `+= -= *= /= %= &= |= ^= <<= >>=`
 - Non-void functions must return a value on every path
 - Operands and call arguments evaluate left to right
 - `&&` and `||` short-circuit
@@ -153,6 +153,11 @@ for a struct satisfying both instance and static requirements.
 - Otherwise they use the signed type if it represents the unsigned range, or the unsigned counterpart of that signed type
 - Integer conversions check that the value fits, including conversions for mixed arithmetic
 - Unsigned arithmetic wraps within the promoted result type
+- `<<` and `>>` promote each operand independently and use the promoted left operand's type for the result
+- Shift counts must be nonnegative and smaller than the promoted left operand's width
+- Signed left shifts multiply by a power of two with overflow checking
+- Signed right shifts extend the sign, rounding negative values down
+- `<<=` and `>>=` evaluate the destination once and check the result when converting back to its type
 - Compound assignments check conversion of the result back to the destination type
 
 ```c
@@ -811,7 +816,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Characters use ASCII or byte escapes, including `\xFF`, up to three octal digits, and the standard C single-character escapes
 - The lexer accepts magnitudes through `18446744073709551615`
 - Signed minimum literals such as `-2147483648` and `-9223372036854775808` are supported
-- Operators: `= + - * / % ! < > & | ^ == != <= >= && || -> ::`
+- Operators: `= + - * / % ! < > & | ^ << >> == != <= >= && || -> ::`
 - `~` complements integer bits in expressions and introduces destructor declarations
 - `...` marks the variable argument tail in C declarations and function pointer types
 - Comments use `//` or non-nesting `/* ... */`
@@ -819,5 +824,4 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Unicode is accepted in comments and UTF-8 string literals
 
 Unsupported literal forms and compound operators produce diagnostics. Examples
-include `42u`, floating-point literals, `++`,
-and `<<`.
+include `42u`, floating-point literals, and `++`.
