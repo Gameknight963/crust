@@ -20,9 +20,18 @@ struct Box<T> {
         unsafe { return ^*this->data; }
     }
 
+    T take(Self this) {
+        unsafe {
+            T value = move(*this.data);
+            free(this.data);
+            this.data = 0;
+            return move(value);
+        }
+    }
+
     ~Box() {
         unsafe {
-            destroy(this->data);
+            if (this->data != 0) { destroy(this->data); }
             free(this->data);
         }
     }

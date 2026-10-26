@@ -609,6 +609,12 @@ It leaves the storage allocated. The caller provides a valid initialized value
 and treats it as uninitialized afterward. Copyable values have trivial cleanup.
 
 Both operations require an unsafe context and a pointer to a complete object type.
+`move(*pointer)` and `move(pointer[index])` can transfer a whole value out of raw
+storage in an unsafe context. Moving an owner requires a mutable pointer and
+leaves that location uninitialized. The caller updates any initialization count
+and avoids destroying that location until it is initialized again. Moving a
+copyable value reads a copy and leaves the source initialized.
+
 They let a generic owner pair C allocation with Crust cleanup:
 
 ```c
@@ -622,6 +628,10 @@ free(data);
 
 See [the generic box](../examples/generic_box.cr) for the complete owner, including
 private storage and safe borrowed access.
+The [growable vector](../examples/container_project/src/vector.cr) transfers
+elements between allocations during growth and destroys its live elements in
+reverse order. `push`, `pop`, `reserve`, `at`, and `at_mut` use checked borrows.
+`Box<T>::take(Self this)` consumes a box and returns its stored value.
 
 `extern` declares a C function under its native symbol name. Parameters can be
 named or unnamed. Signatures use C values and raw pointers. Arrays cross the

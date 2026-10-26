@@ -1,5 +1,6 @@
 import "buffer.cr";
 import "box.cr";
+import "vector.cr";
 
 struct Point { int x; int y; };
 
@@ -18,5 +19,9 @@ int main() {
     print(points.at(1)->y);
     Box<Buffer<int>> heap = Box<Buffer<int>>::create(Buffer<int>::create(2, 42));
     print(*heap.get()->at(0));
+    Vector<Box<int>> items = Vector<Box<int>>::create();
+    for (int i = 0; i < 4; i += 1) { items.push(Box<int>::create(i)); }
+    Box<int> last = items.pop();
+    print(*last.get());
     return 0;
 }

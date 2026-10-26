@@ -29,6 +29,7 @@
 - Multi-file generic containers and LSP analysis of unsaved dependencies
 - Unsafe function and method contracts, including generic instances and interface requirements
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
+- Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup

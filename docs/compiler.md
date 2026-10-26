@@ -89,6 +89,7 @@ to the original path and byte range.
 - Field privacy is checked in the frontend and preserves the C field layout
 - `init` stores an evaluated value into raw storage without dropping previous contents, and `destroy` calls the existing cleanup operation without deallocating the storage
 - `move` transfers owning locals and copies ordinary values, allowing the same generic body to accept either
+- Unsafe moves from raw pointer dereferences or indices capture a whole value without destroying its source, leaving initialization bookkeeping to the container
 
 ## Diagnostics
 

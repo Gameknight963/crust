@@ -133,3 +133,72 @@ fn move_copies_plain_values_without_consuming_them_and_preserves_owner_rules() {
         "drop:bytes:4\n",
     );
 }
+
+#[test]
+fn raw_storage_moves_transfer_owners_and_evaluate_pointer_and_index_once() {
+    run(
+        r#"
+        extern void* malloc(size_t bytes);
+        extern void free(void* pointer);
+        BoxInt* source(BoxInt* data) { print(1); return data; }
+        int index(BoxInt marker) { print(*marker); return 0; }
+        int main() {
+            unsafe {
+                BoxInt* data = (BoxInt*)malloc(sizeof(BoxInt)); init(data, box_int(42));
+                BoxInt marker = box_int(7);
+                BoxInt value = move(source(data)[index(move(marker))]);
+                free(data); print(*value);
+                int number = 9; const int* pointer = &number; print(move(*pointer)); print(number);
+            }
+            return 0;
+        }
+    "#,
+        "1\n7\n42\n9\n9\n",
+        &format!(
+            "drop:bytes:4\ndrop:bytes:{}\ndrop:bytes:4\n",
+            std::mem::size_of::<usize>()
+        ),
+    );
+    run(
+        r#"
+        int index(BoxInt value) { print(*value); return 0; }
+        int main() { unsafe { int number = 42; int* pointer = &number; BoxInt marker = box_int(7); print(move(pointer[index(move(marker))])); } return 0; }
+    "#,
+        "7\n42\n",
+        "drop:bytes:4\n",
+    );
+}
+
+#[test]
+fn raw_moves_reject_const_owners_incomplete_values_and_safe_partial_moves() {
+    for body in [
+        "BoxInt* pointer = 0; BoxInt value = move(*pointer);",
+        "const BoxInt* pointer = 0; unsafe { BoxInt value = move(*pointer); }",
+        "struct Opaque* pointer = 0; unsafe { move(*pointer); }",
+        "BoxInt owner = box_int(1); BoxInt^ view = ^owner; unsafe { BoxInt value = move(*view); }",
+        "BoxInt items[1] = { box_int(1) }; unsafe { BoxInt value = move(items[0]); }",
+    ] {
+        assert!(
+            crust::check(&format!("int main() {{ {body} return 0; }}")).is_err(),
+            "should reject {body}"
+        );
+    }
+}
+
+#[test]
+fn consuming_a_generic_box_returns_its_contents_and_releases_only_its_storage() {
+    let definitions = include_str!("../examples/generic_box.cr")
+        .split("int main()")
+        .next()
+        .unwrap();
+    run(
+        &format!(
+            "{definitions} int main() {{ Box<BoxInt> boxed = Box<BoxInt>::create(box_int(42)); BoxInt value = move(boxed).take(); print(*value); Box<int> number = Box<int>::create(7); print(move(number).take()); return 0; }}"
+        ),
+        "42\n7\n",
+        &format!(
+            "drop:bytes:{}\ndrop:bytes:4\ndrop:bytes:4\n",
+            std::mem::size_of::<usize>()
+        ),
+    );
+}

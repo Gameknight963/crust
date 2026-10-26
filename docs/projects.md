@@ -53,8 +53,8 @@ Paths are relative to the importing file. Imported declarations participate in
 the target's global namespace, including generic types, functions, and interfaces.
 The compiler loads repeated imports once and permits cycles with forward references.
 
-The [container project](../examples/container_project/) puts a generic buffer
-and its caller in separate files. Run it with:
+The [container project](../examples/container_project/) puts generic buffers,
+heap owners, growable vectors, and their caller in separate files. Run it with:
 
 ```powershell
 cargo run -- run --project examples/container_project

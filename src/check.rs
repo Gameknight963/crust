@@ -1075,9 +1075,45 @@ impl FunctionChecker<'_> {
                         self.set_state(owner, State::Moved);
                         return Ok(variable.ty);
                     }
+                    let pointer = match &arguments[0].kind {
+                        ExpressionKind::Unary {
+                            operator: UnaryOperator::Dereference,
+                            operand,
+                        } => Some(operand.as_ref()),
+                        ExpressionKind::Index { base, .. } => Some(base.as_ref()),
+                        _ => None,
+                    };
+                    if let Some(pointer) = pointer
+                        && matches!(self.receiver_type(pointer)?, Type::Pointer(_))
+                    {
+                        self.require_unsafe(expression.span, "moving a value out of raw storage")?;
+                        let place = self.checked_place(&arguments[0])?;
+                        if !self.types.is_sized(place.ty) {
+                            return Err(Diagnostic::new(
+                                arguments[0].span,
+                                "raw storage moves require a complete object type",
+                            ));
+                        }
+                        let owning = self.types.owns(place.ty);
+                        if owning && !place.mutable {
+                            return Err(Diagnostic::new(
+                                arguments[0].span,
+                                "moving an owner requires mutable raw storage",
+                            ));
+                        }
+                        self.access(
+                            &place.root,
+                            &place.fields,
+                            owning,
+                            place.via,
+                            arguments[0].span,
+                        )?;
+                        self.expression_types.insert(arguments[0].span, place.ty);
+                        return Ok(place.ty);
+                    }
                     return Err(Diagnostic::new(
                         arguments[0].span,
-                        "move requires the name of a whole variable; moving individual fields is not supported yet",
+                        "move requires the name of a whole variable or a whole value in raw storage; moving individual fields is not supported yet",
                     ));
                 }
 

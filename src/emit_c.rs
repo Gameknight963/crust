@@ -844,7 +844,8 @@ impl Emitter<'_> {
                 }
                 if name == "move" {
                     let ExpressionKind::Variable(owner) = &arguments[0].kind else {
-                        unreachable!("checker requires an owner name in move");
+                        let place = self.place(&arguments[0]);
+                        return Some(self.temporary(self.expression_type(expression), &place));
                     };
                     let local = self.local(owner);
                     let temporary = self.temporary(local.ty, &local.name);
