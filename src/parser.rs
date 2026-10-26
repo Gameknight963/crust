@@ -13,6 +13,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         aliases: HashMap::new(),
         resolved_aliases: HashMap::new(),
         resolving_aliases: HashSet::new(),
+        value_scopes: vec![HashSet::new()],
     };
     parser.collect_type_names()?;
     let mut functions = Vec::new();
@@ -52,6 +53,7 @@ struct Parser {
     aliases: HashMap<String, Alias>,
     resolved_aliases: HashMap<String, Type>,
     resolving_aliases: HashSet<String>,
+    value_scopes: Vec<HashSet<String>>,
 }
 
 #[derive(Clone, Copy)]
@@ -196,6 +198,9 @@ impl Parser {
         if self.aliases.contains_key(name) {
             return self.alias_type(name);
         }
+        if let Some(kind) = IntType::named(name) {
+            return Ok(Type::Integer(kind));
+        }
         if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
             return Ok(Type::Struct(id));
         }
@@ -204,8 +209,29 @@ impl Parser {
 
     fn known_type(&self, name: &str) -> bool {
         return name == "Self"
+            || IntType::named(name).is_some()
             || self.aliases.contains_key(name)
             || self.struct_names.iter().any(|entry| entry.0 == name);
+    }
+
+    fn type_in_expression(&self) -> bool {
+        return match &self.current().kind {
+            Token::Int
+            | Token::Bool
+            | Token::Void
+            | Token::BoxInt
+            | Token::Struct
+            | Token::Const => true,
+            Token::Identifier(name) => {
+                self.known_type(name)
+                    && !self
+                        .value_scopes
+                        .iter()
+                        .rev()
+                        .any(|scope| scope.contains(name))
+            }
+            _ => false,
+        };
     }
 
     fn local_type_name(&self) -> bool {
@@ -404,7 +430,14 @@ impl Parser {
                 "only instance methods can have a const method qualifier",
             ));
         }
+        self.value_scopes.push(
+            parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+        );
         let body = self.block()?;
+        self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
             name,
@@ -419,7 +452,7 @@ impl Parser {
         let shared = self.consume(&Token::Const);
         let token = self.advance();
         let base = match token.kind {
-            Token::Int => Type::Int,
+            Token::Int => Type::Integer(IntType::I32),
             Token::Bool => Type::Bool,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
@@ -451,6 +484,7 @@ impl Parser {
 
     fn block(&mut self) -> Result<Block, Diagnostic> {
         let start = self.expect(Token::LeftBrace, "expected '{' to start a block")?;
+        self.value_scopes.push(HashSet::new());
         let mut statements = Vec::new();
         while !self.at(&Token::RightBrace) {
             if self.at(&Token::EndOfFile) {
@@ -462,6 +496,7 @@ impl Parser {
             statements.push(self.statement()?);
         }
         let end = self.advance().span;
+        self.value_scopes.pop();
         return Ok(Block {
             statements,
             span: start.through(end),
@@ -519,6 +554,7 @@ impl Parser {
 
         if self.consume(&Token::For) {
             self.expect(Token::LeftParen, "expected '(' after 'for'")?;
+            self.value_scopes.push(HashSet::new());
             let initializer = self.statement()?;
             if !matches!(
                 initializer.kind,
@@ -551,6 +587,7 @@ impl Parser {
             };
             let step_end = self.expect(Token::RightParen, "expected ')' after the for step")?;
             let body = self.block()?;
+            self.value_scopes.pop();
             let span = start.through(body.span);
             let loop_statement = Statement {
                 span,
@@ -588,6 +625,7 @@ impl Parser {
                 ));
             }
             let (name, _) = self.identifier()?;
+            self.value_scopes.last_mut().unwrap().insert(name.clone());
             self.expect(
                 Token::Equal,
                 "local variables need an initializer: 'type name = expression;'",
@@ -678,10 +716,57 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expression, Diagnostic> {
+        let start = self.current().span;
+        if self.consume(&Token::Alignof) {
+            self.expect(Token::LeftParen, "expected '(' after alignof")?;
+            let ty = self.type_name()?;
+            let end = self.expect(Token::RightParen, "expected ')' after the type")?;
+            return Ok(Expression {
+                span: start.through(end),
+                kind: ExpressionKind::Alignof(ty),
+            });
+        }
+        if self.consume(&Token::Sizeof) {
+            let saved = self.position;
+            if self.consume(&Token::LeftParen) && self.type_in_expression() {
+                let ty = self.type_name()?;
+                let end = self.expect(Token::RightParen, "expected ')' after the type")?;
+                return Ok(Expression {
+                    span: start.through(end),
+                    kind: ExpressionKind::SizeofType(ty),
+                });
+            }
+            self.position = saved;
+            let operand = self.unary()?;
+            return Ok(Expression {
+                span: start.through(operand.span),
+                kind: ExpressionKind::SizeofValue(Box::new(operand)),
+            });
+        }
+        if self.at(&Token::LeftParen) {
+            let saved = self.position;
+            self.advance();
+            if self.type_in_expression() {
+                let ty = self.type_name()?;
+                self.expect(Token::RightParen, "expected ')' after the cast type")?;
+                if !self.at(&Token::LeftBrace) {
+                    let operand = self.unary()?;
+                    return Ok(Expression {
+                        span: start.through(operand.span),
+                        kind: ExpressionKind::Cast {
+                            ty,
+                            operand: Box::new(operand),
+                        },
+                    });
+                }
+            }
+            self.position = saved;
+        }
         let operator = match self.current().kind {
             Token::Plus => Some(UnaryOperator::Plus),
             Token::Minus => Some(UnaryOperator::Negate),
             Token::Bang => Some(UnaryOperator::Not),
+            Token::Tilde => Some(UnaryOperator::BitNot),
             Token::Star => Some(UnaryOperator::Dereference),
             Token::Caret => Some(UnaryOperator::Borrow { mutable: true }),
             _ => None,

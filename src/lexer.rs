@@ -23,10 +23,12 @@ pub enum Token {
     Struct,
     Typedef,
     Static,
+    Sizeof,
+    Alignof,
 
     // Tokens carrying data.
     Identifier(String),
-    IntegerLiteral(i64),
+    IntegerLiteral(u64),
 
     // Punctuation.
     LeftParen,
@@ -175,6 +177,8 @@ impl Lexer<'_> {
             "struct" => Token::Struct,
             "typedef" => Token::Typedef,
             "static" => Token::Static,
+            "sizeof" => Token::Sizeof,
+            "alignof" | "_Alignof" => Token::Alignof,
             _ => Token::Identifier(name.to_owned()),
         };
     }
@@ -202,9 +206,9 @@ impl Lexer<'_> {
             return Err(self.error(start, "integers with leading zeros are not supported yet"));
         }
 
-        return match text.parse::<i64>() {
+        return match text.parse::<u64>() {
             Ok(value) => Ok(Token::IntegerLiteral(value)),
-            Err(_) => Err(self.error(start, "integer literal exceeds the signed 64-bit range")),
+            Err(_) => Err(self.error(start, "integer literal exceeds the unsigned 64-bit range")),
         };
     }
 
@@ -534,10 +538,10 @@ mod tests {
     #[test]
     fn checks_integer_range() {
         assert_eq!(
-            kinds("9223372036854775807"),
-            vec![Token::IntegerLiteral(i64::MAX), Token::EndOfFile]
+            kinds("18446744073709551615"),
+            vec![Token::IntegerLiteral(u64::MAX), Token::EndOfFile]
         );
-        let error = tokenize("9223372036854775808").unwrap_err();
+        let error = tokenize("18446744073709551616").unwrap_err();
         assert!(error.message.contains("64-bit range"));
     }
 

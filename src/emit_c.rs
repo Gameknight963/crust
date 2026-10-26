@@ -8,7 +8,7 @@ use crate::types::Types;
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
     let program = &checked.program;
     let mut emitter = Emitter {
-        output: String::from(RUNTIME),
+        output: format!("{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
         next_name: 0,
         scopes: Vec::new(),
@@ -20,6 +20,8 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         types: &checked.types,
         expression_types: &checked.expression_types,
         method_calls: &checked.method_calls,
+        conversions: &checked.conversions,
+        constants: &checked.constants,
         loops: Vec::new(),
     };
     emitter
@@ -32,6 +34,8 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         .return_types
         .insert(String::from("move"), Type::BoxInt);
 
+    emitter.line(&format!("_Static_assert(sizeof(void *) * CHAR_BIT == {}, \"C compiler target must match the Crust host\");", usize::BITS));
+    emitter.unsigned_runtime();
     emitter.struct_definitions();
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
@@ -83,7 +87,7 @@ fn function_name(name: &str) -> String {
 
 fn c_type(ty: Type) -> String {
     return match ty {
-        Type::Int => String::from("int32_t"),
+        Type::Integer(kind) => kind.c_name().to_owned(),
         Type::Bool => String::from("bool"),
         Type::Void => String::from("void"),
         Type::BoxInt => String::from("int32_t *"),
@@ -147,6 +151,8 @@ struct Emitter<'checked> {
     types: &'checked Types,
     expression_types: &'checked HashMap<Span, Type>,
     method_calls: &'checked HashMap<Span, Expression>,
+    conversions: &'checked HashMap<Span, Type>,
+    constants: &'checked HashMap<Span, i128>,
     loops: Vec<LoopContext>,
 }
 
@@ -156,6 +162,38 @@ struct LoopContext {
 }
 
 impl Emitter<'_> {
+    fn unsigned_runtime(&mut self) {
+        for kind in [IntType::U32, IntType::U64] {
+            let ty = kind.c_name();
+            let bits = kind.bits();
+            for (name, symbol) in [
+                ("add", "+"),
+                ("sub", "-"),
+                ("mul", "*"),
+                ("div", "/"),
+                ("rem", "%"),
+            ] {
+                self.line(&format!("static inline {ty} crust_rt_u{bits}_{name}({ty} a, {ty} b, size_t line, size_t column) {{"));
+                self.indent += 1;
+                self.line("(void)line; (void)column;");
+                if name == "div" || name == "rem" {
+                    let reason = if name == "div" {
+                        "division by zero"
+                    } else {
+                        "remainder by zero"
+                    };
+                    self.line(&format!(
+                        "if (b == 0) {{ crust_rt_fail(\"{reason}\", line, column); }}"
+                    ));
+                }
+                self.line(&format!("return ({ty})(a {symbol} b);"));
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line(&format!("static inline {ty} crust_rt_u{bits}_neg({ty} value, size_t line, size_t column) {{ (void)line; (void)column; return ({ty})(0 - value); }}"));
+        }
+    }
+
     fn struct_definitions(&mut self) {
         for id in &self.types.order {
             let info = &self.types.structs[*id];
@@ -284,43 +322,22 @@ impl Emitter<'_> {
                 operator,
                 value,
             } => {
+                let target_type = self.place_type(target);
+                let common = target_type
+                    .integer()
+                    .unwrap()
+                    .common(self.expression_type(value).integer().unwrap());
                 let place = self.place(target);
-                let address = self.temporary(
-                    Type::Borrow {
-                        pointee: Pointee::Int,
-                        mutable: true,
-                    },
-                    &format!("&({place})"),
-                );
-                let left = self.temporary(Type::Int, &format!("*{address}"));
+                let address =
+                    self.temporary(target_type.borrowed(true).unwrap(), &format!("&({place})"));
+                let old = self.temporary(target_type, &format!("*{address}"));
+                let left = self.convert_value(old, target_type, Type::Integer(common), target.span);
                 let right = self.value_expression(value);
-                let operation = match operator {
-                    BinaryOperator::Add => format!(
-                        "crust_rt_add({left}, {right}, {}, {})",
-                        statement.span.line, statement.span.column
-                    ),
-                    BinaryOperator::Subtract => format!(
-                        "crust_rt_sub({left}, {right}, {}, {})",
-                        statement.span.line, statement.span.column
-                    ),
-                    BinaryOperator::Multiply => format!(
-                        "crust_rt_mul({left}, {right}, {}, {})",
-                        statement.span.line, statement.span.column
-                    ),
-                    BinaryOperator::Divide => format!(
-                        "crust_rt_div({left}, {right}, {}, {})",
-                        statement.span.line, statement.span.column
-                    ),
-                    BinaryOperator::Remainder => format!(
-                        "crust_rt_rem({left}, {right}, {}, {})",
-                        statement.span.line, statement.span.column
-                    ),
-                    BinaryOperator::BitAnd => format!("({left} & {right})"),
-                    BinaryOperator::BitOr => format!("({left} | {right})"),
-                    BinaryOperator::BitXor => format!("({left} ^ {right})"),
-                    _ => unreachable!("checked compound operator"),
-                };
-                self.line(&format!("*{address} = {operation};"));
+                let operation = self.operation(*operator, common, &left, &right, statement.span);
+                let result = self.temporary(Type::Integer(common), &operation);
+                let result =
+                    self.convert_value(result, Type::Integer(common), target_type, statement.span);
+                self.line(&format!("*{address} = {result};"));
             }
             StatementKind::Expression(expression) => {
                 if let Some(value) = self.expression(expression) {
@@ -402,16 +419,154 @@ impl Emitter<'_> {
     }
 
     fn value_expression(&mut self, expression: &Expression) -> String {
-        return self
+        let value = self
             .expression(expression)
             .expect("checker requires a non-void value here");
+        if let Some(target) = self.conversions.get(&expression.span) {
+            return self.convert_value(
+                value,
+                self.expression_type(expression),
+                *target,
+                expression.span,
+            );
+        }
+        return value;
+    }
+
+    fn convert_value(&mut self, value: String, from: Type, to: Type, span: Span) -> String {
+        if from == to {
+            return value;
+        }
+        let cast = format!("({})({value})", c_type(to));
+        if from == Type::Bool || to == Type::Bool {
+            return self.temporary(to, &cast);
+        }
+        let source = from.integer().expect("numeric conversion source");
+        let target = to.integer().expect("numeric conversion target");
+        if target.minimum() <= source.minimum() && target.maximum() >= source.maximum() {
+            return self.temporary(to, &cast);
+        }
+        let bits = target.bits();
+        let call = match (source.signed(), target.signed()) {
+            (true, true) => format!(
+                "crust_rt_cast_signed({value}, INT{bits}_MIN, INT{bits}_MAX, {}, {})",
+                span.line, span.column
+            ),
+            (true, false) => format!(
+                "crust_rt_cast_unsigned_from_signed({value}, UINT{bits}_MAX, {}, {})",
+                span.line, span.column
+            ),
+            (false, true) => format!(
+                "crust_rt_cast_signed_from_unsigned({value}, INT{bits}_MAX, {}, {})",
+                span.line, span.column
+            ),
+            (false, false) => format!(
+                "crust_rt_cast_unsigned({value}, UINT{bits}_MAX, {}, {})",
+                span.line, span.column
+            ),
+        };
+        return self.temporary(to, &format!("({})({call})", c_type(to)));
+    }
+
+    fn operation(
+        &self,
+        operator: BinaryOperator,
+        kind: IntType,
+        left: &str,
+        right: &str,
+        span: Span,
+    ) -> String {
+        let helper = match operator {
+            BinaryOperator::Add => Some("add"),
+            BinaryOperator::Subtract => Some("sub"),
+            BinaryOperator::Multiply => Some("mul"),
+            BinaryOperator::Divide => Some("div"),
+            BinaryOperator::Remainder => Some("rem"),
+            _ => None,
+        };
+        if let Some(helper) = helper {
+            let family = match kind.promoted() {
+                IntType::I32 => "",
+                IntType::I64 => "i64_",
+                IntType::U32 => "u32_",
+                IntType::U64 => "u64_",
+                _ => unreachable!("promoted integer type"),
+            };
+            return format!(
+                "crust_rt_{family}{helper}({left}, {right}, {}, {})",
+                span.line, span.column
+            );
+        }
+        let symbol = match operator {
+            BinaryOperator::Equal => "==",
+            BinaryOperator::NotEqual => "!=",
+            BinaryOperator::Less => "<",
+            BinaryOperator::LessEqual => "<=",
+            BinaryOperator::Greater => ">",
+            BinaryOperator::GreaterEqual => ">=",
+            BinaryOperator::BitAnd => "&",
+            BinaryOperator::BitOr => "|",
+            BinaryOperator::BitXor => "^",
+            _ => unreachable!("non-arithmetic binary operator"),
+        };
+        return format!("({left} {symbol} {right})");
+    }
+
+    fn integer_constant(&self, expression: &Expression, value: i128) -> String {
+        let kind = self.expression_type(expression).integer().unwrap();
+        let bits = kind.bits();
+        if value < 0 {
+            if value == kind.minimum() {
+                return format!("INT{bits}_MIN");
+            }
+            return format!("(-INT{bits}_C({}))", -value);
+        }
+        return format!(
+            "{}INT{bits}_C({value})",
+            if kind.signed() { "" } else { "U" }
+        );
     }
 
     // An owning expression result has exactly one consumer: an initializer,
     // assignment, argument, return, or discard. Its temporary is transferred to
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
+        if let Some(value) = self.constants.get(&expression.span) {
+            return Some(self.integer_constant(expression, *value));
+        }
         match &expression.kind {
+            ExpressionKind::Cast { ty, operand } => {
+                if *ty == Type::Void {
+                    if let Some(value) = self.expression(operand) {
+                        let operand_type = self.expression_type(operand);
+                        if self.types.owns(operand_type) {
+                            self.drop_value(operand_type, &value);
+                        } else {
+                            self.line(&format!("(void){value};"));
+                        }
+                    }
+                    return None;
+                }
+                let value = self.value_expression(operand);
+                return Some(self.temporary(*ty, &value));
+            }
+            ExpressionKind::SizeofType(ty) | ExpressionKind::Alignof(ty) => {
+                let operator = if matches!(expression.kind, ExpressionKind::Alignof(_)) {
+                    "_Alignof"
+                } else {
+                    "sizeof"
+                };
+                return Some(self.temporary(
+                    self.expression_type(expression),
+                    &format!("{operator}({})", c_type(*ty)),
+                ));
+            }
+            ExpressionKind::SizeofValue(operand) => {
+                return Some(self.temporary(
+                    self.expression_type(expression),
+                    &format!("sizeof({})", c_type(self.expression_type(operand))),
+                ));
+            }
             ExpressionKind::Boolean(value) => return Some(value.to_string()),
             ExpressionKind::MethodCall { .. } | ExpressionKind::StaticCall { .. } => {
                 let call = self.method_calls[&expression.span].clone();
@@ -431,9 +586,7 @@ impl Emitter<'_> {
                 let place = self.place(expression);
                 return Some(self.temporary(self.expression_type(expression), &place));
             }
-            ExpressionKind::Integer(value) => {
-                return Some(format!("INT32_C({value})"));
-            }
+            ExpressionKind::Integer(_) => unreachable!("checked literal has a constant value"),
             ExpressionKind::Variable(name) => {
                 let local = self.local(name);
                 let temporary = self.temporary(local.ty, &local.name);
@@ -465,7 +618,16 @@ impl Emitter<'_> {
                     values.push(expression.span.line.to_string());
                     values.push(expression.span.column.to_string());
                 }
-                let call = format!("{}({})", function_name(name), values.join(", "));
+                let function = if name == "print" {
+                    match self.expression_type(&arguments[0]).integer().unwrap() {
+                        IntType::I64 => String::from("crust_rt_print_i64"),
+                        IntType::U32 | IntType::U64 => String::from("crust_rt_print_u64"),
+                        _ => function_name(name),
+                    }
+                } else {
+                    function_name(name)
+                };
+                let call = format!("{}({})", function, values.join(", "));
                 let ty = self.return_types[name];
                 if ty == Type::Void {
                     self.line(&format!("{call};"));
@@ -489,25 +651,30 @@ impl Emitter<'_> {
                     let value = self.temporary(self.place_type(expression), &place);
                     return Some(value);
                 }
-                if *operator == UnaryOperator::Negate
-                    && matches!(operand.kind, ExpressionKind::Integer(2147483648))
-                {
-                    return Some(String::from("INT32_MIN"));
-                }
                 let value = self.value_expression(operand);
                 let operation = match operator {
                     UnaryOperator::Plus => {
                         return Some(value);
                     }
                     UnaryOperator::Not => format!("!{value}"),
-                    UnaryOperator::Negate => format!(
-                        "crust_rt_neg({value}, {}, {})",
-                        expression.span.line, expression.span.column
-                    ),
+                    UnaryOperator::BitNot => format!("~({value})"),
+                    UnaryOperator::Negate => {
+                        let family = match self.expression_type(expression).integer().unwrap() {
+                            IntType::I32 => "",
+                            IntType::I64 => "i64_",
+                            IntType::U32 => "u32_",
+                            IntType::U64 => "u64_",
+                            _ => unreachable!("promoted unary type"),
+                        };
+                        format!(
+                            "crust_rt_{family}neg({value}, {}, {})",
+                            expression.span.line, expression.span.column
+                        )
+                    }
                     UnaryOperator::Dereference => unreachable!(),
                     UnaryOperator::Borrow { .. } => unreachable!(),
                 };
-                let temporary = self.temporary(Type::Int, &operation);
+                let temporary = self.temporary(self.expression_type(expression), &operation);
                 return Some(temporary);
             }
             ExpressionKind::Binary {
@@ -515,9 +682,10 @@ impl Emitter<'_> {
                 left,
                 right,
             } => {
-                let left = self.value_expression(left);
+                let left_value = self.value_expression(left);
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
-                    let result = self.temporary(Type::Int, &format!("({left} != 0)"));
+                    let result = self
+                        .temporary(Type::Integer(IntType::I32), &format!("({left_value} != 0)"));
                     let condition = if *operator == BinaryOperator::And {
                         result.clone()
                     } else {
@@ -531,37 +699,15 @@ impl Emitter<'_> {
                     self.line("}");
                     return Some(result);
                 }
+                let kind = self
+                    .expression_type(left)
+                    .integer()
+                    .unwrap()
+                    .common(self.expression_type(right).integer().unwrap());
                 let right = self.value_expression(right);
-                let helper = match operator {
-                    BinaryOperator::Add => Some("add"),
-                    BinaryOperator::Subtract => Some("sub"),
-                    BinaryOperator::Multiply => Some("mul"),
-                    BinaryOperator::Divide => Some("div"),
-                    BinaryOperator::Remainder => Some("rem"),
-                    _ => None,
-                };
-                let operation;
-                if let Some(helper) = helper {
-                    operation = format!(
-                        "crust_rt_{helper}({left}, {right}, {}, {})",
-                        expression.span.line, expression.span.column
-                    );
-                } else {
-                    let symbol = match operator {
-                        BinaryOperator::Equal => "==",
-                        BinaryOperator::NotEqual => "!=",
-                        BinaryOperator::Less => "<",
-                        BinaryOperator::LessEqual => "<=",
-                        BinaryOperator::Greater => ">",
-                        BinaryOperator::GreaterEqual => ">=",
-                        BinaryOperator::BitAnd => "&",
-                        BinaryOperator::BitOr => "|",
-                        BinaryOperator::BitXor => "^",
-                        _ => unreachable!("other binary operators were handled above"),
-                    };
-                    operation = format!("({left} {symbol} {right})");
-                }
-                let temporary = self.temporary(Type::Int, &operation);
+                let operation =
+                    self.operation(*operator, kind, &left_value, &right, expression.span);
+                let temporary = self.temporary(self.expression_type(expression), &operation);
                 return Some(temporary);
             }
         }
@@ -607,7 +753,7 @@ impl Emitter<'_> {
                 operand,
             } => {
                 return match self.place_type(operand) {
-                    Type::BoxInt => Type::Int,
+                    Type::BoxInt => Type::Integer(IntType::I32),
                     Type::Borrow { pointee, .. } => pointee.ty(),
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
@@ -665,6 +811,7 @@ impl Emitter<'_> {
 
 const RUNTIME: &str = r#"/* Generated by the Crust prototype compiler. */
 #include <stdint.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -738,3 +885,4 @@ static inline void crust_rt_drop(int32_t **owner)
 }
 
 "#;
+const NUMERIC_RUNTIME: &str = include_str!("runtime_numbers.h");

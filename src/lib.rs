@@ -100,9 +100,10 @@ mod tests {
     }
 
     #[test]
-    fn accepts_the_minimum_integer_but_rejects_its_positive_magnitude() {
+    fn checks_signed_literal_boundaries_and_contextual_ranges() {
         check("int main(void) { print(-2147483648); return 0; }").unwrap();
-        assert!(check("int main(void) { print(+2147483648); return 0; }").is_err());
+        check("int main(void) { print(+2147483648); return 0; }").unwrap();
+        assert!(check("int main(void) { int n = 2147483648; return n; }").is_err());
     }
 
     #[test]

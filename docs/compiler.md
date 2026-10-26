@@ -16,6 +16,7 @@ ownership checking, C generation, and native compilation.
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct layouts and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
+| `src/runtime_numbers.h` | Embedded portable C helpers for wide arithmetic and checked conversions |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
@@ -31,6 +32,7 @@ ownership checking, C generation, and native compilation.
 - Project build output goes to `<project>/target/crust/<target>/`
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
 - Toolchain environment changes apply to the child compiler process
+- Pointer-sized types follow the Rust host, with a generated C assertion checking native pointer width
 - `run` forwards the low eight bits of the native program's exit code
 
 ## Ownership and cleanup
@@ -45,6 +47,11 @@ ownership checking, C generation, and native compilation.
 - Method calls lower to ordinary functions with receiver parameters
 
 ## Diagnostics
+
+The checker records expression types, contextual integer constants, and numeric
+conversions by source span. C generation uses those records to preserve integer
+promotions and insert range checks. Signed arithmetic checks bounds before the
+operation. Unsigned arithmetic uses the corresponding wrapping C operations.
 
 Diagnostics use `file:line:column` locations. Spans contain UTF-8 byte offsets
 and one-based character columns. Tabs count as one column.

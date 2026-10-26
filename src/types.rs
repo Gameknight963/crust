@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{Field, Program, Type};
+use crate::ast::{Field, IntType, Program, Type};
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
@@ -120,7 +120,8 @@ impl Types {
 
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
-            Type::Int => String::from("int"),
+            Type::Integer(IntType::I32) => String::from("int"),
+            Type::Integer(kind) => kind.c_name().to_owned(),
             Type::Bool => String::from("bool"),
             Type::Void => String::from("void"),
             Type::BoxInt => String::from("BoxInt"),

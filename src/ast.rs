@@ -1,8 +1,114 @@
 use crate::diagnostic::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntType {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl IntType {
+    pub fn bits(self) -> u8 {
+        return match self {
+            Self::I8 | Self::U8 => 8,
+            Self::I16 | Self::U16 => 16,
+            Self::I32 | Self::U32 => 32,
+            Self::I64 | Self::U64 => 64,
+        };
+    }
+
+    pub fn signed(self) -> bool {
+        return matches!(self, Self::I8 | Self::I16 | Self::I32 | Self::I64);
+    }
+
+    pub fn minimum(self) -> i128 {
+        return if self.signed() {
+            -(1i128 << (self.bits() - 1))
+        } else {
+            0
+        };
+    }
+
+    pub fn maximum(self) -> i128 {
+        return if self.signed() {
+            (1i128 << (self.bits() - 1)) - 1
+        } else {
+            (1i128 << self.bits()) - 1
+        };
+    }
+
+    pub fn fits(self, value: i128) -> bool {
+        return value >= self.minimum() && value <= self.maximum();
+    }
+
+    pub fn promoted(self) -> IntType {
+        return if self.bits() < 32 { Self::I32 } else { self };
+    }
+
+    pub fn common(self, other: IntType) -> IntType {
+        let a = self.promoted();
+        let b = other.promoted();
+        if a.signed() == b.signed() {
+            return if a.bits() >= b.bits() { a } else { b };
+        }
+        let (signed, unsigned) = if a.signed() { (a, b) } else { (b, a) };
+        return if signed.bits() > unsigned.bits() {
+            signed
+        } else {
+            unsigned
+        };
+    }
+
+    pub fn c_name(self) -> &'static str {
+        return match self {
+            Self::I8 => "int8_t",
+            Self::I16 => "int16_t",
+            Self::I32 => "int32_t",
+            Self::I64 => "int64_t",
+            Self::U8 => "uint8_t",
+            Self::U16 => "uint16_t",
+            Self::U32 => "uint32_t",
+            Self::U64 => "uint64_t",
+        };
+    }
+
+    pub fn named(name: &str) -> Option<IntType> {
+        return Some(match name {
+            "int8_t" => Self::I8,
+            "int16_t" => Self::I16,
+            "int32_t" => Self::I32,
+            "int64_t" => Self::I64,
+            "uint8_t" => Self::U8,
+            "uint16_t" => Self::U16,
+            "uint32_t" => Self::U32,
+            "uint64_t" => Self::U64,
+            "size_t" | "uintptr_t" => {
+                if usize::BITS == 64 {
+                    Self::U64
+                } else {
+                    Self::U32
+                }
+            }
+            "ptrdiff_t" | "intptr_t" => {
+                if usize::BITS == 64 {
+                    Self::I64
+                } else {
+                    Self::I32
+                }
+            }
+            _ => return None,
+        });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
-    Int,
+    Integer(IntType),
     Bool,
     Void,
     BoxInt,
@@ -12,7 +118,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointee {
-    Int,
+    Integer(IntType),
     Bool,
     BoxInt,
     Struct(usize),
@@ -21,7 +127,7 @@ pub enum Pointee {
 impl Pointee {
     pub fn ty(self) -> Type {
         return match self {
-            Pointee::Int => Type::Int,
+            Pointee::Integer(kind) => Type::Integer(kind),
             Pointee::Bool => Type::Bool,
             Pointee::BoxInt => Type::BoxInt,
             Pointee::Struct(id) => Type::Struct(id),
@@ -36,13 +142,21 @@ impl Type {
 
     pub fn borrowed(self, mutable: bool) -> Option<Type> {
         let pointee = match self {
-            Type::Int => Pointee::Int,
+            Type::Integer(kind) => Pointee::Integer(kind),
             Type::Bool => Pointee::Bool,
             Type::BoxInt => Pointee::BoxInt,
             Type::Struct(id) => Pointee::Struct(id),
             _ => return None,
         };
         return Some(Type::Borrow { pointee, mutable });
+    }
+
+    pub fn integer(self) -> Option<IntType> {
+        return match self {
+            Self::Integer(kind) => Some(kind),
+            Self::Bool => Some(IntType::I32),
+            _ => None,
+        };
     }
 }
 
@@ -159,6 +273,13 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Cast {
+        ty: Type,
+        operand: Box<Expression>,
+    },
+    SizeofType(Type),
+    Alignof(Type),
+    SizeofValue(Box<Expression>),
     Boolean(bool),
     StaticCall {
         id: usize,
@@ -170,7 +291,7 @@ pub enum ExpressionKind {
         name: String,
         arguments: Vec<Expression>,
     },
-    Integer(i64),
+    Integer(u64),
     Variable(String),
     Field {
         base: Box<Expression>,
@@ -207,6 +328,7 @@ pub enum UnaryOperator {
     Plus,
     Negate,
     Not,
+    BitNot,
     Dereference,
     Borrow { mutable: bool },
 }

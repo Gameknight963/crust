@@ -12,6 +12,8 @@ pub(crate) struct CheckedProgram {
     // Resolved methods reuse ordinary call checking and generation, including
     // receiver-first evaluation, argument loans, moves, and parameter cleanup.
     pub method_calls: HashMap<Span, Expression>,
+    pub conversions: HashMap<Span, Type>,
+    pub constants: HashMap<Span, i128>,
 }
 
 #[derive(Clone)]
@@ -57,10 +59,12 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
     let types = Types::build(&program)?;
     let mut expression_types = HashMap::new();
     let mut method_calls = HashMap::new();
+    let mut conversions = HashMap::new();
+    let mut constants = HashMap::new();
     let mut signatures = HashMap::new();
     for (name, return_type, parameters) in [
-        ("print", Type::Void, vec![Type::Int]),
-        ("box_int", Type::BoxInt, vec![Type::Int]),
+        ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
+        ("box_int", Type::BoxInt, vec![Type::Integer(IntType::I32)]),
         ("move", Type::BoxInt, vec![Type::BoxInt]),
     ] {
         signatures.insert(
@@ -130,7 +134,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     match signatures.get("main") {
         Some(signature)
-            if signature.return_type == Type::Int && signature.parameters.is_empty() => {}
+            if signature.return_type == Type::Integer(IntType::I32)
+                && signature.parameters.is_empty() => {}
         Some(_) => {
             let function = program
                 .functions
@@ -165,6 +170,9 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             expression_types: &mut expression_types,
             method_calls: &mut method_calls,
             loops: Vec::new(),
+            conversions: &mut conversions,
+            constants: &mut constants,
+            unevaluated: false,
         };
         for (index, parameter) in function.parameters.iter().enumerate() {
             if parameter.name == "this"
@@ -201,6 +209,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         types,
         expression_types,
         method_calls,
+        conversions,
+        constants,
     });
 }
 
@@ -215,6 +225,9 @@ struct FunctionChecker<'program> {
     expression_types: &'program mut HashMap<Span, Type>,
     method_calls: &'program mut HashMap<Span, Expression>,
     loops: Vec<LoopContext>,
+    conversions: &'program mut HashMap<Span, Type>,
+    constants: &'program mut HashMap<Span, i128>,
+    unevaluated: bool,
 }
 
 impl FunctionChecker<'_> {
@@ -272,17 +285,21 @@ impl FunctionChecker<'_> {
             }
             StatementKind::CompoundAssign { target, value, .. } => {
                 let place = self.place(target)?;
-                if !place.mutable || place.ty != Type::Int {
+                if !place.mutable || !matches!(place.ty, Type::Integer(_)) {
                     return Err(Diagnostic::new(
                         target.span,
-                        "compound assignment requires a mutable int place",
+                        "compound assignment requires a mutable integer place",
                     ));
                 }
                 let previous_loans = self.loans.len();
                 // Reads such as n += n are allowed. Prevent mutation or moves
                 // that could invalidate a captured destination during the RHS.
                 self.borrow(place.root.clone(), false, target.span)?;
-                self.require_type(value, Type::Int)?;
+                let actual = self.expression(value)?;
+                let common = self
+                    .integer(place.ty, target.span)?
+                    .common(self.integer(actual, value.span)?);
+                self.convert(value, actual, Type::Integer(common))?;
                 self.loans.truncate(previous_loans);
                 self.access(&place.root, true, target.span)?;
             }
@@ -335,7 +352,7 @@ impl FunctionChecker<'_> {
                 then_block,
                 else_block,
             } => {
-                self.require_type(condition, Type::Int)?;
+                self.condition(condition)?;
                 let before = self.scopes.clone();
                 let then_returns = self.block(then_block)?;
                 let then_state = self.scopes.clone();
@@ -376,7 +393,7 @@ impl FunctionChecker<'_> {
                 step,
             } => {
                 let before = self.scopes.clone();
-                self.require_type(condition, Type::Int)?;
+                self.condition(condition)?;
                 if !same_owner_states(&before, &self.scopes, self.types) {
                     return Err(Diagnostic::new(
                         condition.span,
@@ -433,7 +450,58 @@ impl FunctionChecker<'_> {
     }
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        if let Some(value) = constant_integer(expression) {
+            let kind = if IntType::I32.fits(value) {
+                IntType::I32
+            } else if IntType::I64.fits(value) {
+                IntType::I64
+            } else if IntType::U64.fits(value) {
+                IntType::U64
+            } else {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "integer literal exceeds the 64-bit range",
+                ));
+            };
+            self.constants.insert(expression.span, value);
+            return Ok(Type::Integer(kind));
+        }
         match &expression.kind {
+            ExpressionKind::Cast { ty, operand } => {
+                if *ty == Type::Void {
+                    let previous_loans = self.loans.len();
+                    self.expression(operand)?;
+                    self.loans.truncate(previous_loans);
+                    return Ok(Type::Void);
+                }
+                if ty.integer().is_none() {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "casts require a numeric type or void",
+                    ));
+                }
+                self.require_type(operand, *ty)?;
+                return Ok(*ty);
+            }
+            ExpressionKind::SizeofType(ty) | ExpressionKind::Alignof(ty) => {
+                if *ty == Type::Void {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "void has no object size or alignment",
+                    ));
+                }
+                return Ok(Type::Integer(IntType::named("size_t").unwrap()));
+            }
+            ExpressionKind::SizeofValue(operand) => {
+                let previous = self.unevaluated;
+                self.unevaluated = true;
+                let result = self.expression(operand);
+                self.unevaluated = previous;
+                if result? == Type::Void {
+                    return Err(Diagnostic::new(expression.span, "void has no object size"));
+                }
+                return Ok(Type::Integer(IntType::named("size_t").unwrap()));
+            }
             ExpressionKind::Boolean(_) => return Ok(Type::Bool),
             ExpressionKind::StaticCall {
                 id,
@@ -530,7 +598,7 @@ impl FunctionChecker<'_> {
             ExpressionKind::Field { .. } => {
                 let place = self.place(expression)?;
                 self.access(&place.root, false, expression.span)?;
-                if self.types.owns(place.ty) {
+                if self.types.owns(place.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
                         "an owning field cannot be copied; moving individual fields is not supported yet",
@@ -538,17 +606,10 @@ impl FunctionChecker<'_> {
                 }
                 return Ok(place.ty);
             }
-            ExpressionKind::Integer(value) => {
-                if *value > i64::from(i32::MAX) {
-                    return Err(Diagnostic::new(
-                        expression.span,
-                        "int literals must fit signed 32-bit int",
-                    ));
-                }
-            }
+            ExpressionKind::Integer(_) => unreachable!("literal handled above"),
             ExpressionKind::Variable(name) => {
                 let variable = self.available(name, expression.span)?;
-                if self.types.owns(variable.ty) {
+                if self.types.owns(variable.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
                         format!("owner '{name}' cannot be copied; use move({name}) to transfer it"),
@@ -613,6 +674,12 @@ impl FunctionChecker<'_> {
                     ));
                 }
 
+                if name == "print" {
+                    let actual = self.expression(&arguments[0])?;
+                    self.integer(actual, arguments[0].span)?;
+                    return Ok(Type::Void);
+                }
+
                 // This ordering is also the language's evaluation order.
                 let previous_loans = self.loans.len();
                 for (argument, expected) in arguments.iter().zip(signature.parameters) {
@@ -642,7 +709,7 @@ impl FunctionChecker<'_> {
                 if *operator == UnaryOperator::Dereference {
                     let place = self.place(expression)?;
                     self.access(&place.root, false, expression.span)?;
-                    if self.types.owns(place.ty) {
+                    if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
                             expression.span,
                             "a borrowed owner cannot be copied or moved out; read it through another dereference",
@@ -650,31 +717,73 @@ impl FunctionChecker<'_> {
                     }
                     return Ok(place.ty);
                 }
-                if *operator == UnaryOperator::Negate
-                    && matches!(operand.kind, ExpressionKind::Integer(2147483648))
-                {
-                    return Ok(Type::Int);
+                let actual = self.expression(operand)?;
+                let kind = self.integer(actual, operand.span)?.promoted();
+                if *operator == UnaryOperator::Not {
+                    return Ok(Type::Integer(IntType::I32));
                 }
-                self.require_type(operand, Type::Int)?;
+                self.convert(operand, actual, Type::Integer(kind))?;
+                return Ok(Type::Integer(kind));
             }
             ExpressionKind::Binary {
                 operator,
                 left,
                 right,
             } => {
-                self.require_type(left, Type::Int)?;
+                let left_type = self.expression(left)?;
+                let left_kind = self.integer(left_type, left.span)?;
                 let before_right = self.scopes.clone();
-                self.require_type(right, Type::Int)?;
+                let right_type = self.expression(right)?;
+                let right_kind = self.integer(right_type, right.span)?;
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
                     // The right operand may not execute.
                     self.scopes = merge(&before_right, &self.scopes);
+                    return Ok(Type::Integer(IntType::I32));
                 }
+                let common = left_kind.common(right_kind);
+                self.convert(left, left_type, Type::Integer(common))?;
+                self.convert(right, right_type, Type::Integer(common))?;
+                return Ok(Type::Integer(
+                    if matches!(
+                        operator,
+                        BinaryOperator::Equal
+                            | BinaryOperator::NotEqual
+                            | BinaryOperator::Less
+                            | BinaryOperator::LessEqual
+                            | BinaryOperator::Greater
+                            | BinaryOperator::GreaterEqual
+                    ) {
+                        IntType::I32
+                    } else {
+                        common
+                    },
+                ));
             }
         }
-        return Ok(Type::Int);
     }
 
     fn require_type(&mut self, expression: &Expression, expected: Type) -> Result<(), Diagnostic> {
+        if let Type::Integer(kind) = expected
+            && let Some(value) = constant_integer(expression)
+        {
+            if !kind.fits(value) {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    format!(
+                        "integer literal must fit {}-bit {}",
+                        kind.bits(),
+                        if kind.signed() {
+                            "signed integer"
+                        } else {
+                            "unsigned integer"
+                        }
+                    ),
+                ));
+            }
+            self.constants.insert(expression.span, value);
+            self.expression_types.insert(expression.span, expected);
+            return Ok(());
+        }
         let actual = if matches!(
             expression.kind,
             ExpressionKind::StructLiteral { id: None, .. }
@@ -683,20 +792,47 @@ impl FunctionChecker<'_> {
         } else {
             self.expression(expression)?
         };
-        let scalar_conversion = matches!(
-            (actual, expected),
-            (Type::Int, Type::Bool) | (Type::Bool, Type::Int)
-        );
-        if actual != expected && !scalar_conversion {
-            return Err(Diagnostic::new(
-                expression.span,
-                format!(
-                    "expected an {} value, found {}",
-                    self.types.describe(expected),
-                    self.types.describe(actual)
-                ),
-            ));
+        return self.convert(expression, actual, expected);
+    }
+
+    fn convert(
+        &mut self,
+        expression: &Expression,
+        actual: Type,
+        expected: Type,
+    ) -> Result<(), Diagnostic> {
+        if actual == expected {
+            return Ok(());
         }
+        if actual.integer().is_some() && expected.integer().is_some() {
+            self.conversions.insert(expression.span, expected);
+            return Ok(());
+        }
+        return Err(Diagnostic::new(
+            expression.span,
+            format!(
+                "expected an {} value, found {}",
+                self.types.describe(expected),
+                self.types.describe(actual)
+            ),
+        ));
+    }
+
+    fn integer(&self, ty: Type, span: Span) -> Result<IntType, Diagnostic> {
+        return ty.integer().ok_or_else(|| {
+            Diagnostic::new(
+                span,
+                format!(
+                    "expected an integer or bool value, found {}",
+                    self.types.describe(ty)
+                ),
+            )
+        });
+    }
+
+    fn condition(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
+        let ty = self.expression(expression)?;
+        self.integer(ty, expression.span)?;
         return Ok(());
     }
 
@@ -810,7 +946,7 @@ impl FunctionChecker<'_> {
             } => {
                 let place = self.place(operand)?;
                 let (ty, mutable) = match place.ty {
-                    Type::BoxInt => (Type::Int, place.mutable),
+                    Type::BoxInt => (Type::Integer(IntType::I32), place.mutable),
                     Type::Borrow { pointee, mutable } => (pointee.ty(), mutable),
                     _ => {
                         return Err(Diagnostic::new(
@@ -849,6 +985,9 @@ impl FunctionChecker<'_> {
         exclusive: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        if self.unevaluated {
+            return Ok(());
+        }
         if self
             .loans
             .iter()
@@ -871,6 +1010,9 @@ impl FunctionChecker<'_> {
         mutable: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        if self.unevaluated {
+            return Ok(());
+        }
         self.access(&root, mutable, span)?;
         self.loans.push(Loan { root, mutable });
         return Ok(());
@@ -905,6 +1047,9 @@ impl FunctionChecker<'_> {
 
     fn available(&self, name: &str, span: Span) -> Result<Variable, Diagnostic> {
         let variable = self.lookup(name, span)?;
+        if self.unevaluated {
+            return Ok(variable);
+        }
         match variable.state {
             State::Available => {
                 return Ok(variable);
@@ -931,6 +1076,9 @@ impl FunctionChecker<'_> {
     }
 
     fn set_state(&mut self, name: &str, state: State) {
+        if self.unevaluated {
+            return;
+        }
         for scope in self.scopes.iter_mut().rev() {
             if let Some(variable) = scope.get_mut(name) {
                 variable.state = state;
@@ -939,6 +1087,27 @@ impl FunctionChecker<'_> {
         }
         unreachable!("variable was resolved before changing its state");
     }
+}
+
+fn constant_integer(expression: &Expression) -> Option<i128> {
+    return match &expression.kind {
+        ExpressionKind::Integer(value) => Some(i128::from(*value)),
+        ExpressionKind::Unary {
+            operator: UnaryOperator::Plus,
+            operand,
+        } => match operand.kind {
+            ExpressionKind::Integer(value) => Some(i128::from(value)),
+            _ => None,
+        },
+        ExpressionKind::Unary {
+            operator: UnaryOperator::Negate,
+            operand,
+        } => match operand.kind {
+            ExpressionKind::Integer(value) => Some(-i128::from(value)),
+            _ => None,
+        },
+        _ => None,
+    };
 }
 
 fn merge(left: &Scopes, right: &Scopes) -> Scopes {
