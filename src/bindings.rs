@@ -51,7 +51,7 @@ fn clang(
     options: &Options,
     source: &str,
     ast: bool,
-    filter: bool,
+    filter: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let executable = options
         .clang
@@ -76,13 +76,8 @@ fn clang(
     if ast {
         command.args(["-Xclang", "-ast-dump=json"]);
     }
-    if filter {
-        command.args([
-            "-Xclang",
-            "-ast-dump-filter",
-            "-Xclang",
-            "__crust_import_probe_",
-        ]);
+    if let Some(filter) = filter {
+        command.args(["-Xclang", "-ast-dump-filter", "-Xclang", filter]);
     }
     command
         .args(["-x", "c", "-"])
@@ -126,10 +121,29 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             return Err(format!("C function '{name}' was selected twice"));
         }
     }
-    let ast: Value = serde_json::from_slice(&clang(&header, options, "", true, false)?)
-        .map_err(|error| error.to_string())?;
+    let mut prefix = options.functions[0].clone();
+    for name in &options.functions[1..] {
+        while !name.starts_with(&prefix) {
+            prefix.pop();
+        }
+    }
+    let filters = if prefix.len() >= 3 {
+        vec![prefix]
+    } else {
+        options.functions.clone()
+    };
+    let mut declarations = Vec::new();
+    for filter in filters {
+        let bytes = clang(&header, options, "", true, Some(&filter))?;
+        declarations.extend(
+            serde_json::Deserializer::from_slice(&bytes)
+                .into_iter::<Value>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?,
+        );
+    }
     for name in &options.functions {
-        let declaration = children(&ast)
+        let declaration = declarations
             .iter()
             .find(|node| kind(node) == "FunctionDecl" && node["name"] == *name)
             .ok_or_else(|| format!("C header has no function declaration named '{name}'"))?;
@@ -158,12 +172,18 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             "typedef __typeof__({name}) __crust_import_probe_{index};\n"
         ));
     }
-    let bytes = clang(&header, options, &probes, true, true)?;
+    let bytes = clang(
+        &header,
+        options,
+        &probes,
+        true,
+        Some("__crust_import_probe_"),
+    )?;
     let probes: Vec<Value> = serde_json::Deserializer::from_slice(&bytes)
         .into_iter()
         .collect::<Result<_, _>>()
         .map_err(|error| error.to_string())?;
-    let mut renderer = render::Renderer::new(&ast, &options.functions);
+    let mut renderer = render::Renderer::new(&declarations, &probes, &options.functions);
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
     let mut locals = String::new();
@@ -192,11 +212,12 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         locals.push_str(&format!("{}* {check_name} = {name};\n", signature.alias));
         checks.push((name, native));
     }
-    let output = format!(
-        "{}\n{}\n",
-        renderer.declarations(true),
-        declarations.join("\n")
-    );
+    let mut output = renderer.declarations(true);
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(&declarations.join("\n"));
+    output.push('\n');
     let checked_source = format!(
         "{}\n{}\nint main() {{ {locals} return 0; }}\n",
         renderer.declarations(false),
@@ -224,6 +245,6 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         };
         verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__({native}), crust_function_{function}), \"unsupported C ABI for {native}\");\n"));
     }
-    clang(&header, options, &verification, false, false)?;
+    clang(&header, options, &verification, false, None)?;
     return Ok(output);
 }

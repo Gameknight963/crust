@@ -18,12 +18,15 @@ pub(super) struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(ast: &Value, functions: &[String]) -> Self {
+    pub fn new(declarations: &[Value], probes: &[Value], functions: &[String]) -> Self {
         let mut names: HashSet<_> = functions.iter().cloned().collect();
-        for declaration in children(ast) {
+        for declaration in declarations {
             if let Some(name) = declaration["name"].as_str() {
                 names.insert(name.to_owned());
             }
+        }
+        for probe in probes {
+            Self::reserve_type_names(probe, &mut names);
         }
         return Self {
             declarations: Vec::new(),
@@ -33,6 +36,15 @@ impl Renderer {
             names,
             next_alias: 0,
         };
+    }
+
+    fn reserve_type_names(node: &Value, names: &mut HashSet<String>) {
+        if let Some(name) = node["decl"]["name"].as_str() {
+            names.insert(name.to_owned());
+        }
+        for child in type_children(node) {
+            Self::reserve_type_names(child, names);
+        }
     }
 
     pub fn binding_name(&mut self, native: &str) -> String {

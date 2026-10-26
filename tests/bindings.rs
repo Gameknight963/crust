@@ -181,6 +181,24 @@ fn generated_names_avoid_collisions_with_selected_native_names() {
 }
 
 #[test]
+fn filtered_declarations_keep_exact_function_matches_and_reachable_type_names() {
+    let path = header(
+        r#"
+        int selected_extra(char*);
+        int selected(int);
+        struct CrustCFunction0;
+        typedef int (*Callback)(int);
+        int other(struct CrustCFunction0*, Callback);
+    "#,
+    );
+    let bindings = generate(&path, &options(&["selected", "other"])).unwrap();
+    assert!(bindings.contains("extern int selected(int);"));
+    assert!(!bindings.contains("selected_extra"));
+    assert!(bindings.contains("struct CrustCFunction0;"));
+    assert!(!bindings.contains("typedef int CrustCFunction0("));
+}
+
+#[test]
 fn function_macros_do_not_redirect_the_selected_native_symbol_or_its_type() {
     let path = header("int original(int); int alternate(char*);\n#define original alternate\n");
     let bindings = generate(&path, &options(&["original"])).unwrap();

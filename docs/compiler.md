@@ -63,6 +63,8 @@ reject name capture. LSP clients receive a workspace edit for review and applica
 
 `bindings::generate` asks Clang for native declarations and structured function
 types, renders selected functions, and checks the resulting Crust declarations.
+Declaration queries filter to selected names, and type queries carry the
+reachable typedef and pointer information needed by those functions.
 An independent Clang type-compatibility assertion verifies each generated function
 type against the original header. Binding tests require Clang on `PATH`.
 
