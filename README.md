@@ -32,6 +32,7 @@ The [C owner example](examples/c_owner.cr) wraps C allocation with private field
 checked borrows, and a destructor.
 The [generic buffer example](examples/generic_buffer.cr) uses the same container
 with integers, characters, and structs.
+The [generic box](examples/generic_box.cr) owns heap values, including other owners.
 The [container project](examples/container_project/) splits the buffer and its
 caller into separate files using `import "buffer.cr";`.
 

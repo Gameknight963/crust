@@ -36,7 +36,6 @@ fn rejects_copying_and_using_moved_owners_across_control_flow() {
             "BoxInt a = box_int(1); while (take(move(a))) {}",
             "loop condition cannot consume",
         ),
-        ("int a = 1; move(a);", "requires an owning value"),
         ("move(box_int(1));", "requires the name"),
         ("BoxInt a = 1;", "found int"),
         ("int a = box_int(1);", "found BoxInt"),

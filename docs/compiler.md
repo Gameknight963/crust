@@ -87,6 +87,8 @@ to the original path and byte range.
 - Unsafe blocks lower to ordinary C blocks with the same cleanup rules
 - Raw pointer indexing captures the base and index once, with checked conversion of offsets to the host `ptrdiff_t` representation
 - Field privacy is checked in the frontend and preserves the C field layout
+- `init` stores an evaluated value into raw storage without dropping previous contents, and `destroy` calls the existing cleanup operation without deallocating the storage
+- `move` transfers owning locals and copies ordinary values, allowing the same generic body to accept either
 
 ## Diagnostics
 

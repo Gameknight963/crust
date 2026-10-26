@@ -295,6 +295,7 @@ int main() {
 
 - `box_int(int)` allocates an owned integer
 - `move(variable)` transfers a whole owning value and invalidates its source
+- For ordinary copyable values, `move(variable)` copies the value and leaves its source available, allowing generic transfer functions to handle both kinds of value
 - Moved variables can be reinitialized
 - Owning parameters and return values transfer ownership
 - Scope exits, returns, replacement, and discarded results run cleanup
@@ -596,6 +597,32 @@ Safe interface requirements require safe implementations. An unsafe requirement
 accepts either a safe or unsafe method. Calls use the concrete method's contract.
 The entry point has a safe signature.
 
+## Raw storage
+
+`init(pointer, value)` initializes storage through a mutable raw pointer, transferring
+the value into that location. It evaluates the pointer before the value and skips
+cleanup of any previous contents. The caller provides valid, aligned, writable
+storage with no live owning value to replace.
+
+`destroy(pointer)` runs the pointed-to value's destructor and field or array cleanup.
+It leaves the storage allocated. The caller provides a valid initialized value
+and treats it as uninitialized afterward. Copyable values have trivial cleanup.
+
+Both operations require an unsafe context and a pointer to a complete object type.
+They let a generic owner pair C allocation with Crust cleanup:
+
+```c
+T* data = (T*)malloc(sizeof(T));
+if (data == 0) { abort(); }
+init(data, move(value));
+// The owner's destructor later calls:
+destroy(data);
+free(data);
+```
+
+See [the generic box](../examples/generic_box.cr) for the complete owner, including
+private storage and safe borrowed access.
+
 `extern` declares a C function under its native symbol name. Parameters can be
 named or unnamed. Signatures use C values and raw pointers. Arrays cross the
 boundary by pointer. The [C owner example](../examples/c_owner.cr) uses `malloc`
@@ -660,7 +687,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `interface`, `import`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

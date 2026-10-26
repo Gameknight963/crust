@@ -1393,6 +1393,22 @@ impl Parser {
     fn primary(&mut self) -> Result<Expression, Diagnostic> {
         let token = self.advance();
         match token.kind {
+            Token::Init | Token::Destroy => {
+                let initialize = token.kind == Token::Init;
+                self.expect(Token::LeftParen, "expected '(' after storage operation")?;
+                let pointer = Box::new(self.expression(0)?);
+                let value = if initialize {
+                    self.expect(Token::Comma, "init requires a pointer and value")?;
+                    Some(Box::new(self.initializer()?))
+                } else {
+                    None
+                };
+                let end = self.expect(Token::RightParen, "expected ')' after storage operation")?;
+                return Ok(Expression {
+                    span: token.span.through(end),
+                    kind: ExpressionKind::Storage { pointer, value },
+                });
+            }
             Token::StringLiteral(mut bytes) => {
                 let mut span = token.span;
                 while let Token::StringLiteral(next) = &self.current().kind {

@@ -708,6 +708,20 @@ impl Emitter<'_> {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::Storage { pointer, value } => {
+                let Type::Pointer(id) = self.expression_type(pointer) else {
+                    unreachable!()
+                };
+                let ty = self.types.pointers[id].pointee;
+                let pointer = self.value_expression(pointer);
+                if let Some(value) = value {
+                    let value = self.value_expression(value);
+                    self.line(&format!("*({pointer}) = {value};"));
+                } else {
+                    self.drop_value(ty, &format!("*({pointer})"));
+                }
+                return None;
+            }
             ExpressionKind::StaticReference { .. } => {
                 unreachable!("checked static reference has a function address")
             }
@@ -834,6 +848,9 @@ impl Emitter<'_> {
                     };
                     let local = self.local(owner);
                     let temporary = self.temporary(local.ty, &local.name);
+                    if !self.types.owns(local.ty) {
+                        return Some(temporary);
+                    }
                     // NULL is an internal drop flag, not a usable language value.
                     if local.ty == Type::BoxInt {
                         self.line(&format!("{} = NULL;", local.name));

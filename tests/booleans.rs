@@ -117,7 +117,6 @@ fn scalar_conversions_do_not_convert_borrow_types_or_permit_shared_writes() {
         "int read(const int^ n) { return *n; } int main() { bool b = true; return read(^const b); }",
         "bool read(const bool^ n) { return *n; } int main() { int n = 1; return read(^const n); }",
         "void bad(const bool^ b) { *b = true; } int main() { return 0; }",
-        "int main() { bool b = true; move(b); return 0; }",
         "int main() { bool b = true; b += 1; return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

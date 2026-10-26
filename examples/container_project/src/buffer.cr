@@ -1,6 +1,4 @@
-extern void* malloc(size_t bytes);
-extern void free(void* pointer);
-extern void abort();
+import "memory.cr";
 
 struct Buffer<T> {
     private T* data;

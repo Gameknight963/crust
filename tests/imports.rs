@@ -126,11 +126,14 @@ fn multi_file_generic_container_runs_and_destroys_all_allocations() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "10\n20\n98\n3\n4\n"
+        "10\n20\n98\n3\n4\n42\n"
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
-        "drop:bytes:16\ndrop:bytes:3\ndrop:bytes:12\n"
+        format!(
+            "drop:bytes:8\ndrop:bytes:{}\ndrop:bytes:16\ndrop:bytes:3\ndrop:bytes:12\n",
+            std::mem::size_of::<usize>() * 2
+        )
     );
 }
 

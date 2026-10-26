@@ -28,6 +28,7 @@
 - Relative source imports, dependency collection, and diagnostics with original file locations
 - Multi-file generic containers and LSP analysis of unsaved dependencies
 - Unsafe function and method contracts, including generic instances and interface requirements
+- Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup

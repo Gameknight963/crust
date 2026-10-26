@@ -665,6 +665,27 @@ impl FunctionChecker<'_> {
             return Ok(Type::Integer(kind));
         }
         match &expression.kind {
+            ExpressionKind::Storage { pointer, value } => {
+                self.require_unsafe(expression.span, "initializing or destroying raw storage")?;
+                let ty = self.expression(pointer)?;
+                let Type::Pointer(id) = ty else {
+                    return Err(Diagnostic::new(
+                        pointer.span,
+                        "storage operations require a mutable raw pointer",
+                    ));
+                };
+                let destination = self.types.pointers[id];
+                if !destination.mutable || !self.types.is_sized(destination.pointee) {
+                    return Err(Diagnostic::new(
+                        pointer.span,
+                        "storage operations require a mutable pointer to a complete object type",
+                    ));
+                }
+                if let Some(value) = value {
+                    self.require_type(value, destination.pointee)?;
+                }
+                return Ok(Type::Void);
+            }
             ExpressionKind::IndirectCall { callee, arguments } => {
                 let previous_loans = self.loans.len();
                 let ty = self.expression(callee)?;
@@ -1042,10 +1063,13 @@ impl FunctionChecker<'_> {
                     if let ExpressionKind::Variable(owner) = &arguments[0].kind {
                         let variable = self.available(owner, arguments[0].span)?;
                         if !self.types.owns(variable.ty) {
-                            return Err(Diagnostic::new(
-                                arguments[0].span,
-                                "move requires an owning value",
-                            ));
+                            if variable.ty.is_borrow() {
+                                return Err(Diagnostic::new(
+                                    arguments[0].span,
+                                    "borrow bindings use reborrows rather than move",
+                                ));
+                            }
+                            return self.expression(&arguments[0]);
                         }
                         self.access(&self.root(owner), &[], true, None, arguments[0].span)?;
                         self.set_state(owner, State::Moved);
@@ -1053,7 +1077,7 @@ impl FunctionChecker<'_> {
                     }
                     return Err(Diagnostic::new(
                         arguments[0].span,
-                        "move requires the name of a whole owning variable; moving individual fields is not supported yet",
+                        "move requires the name of a whole variable; moving individual fields is not supported yet",
                     ));
                 }
 
@@ -1543,6 +1567,7 @@ impl FunctionChecker<'_> {
             }));
         }
         match &expression.kind {
+            ExpressionKind::Storage { .. } => return Ok(Type::Void),
             ExpressionKind::StaticReference { id, name } => {
                 return self.static_reference(*id, name, expression.span);
             }

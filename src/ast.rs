@@ -363,6 +363,10 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Storage {
+        pointer: Box<Expression>,
+        value: Option<Box<Expression>>,
+    },
     StaticReference {
         id: usize,
         name: String,
