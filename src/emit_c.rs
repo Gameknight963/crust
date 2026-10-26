@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::check::CheckedProgram;
+use crate::diagnostic::Span;
+use crate::types::Types;
 
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
     let program = &checked.program;
@@ -15,6 +17,8 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .iter()
             .map(|function| (function.name.clone(), function.return_type))
             .collect(),
+        types: &checked.types,
+        expression_types: &checked.expression_types,
     };
     emitter
         .return_types
@@ -26,6 +30,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         .return_types
         .insert(String::from("move"), Type::BoxInt);
 
+    emitter.struct_definitions();
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
     }
@@ -57,8 +62,17 @@ fn function_name(name: &str) -> String {
     return format!("crust_fn_{name}");
 }
 
-fn c_type(ty: Type) -> &'static str {
-    return match ty {
+fn c_type(ty: Type) -> String {
+    if let Type::Struct(id) = ty {
+        return format!("struct crust_struct_{id}");
+    }
+    if let Type::StructBorrow { id, mutable } = ty {
+        return format!(
+            "{}struct crust_struct_{id} *",
+            if mutable { "" } else { "const " }
+        );
+    }
+    return String::from(match ty {
         Type::Int => "int32_t",
         Type::Void => "void",
         Type::BoxInt => "int32_t *",
@@ -66,12 +80,13 @@ fn c_type(ty: Type) -> &'static str {
         Type::IntBorrow { mutable: false } => "const int32_t *",
         Type::BoxBorrow { mutable: true } => "int32_t **",
         Type::BoxBorrow { mutable: false } => "int32_t * const *",
-    };
+        _ => unreachable!("struct types were handled above"),
+    });
 }
 
 fn header(function: &Function) -> String {
     let result = if function.name == "main" {
-        "int"
+        String::from("int")
     } else {
         c_type(function.return_type)
     };
@@ -108,15 +123,52 @@ impl Scope {
     }
 }
 
-struct Emitter {
+struct Emitter<'checked> {
     output: String,
     indent: usize,
     next_name: usize,
     scopes: Vec<Scope>,
     return_types: HashMap<String, Type>,
+    types: &'checked Types,
+    expression_types: &'checked HashMap<Span, Type>,
 }
 
-impl Emitter {
+impl Emitter<'_> {
+    fn struct_definitions(&mut self) {
+        for id in &self.types.order {
+            let info = &self.types.structs[*id];
+            self.line(&format!("struct crust_struct_{id} {{"));
+            self.indent += 1;
+            for field in &info.fields {
+                self.line(&format!("{} crust_field_{};", c_type(field.ty), field.name));
+            }
+            self.indent -= 1;
+            self.line("};");
+            if info.owns {
+                self.line(&format!(
+                    "static inline void crust_drop_struct_{id}(struct crust_struct_{id} *value) {{"
+                ));
+                self.indent += 1;
+                for field in info.fields.iter().rev() {
+                    self.drop_value(field.ty, &format!("value->crust_field_{}", field.name));
+                }
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("");
+        }
+    }
+
+    fn drop_value(&mut self, ty: Type, place: &str) {
+        match ty {
+            Type::BoxInt => self.line(&format!("crust_rt_drop(&({place}));")),
+            Type::Struct(id) if self.types.owns(ty) => {
+                self.line(&format!("crust_drop_struct_{id}(&({place}));"))
+            }
+            _ => {}
+        }
+    }
+
     fn block(&mut self, block: &Block) {
         self.block_with_scope(block, Scope::default());
     }
@@ -157,24 +209,20 @@ impl Emitter {
                 // old value, before dropping the destination's previous owner.
                 let value = self.value_expression(value);
                 let local = self.local(name);
-                if local.ty == Type::BoxInt {
-                    self.line(&format!("crust_rt_drop(&{});", local.name));
-                }
+                self.drop_value(local.ty, &local.name);
                 self.line(&format!("{} = {value};", local.name));
             }
             StatementKind::Store { target, value } => {
                 let value = self.value_expression(value);
                 let place = self.place(target);
-                if self.place_type(target) == Type::BoxInt {
-                    self.line(&format!("crust_rt_drop(&({place}));"));
-                }
+                self.drop_value(self.place_type(target), &place);
                 self.line(&format!("{place} = {value};"));
             }
             StatementKind::Expression(expression) => {
                 if let Some(value) = self.expression(expression) {
-                    if self.expression_type(expression) == Type::BoxInt {
+                    if self.types.owns(self.expression_type(expression)) {
                         // Discarded owning results still need a destructor.
-                        self.line(&format!("crust_rt_drop(&{value});"));
+                        self.drop_value(self.expression_type(expression), &value);
                     } else {
                         self.line(&format!("(void){value};"));
                     }
@@ -230,6 +278,20 @@ impl Emitter {
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
         match &expression.kind {
+            ExpressionKind::StructLiteral { fields, .. } => {
+                let ty = self.expression_type(expression);
+                let mut values = Vec::new();
+                for field in fields {
+                    let value = self.value_expression(&field.value);
+                    values.push(format!(".crust_field_{} = {value}", field.name));
+                }
+                let literal = format!("({}){{ {} }}", c_type(ty), values.join(", "));
+                return Some(self.temporary(ty, &literal));
+            }
+            ExpressionKind::Field { .. } => {
+                let place = self.place(expression);
+                return Some(self.temporary(self.expression_type(expression), &place));
+            }
             ExpressionKind::Integer(value) => {
                 return Some(format!("INT32_C({value})"));
             }
@@ -244,9 +306,13 @@ impl Emitter {
                         unreachable!("checker requires an owner name in move");
                     };
                     let local = self.local(owner);
-                    let temporary = self.temporary(Type::BoxInt, &local.name);
+                    let temporary = self.temporary(local.ty, &local.name);
                     // NULL is an internal drop flag, not a usable language value.
-                    self.line(&format!("{} = NULL;", local.name));
+                    if local.ty == Type::BoxInt {
+                        self.line(&format!("{} = NULL;", local.name));
+                    } else {
+                        self.line(&format!("{} = ({}){{0}};", local.name, c_type(local.ty)));
+                    }
                     return Some(temporary);
                 }
                 let mut values = Vec::new();
@@ -268,18 +334,17 @@ impl Emitter {
             }
             ExpressionKind::Unary { operator, operand } => {
                 if let UnaryOperator::Borrow { mutable } = operator {
-                    let ty = match self.place_type(operand) {
-                        Type::Int => Type::IntBorrow { mutable: *mutable },
-                        Type::BoxInt => Type::BoxBorrow { mutable: *mutable },
-                        _ => unreachable!("checker rejects references to references"),
-                    };
+                    let ty = self
+                        .place_type(operand)
+                        .borrowed(*mutable)
+                        .expect("checked borrow target");
                     let place = self.place(operand);
                     let value = self.temporary(ty, &format!("&({place})"));
                     return Some(value);
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.place(expression);
-                    let value = self.temporary(Type::Int, &place);
+                    let value = self.temporary(self.place_type(expression), &place);
                     return Some(value);
                 }
                 if *operator == UnaryOperator::Negate
@@ -361,16 +426,16 @@ impl Emitter {
     }
 
     fn expression_type(&self, expression: &Expression) -> Type {
-        if let ExpressionKind::Call { name, .. } = &expression.kind {
-            return self.return_types[name];
-        }
-        return Type::Int;
+        return self.expression_types[&expression.span];
     }
 
     // Places have no calls or side effects in this subset, so evaluating the
     // right side before resolving an assignment destination is unambiguous.
     fn place(&self, expression: &Expression) -> String {
         match &expression.kind {
+            ExpressionKind::Field { base, name } => {
+                return format!("({}).crust_field_{name}", self.place(base));
+            }
             ExpressionKind::Variable(name) => {
                 return self.local(name).name;
             }
@@ -386,6 +451,12 @@ impl Emitter {
 
     fn place_type(&self, expression: &Expression) -> Type {
         match &expression.kind {
+            ExpressionKind::Field { base, name } => {
+                return self
+                    .types
+                    .field(self.place_type(base), name, expression.span)
+                    .expect("checked field");
+            }
             ExpressionKind::Variable(name) => {
                 return self.local(name).ty;
             }
@@ -396,6 +467,7 @@ impl Emitter {
                 return match self.place_type(operand) {
                     Type::BoxInt | Type::IntBorrow { .. } => Type::Int,
                     Type::BoxBorrow { .. } => Type::BoxInt,
+                    Type::StructBorrow { id, .. } => Type::Struct(id),
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
             }
@@ -405,20 +477,20 @@ impl Emitter {
 
     fn cleanup_scope(&mut self, index: usize) {
         let scope = &self.scopes[index];
-        let owners: Vec<String> = scope
+        let owners: Vec<(String, Type)> = scope
             .declaration_order
             .iter()
             .rev()
             .filter_map(|name| {
                 let local = &scope.variables[name];
-                if local.ty == Type::BoxInt {
-                    return Some(local.name.clone());
+                if self.types.owns(local.ty) {
+                    return Some((local.name.clone(), local.ty));
                 }
                 return None;
             })
             .collect();
-        for owner in owners {
-            self.line(&format!("crust_rt_drop(&{owner});"));
+        for (owner, ty) in owners {
+            self.drop_value(ty, &owner);
         }
     }
 

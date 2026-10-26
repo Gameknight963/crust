@@ -2,6 +2,7 @@ mod ast;
 mod check;
 mod emit_c;
 mod parser;
+mod types;
 
 pub mod diagnostic;
 pub mod lexer;

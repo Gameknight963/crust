@@ -43,6 +43,14 @@
             "problemMatcher": ["$rustc"]
         },
         {
+            "label": "Crust: run structs example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/structs.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
             "label": "Crust: test",
             "type": "process",
             "command": "cargo",

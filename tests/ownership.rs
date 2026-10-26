@@ -1,9 +1,6 @@
-use std::fs;
-use std::path::PathBuf;
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
+mod common;
 
-static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
+use common::tracked_run;
 
 #[test]
 fn rejects_copying_and_using_moved_owners_across_control_flow() {
@@ -79,57 +76,6 @@ fn accepts_returning_branches_reinitialization_and_restored_loop_owners() {
     "#,
     )
     .unwrap();
-}
-
-// Instrument the generated C's allocator, rather than inferring cleanup from
-// text matching. Real compiled executions verify frees and their scope order.
-fn tracked_run(source: &str) -> Output {
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("ownership-tests");
-    fs::create_dir_all(&directory).unwrap();
-    let id = NEXT_CASE.fetch_add(1, Ordering::Relaxed);
-    let path = directory.join(format!("case_{}_{}.c", std::process::id(), id));
-    let executable = path.with_extension(std::env::consts::EXE_EXTENSION);
-    let generated = crust::compile(source).unwrap();
-    let prefix = r#"
-        #include <stdlib.h>
-        #include <stdio.h>
-        #include <stdint.h>
-        #include <inttypes.h>
-        static size_t live_allocations = 0;
-        static void *tracked_malloc(size_t bytes) {
-            void *value = malloc(bytes);
-            if (value != NULL) { live_allocations += 1; }
-            return value;
-        }
-        static void tracked_free(void *value) {
-            if (value != NULL) {
-                fprintf(stderr, "drop:%" PRId32 "\n", *(int32_t *)value);
-                live_allocations -= 1;
-            }
-            free(value);
-        }
-        #define malloc tracked_malloc
-        #define free tracked_free
-        #define main crust_test_main
-    "#;
-    let suffix = r#"
-        #undef main
-        #undef malloc
-        #undef free
-        int main(void) {
-            int result = crust_test_main();
-            if (live_allocations != 0) {
-                fprintf(stderr, "leaked %zu allocation(s)\n", live_allocations);
-                return 99;
-            }
-            return result;
-        }
-    "#;
-    fs::write(&path, format!("{prefix}\n{generated}\n{suffix}")).unwrap();
-    crust::native::compile_file(&path, &executable).unwrap();
-    return Command::new(executable).output().unwrap();
 }
 
 #[test]

@@ -14,6 +14,7 @@ pub enum Token {
     While,
     BoxInt,
     Const,
+    Struct,
 
     // Tokens carrying data.
     Identifier(String),
@@ -147,6 +148,7 @@ impl Lexer<'_> {
             "while" => Token::While,
             "BoxInt" => Token::BoxInt,
             "const" => Token::Const,
+            "struct" => Token::Struct,
             _ => Token::Identifier(name.to_owned()),
         };
     }

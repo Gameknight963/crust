@@ -2,10 +2,13 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
+use crate::types::Types;
 
 // Code generation accepts only a program that has passed this checker.
 pub(crate) struct CheckedProgram {
     pub program: Program,
+    pub types: Types,
+    pub expression_types: HashMap<Span, Type>,
 }
 
 #[derive(Clone)]
@@ -42,6 +45,8 @@ struct Loan {
 }
 
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
+    let types = Types::build(&program)?;
+    let mut expression_types = HashMap::new();
     let mut signatures = HashMap::new();
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Int]),
@@ -120,6 +125,8 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             scopes: vec![HashMap::new()],
             return_type: function.return_type,
             loans: Vec::new(),
+            types: &types,
+            expression_types: &mut expression_types,
         };
         for parameter in &function.parameters {
             checker.declare(
@@ -142,7 +149,11 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         }
     }
 
-    return Ok(CheckedProgram { program });
+    return Ok(CheckedProgram {
+        program,
+        types,
+        expression_types,
+    });
 }
 
 struct FunctionChecker<'program> {
@@ -152,6 +163,8 @@ struct FunctionChecker<'program> {
     // Loans last through the enclosing call, including evaluation of later
     // arguments. No references can be stored or returned in this first version.
     loans: Vec<Loan>,
+    types: &'program Types,
+    expression_types: &'program mut HashMap<Span, Type>,
 }
 
 impl FunctionChecker<'_> {
@@ -273,7 +286,7 @@ impl FunctionChecker<'_> {
             StatementKind::While { condition, body } => {
                 let before = self.scopes.clone();
                 self.require_type(condition, Type::Int)?;
-                if !same_owner_states(&before, &self.scopes) {
+                if !same_owner_states(&before, &self.scopes, self.types) {
                     return Err(Diagnostic::new(
                         condition.span,
                         "a loop condition cannot consume an outer owner",
@@ -281,7 +294,7 @@ impl FunctionChecker<'_> {
                 }
                 let after_condition = self.scopes.clone();
                 let body_returns = self.block(body)?;
-                if !body_returns && !same_owner_states(&after_condition, &self.scopes) {
+                if !body_returns && !same_owner_states(&after_condition, &self.scopes, self.types) {
                     return Err(Diagnostic::new(
                         body.span,
                         "a loop must restore moved outer owners before the next iteration",
@@ -297,7 +310,27 @@ impl FunctionChecker<'_> {
     }
 
     fn expression(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        let ty = self.expression_inner(expression)?;
+        self.expression_types.insert(expression.span, ty);
+        return Ok(ty);
+    }
+
+    fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::StructLiteral { .. } => {
+                return self.struct_literal(expression, None);
+            }
+            ExpressionKind::Field { .. } => {
+                let place = self.place(expression)?;
+                self.access(&place.root, false, expression.span)?;
+                if self.types.owns(place.ty) {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "an owning field cannot be copied; moving individual fields is not supported yet",
+                    ));
+                }
+                return Ok(place.ty);
+            }
             ExpressionKind::Integer(value) => {
                 if *value > i64::from(i32::MAX) {
                     return Err(Diagnostic::new(
@@ -308,14 +341,16 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Variable(name) => {
                 let variable = self.available(name, expression.span)?;
-                if variable.ty == Type::BoxInt {
+                if self.types.owns(variable.ty) {
                     return Err(Diagnostic::new(
                         expression.span,
                         format!("owner '{name}' cannot be copied; use move({name}) to transfer it"),
                     ));
                 }
                 match variable.ty {
-                    Type::IntBorrow { mutable } | Type::BoxBorrow { mutable } => {
+                    Type::IntBorrow { mutable }
+                    | Type::BoxBorrow { mutable }
+                    | Type::StructBorrow { mutable, .. } => {
                         self.borrow(self.root(name), mutable, expression.span)?;
                     }
                     _ => self.access(&self.root(name), false, expression.span)?,
@@ -357,19 +392,19 @@ impl FunctionChecker<'_> {
                 if name == "move" {
                     if let ExpressionKind::Variable(owner) = &arguments[0].kind {
                         let variable = self.available(owner, arguments[0].span)?;
-                        if variable.ty != Type::BoxInt {
+                        if !self.types.owns(variable.ty) {
                             return Err(Diagnostic::new(
                                 arguments[0].span,
-                                "move currently requires a BoxInt owner",
+                                "move currently requires a BoxInt owner or an owning struct",
                             ));
                         }
                         self.access(&self.root(owner), true, arguments[0].span)?;
                         self.set_state(owner, State::Moved);
-                        return Ok(Type::BoxInt);
+                        return Ok(variable.ty);
                     }
                     return Err(Diagnostic::new(
                         arguments[0].span,
-                        "move requires the name of an owning variable",
+                        "move requires the name of a whole owning variable; moving individual fields is not supported yet",
                     ));
                 }
 
@@ -390,23 +425,19 @@ impl FunctionChecker<'_> {
                             "cannot create a mutable borrow through a shared borrow",
                         ));
                     }
-                    let ty = match place.ty {
-                        Type::Int => Type::IntBorrow { mutable: *mutable },
-                        Type::BoxInt => Type::BoxBorrow { mutable: *mutable },
-                        _ => {
-                            return Err(Diagnostic::new(
-                                operand.span,
-                                "borrows of borrows are not supported; reborrow the pointee instead",
-                            ));
-                        }
-                    };
+                    let ty = place.ty.borrowed(*mutable).ok_or_else(|| {
+                        Diagnostic::new(
+                            operand.span,
+                            "borrows of borrows are not supported; reborrow the pointee instead",
+                        )
+                    })?;
                     self.borrow(place.root, *mutable, expression.span)?;
                     return Ok(ty);
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.place(expression)?;
                     self.access(&place.root, false, expression.span)?;
-                    if place.ty == Type::BoxInt {
+                    if self.types.owns(place.ty) {
                         return Err(Diagnostic::new(
                             expression.span,
                             "a borrowed owner cannot be copied or moved out; read it through another dereference",
@@ -439,22 +470,82 @@ impl FunctionChecker<'_> {
     }
 
     fn require_type(&mut self, expression: &Expression, expected: Type) -> Result<(), Diagnostic> {
-        let actual = self.expression(expression)?;
+        let actual = if matches!(
+            expression.kind,
+            ExpressionKind::StructLiteral { id: None, .. }
+        ) {
+            self.struct_literal(expression, Some(expected))?
+        } else {
+            self.expression(expression)?
+        };
         if actual != expected {
             return Err(Diagnostic::new(
                 expression.span,
                 format!(
                     "expected an {} value, found {}",
-                    expected.name(),
-                    actual.name()
+                    self.types.describe(expected),
+                    self.types.describe(actual)
                 ),
             ));
         }
         return Ok(());
     }
 
+    fn struct_literal(
+        &mut self,
+        expression: &Expression,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        let ExpressionKind::StructLiteral { id, fields } = &expression.kind else {
+            unreachable!();
+        };
+        let id = match (*id, expected) {
+            (Some(id), _) | (None, Some(Type::Struct(id))) => id,
+            _ => {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "a brace initializer needs a struct type",
+                ));
+            }
+        };
+        let declared = self.types.structs[id].fields.clone();
+        let mut seen = std::collections::HashSet::new();
+        for field in fields {
+            if !seen.insert(field.name.as_str()) {
+                return Err(Diagnostic::new(
+                    field.span,
+                    format!("field '{}' is initialized more than once", field.name),
+                ));
+            }
+            let ty = self
+                .types
+                .field(Type::Struct(id), &field.name, field.span)?;
+            self.require_type(&field.value, ty)?;
+        }
+        for field in &declared {
+            if !seen.contains(field.name.as_str()) {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    format!("missing initializer for field '{}'", field.name),
+                ));
+            }
+        }
+        let ty = Type::Struct(id);
+        self.expression_types.insert(expression.span, ty);
+        return Ok(ty);
+    }
+
     fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Field { base, name } => {
+                let place = self.place(base)?;
+                let ty = self.types.field(place.ty, name, expression.span)?;
+                return Ok(Place {
+                    ty,
+                    mutable: place.mutable,
+                    root: place.root,
+                });
+            }
             ExpressionKind::Variable(name) => {
                 let variable = self.available(name, expression.span)?;
                 return Ok(Place {
@@ -472,6 +563,7 @@ impl FunctionChecker<'_> {
                     Type::BoxInt => (Type::Int, place.mutable),
                     Type::IntBorrow { mutable } => (Type::Int, mutable),
                     Type::BoxBorrow { mutable } => (Type::BoxInt, mutable),
+                    Type::StructBorrow { id, mutable } => (Type::Struct(id), mutable),
                     _ => {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -613,10 +705,10 @@ fn merge(left: &Scopes, right: &Scopes) -> Scopes {
     return result;
 }
 
-fn same_owner_states(left: &Scopes, right: &Scopes) -> bool {
+fn same_owner_states(left: &Scopes, right: &Scopes, types: &Types) -> bool {
     for (scope, other) in left.iter().zip(right) {
         for (name, variable) in scope {
-            if variable.ty == Type::BoxInt && variable.state != other[name].state {
+            if types.owns(variable.ty) && variable.state != other[name].state {
                 return false;
             }
         }

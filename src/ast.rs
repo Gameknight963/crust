@@ -7,6 +7,8 @@ pub enum Type {
     BoxInt,
     IntBorrow { mutable: bool },
     BoxBorrow { mutable: bool },
+    Struct(usize),
+    StructBorrow { id: usize, mutable: bool },
 }
 
 impl Type {
@@ -19,17 +21,48 @@ impl Type {
             Type::IntBorrow { mutable: false } => "const int^",
             Type::BoxBorrow { mutable: true } => "BoxInt^",
             Type::BoxBorrow { mutable: false } => "const BoxInt^",
+            Type::Struct(_) => "struct",
+            Type::StructBorrow { mutable: true, .. } => "struct^",
+            Type::StructBorrow { mutable: false, .. } => "const struct^",
         };
     }
 
     pub fn is_borrow(self) -> bool {
-        return matches!(self, Type::IntBorrow { .. } | Type::BoxBorrow { .. });
+        return matches!(
+            self,
+            Type::IntBorrow { .. } | Type::BoxBorrow { .. } | Type::StructBorrow { .. }
+        );
+    }
+
+    pub fn borrowed(self, mutable: bool) -> Option<Type> {
+        return match self {
+            Type::Int => Some(Type::IntBorrow { mutable }),
+            Type::BoxInt => Some(Type::BoxBorrow { mutable }),
+            Type::Struct(id) => Some(Type::StructBorrow { id, mutable }),
+            _ => None,
+        };
     }
 }
 
 #[derive(Debug)]
 pub struct Program {
+    pub struct_names: Vec<(String, Span)>,
+    pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug)]
+pub struct StructDefinition {
+    pub id: usize,
+    pub fields: Vec<Field>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Field {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -100,6 +133,14 @@ pub struct Expression {
 pub enum ExpressionKind {
     Integer(i64),
     Variable(String),
+    Field {
+        base: Box<Expression>,
+        name: String,
+    },
+    StructLiteral {
+        id: Option<usize>,
+        fields: Vec<FieldInitializer>,
+    },
     Call {
         name: String,
         arguments: Vec<Expression>,
@@ -113,6 +154,13 @@ pub enum ExpressionKind {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+}
+
+#[derive(Debug)]
+pub struct FieldInitializer {
+    pub name: String,
+    pub value: Expression,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

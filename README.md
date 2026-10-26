@@ -4,7 +4,8 @@ An experimental C-like language with ownership checking, implemented in Rust.
 
 Crust currently compiles a small language through C and runs the resulting
 native executable. It supports functions, integer expressions, control flow,
-a built-in owning heap type, and shared/exclusive function-argument borrows.
+user-defined structs with owning fields, a built-in owning heap type, and
+shared/exclusive function-argument borrows.
 This is a prototype of the language design, not a complete C-compatible language.
 
 ## Getting started
@@ -22,6 +23,7 @@ cargo run -- examples/hello.cr
 cargo run -- examples/factorial.cr
 cargo run -- examples/ownership.cr
 cargo run -- examples/borrowing.cr
+cargo run -- examples/structs.cr
 cargo check
 cargo test
 cargo fmt
@@ -36,6 +38,7 @@ to the program as an argument. A bare source filename means compile and run.
 | `factorial.cr` | `120`, `15` |
 | `ownership.cr` | `42`, `42`, `7` |
 | `borrowing.cr` | `42`, `8`, `99` |
+| `structs.cr` | `1`, `42`, `2`, `43` |
 
 The CLI also exposes individual stages:
 
@@ -82,6 +85,7 @@ offers **Crust: check** and **Crust: run example**.
 - `src/ast.rs`: the syntax tree.
 - `src/parser.rs`: recursive-descent parsing and operator precedence.
 - `src/check.rs`: types, scopes, ownership states, and call-argument loans.
+- `src/types.rs`: struct layouts, fields, recursive-layout checks, and ownership propagation.
 - `src/emit_c.rs`: C generation, checked arithmetic, and owner cleanup.
 - `src/native.rs`: the external C compiler driver and Windows toolchain discovery.
 - `tests/`: native execution, error cases, borrowing, and allocator-instrumented cleanup tests.
@@ -91,7 +95,7 @@ offers **Crust: check** and **Crust: run example**.
 
 ## Lexer support
 
-- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, and `BoxInt`.
+- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, `struct`, and `BoxInt`.
   Built-in function names such as `print`, `box_int`, and `move` tokenize as identifiers.
 - ASCII identifiers starting with a letter or underscore.
 - Unsuffixed decimal integer literals from `0` through `9223372036854775807`.
@@ -113,7 +117,7 @@ errors without rescanning the file.
 
 ## Implemented language
 
-- Explicit `int`, `void`, and `BoxInt` function return types, named parameters,
+- Explicit `int`, `void`, `BoxInt`, and `struct Name` function return types, named parameters,
   forward calls, and recursion. An executable needs `int main(void)` or `int main()`.
 - Initialized local declarations, assignment, nested scopes, and shadowing.
   Uninitialized reads, duplicate declarations, unknown names, and wrong argument
@@ -156,6 +160,49 @@ conditions cannot consume outer owners, and continuing iterations must restore
 outer ownership states. These rules deliberately reject some safe programs in
 this initial implementation.
 
+## Structs and automatic field cleanup
+
+Structs use C-style declarations and named initializers:
+
+```c
+struct Item {
+    int id;
+    BoxInt value;
+};
+
+int main()
+{
+    struct Item first = { .id = 1, .value = box_int(42) };
+    struct Item second = move(first);
+    print(second.id);
+    print(*second.value);
+    return 0;
+}
+```
+
+- Struct definitions are top-level. Nested structs and forward uses of a struct
+  defined later in the file are supported. Recursive by-value layouts are rejected.
+- Initializers must name every field exactly once. Their expressions evaluate in
+  written order. Nested brace initializers are supported, as are typed compound
+  literals such as `(struct Item){ .id = 1, .value = box_int(42) }`.
+- `item.id` accesses a field; `borrowed_item->id` accesses one through a borrow.
+  Fields can be assigned, passed by value when copyable, and borrowed directly.
+- A struct containing only copyable fields is itself copyable. Ownership
+  propagates through nested structs: a struct containing `BoxInt`, directly or
+  indirectly, requires an explicit whole-value move.
+- Owning parameters and returns transfer whole structs. Reading any field after
+  its parent has moved is rejected. Moving individual fields is not supported yet.
+- Owning fields drop in reverse declaration order on normal scope exit, return,
+  discard, or replacement. This cleanup is generated automatically, including
+  nested owners; no user-defined cleanup hook is required.
+- Fields are currently public. Field access requires a named local, parameter,
+  or its pointee; accessing a field directly on a temporary return value is not
+  supported yet. Empty structs, borrowed fields, and partial initialization are
+  also unsupported.
+
+A custom cleanup hook would be a user-defined destructor for resources the
+compiler cannot infer, such as a file handle. Those hooks remain a future feature.
+
 ## Borrowing prototype
 
 Borrows currently exist only as function parameters and temporary call arguments:
@@ -177,6 +224,10 @@ int main(void)
 
 - `int^` and `BoxInt^` are exclusive mutable borrows, created with `^place`.
 - `const int^` and `const BoxInt^` are shared borrows, created with `^const place`.
+- `struct Name^` and `const struct Name^` borrow structs using the same rules.
+  For example, `increment(^item.id)` borrows a field and `inspect(^const item)`
+  borrows its whole parent. Field loans currently lock the whole parent for the
+  call, so simultaneous mutable borrows of distinct fields are conservatively rejected.
 - `^*owner` borrows a boxed integer's contents; `^owner` borrows the owner slot.
 - Borrow parameters can be reborrowed for nested calls. Exact parameter types
   are currently required; there is no implicit mutable-to-shared conversion.
@@ -189,9 +240,9 @@ int main(void)
 
 ## Not implemented yet
 
-User-defined structs and cleanup hooks, generics, interfaces, choice types,
+Custom cleanup hooks, generics, interfaces, choice types,
 arrays/slices, strings, raw pointers, unsafe blocks, modules, and C header imports.
 The generated C backend does not by itself provide arbitrary C interop.
 
-The next substantial step is user-defined types and cleanup, extending the
-ownership rules already exercised by `BoxInt`.
+Future work can build on struct ownership to add custom cleanup, general
+resource wrappers, and C interop.

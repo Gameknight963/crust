@@ -6,22 +6,74 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut parser = Parser {
         tokens,
         position: 0,
+        struct_names: Vec::new(),
     };
     let mut functions = Vec::new();
+    let mut structs = Vec::new();
 
     while !parser.at(&Token::EndOfFile) {
-        functions.push(parser.function()?);
+        if parser.at(&Token::Struct)
+            && parser
+                .tokens
+                .get(parser.position + 2)
+                .is_some_and(|token| token.kind == Token::LeftBrace)
+        {
+            structs.push(parser.struct_definition()?);
+        } else {
+            functions.push(parser.function()?);
+        }
     }
 
-    return Ok(Program { functions });
+    return Ok(Program {
+        functions,
+        structs,
+        struct_names: parser.struct_names,
+    });
 }
 
 struct Parser {
     tokens: Vec<SpannedToken>,
     position: usize,
+    struct_names: Vec<(String, Span)>,
 }
 
 impl Parser {
+    fn struct_id(&mut self, name: String, span: Span) -> usize {
+        if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
+            return id;
+        }
+        let id = self.struct_names.len();
+        self.struct_names.push((name, span));
+        return id;
+    }
+
+    fn struct_definition(&mut self) -> Result<StructDefinition, Diagnostic> {
+        let start = self.advance().span;
+        let (name, span) = self.identifier()?;
+        let id = self.struct_id(name, span);
+        self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
+        let mut fields = Vec::new();
+        while !self.at(&Token::RightBrace) {
+            if self.at(&Token::EndOfFile) {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "expected '}' after the struct fields",
+                ));
+            }
+            let ty = self.type_name()?;
+            let (name, span) = self.identifier()?;
+            self.expect(Token::Semicolon, "expected ';' after the field")?;
+            fields.push(Field { name, ty, span });
+        }
+        self.advance();
+        let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
+        return Ok(StructDefinition {
+            id,
+            fields,
+            span: start.through(end),
+        });
+    }
+
     fn function(&mut self) -> Result<Function, Diagnostic> {
         let start = self.current().span;
         let return_type = self.type_name()?;
@@ -67,19 +119,21 @@ impl Parser {
             Token::Int => Type::Int,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
+            Token::Struct => {
+                let (name, span) = self.identifier()?;
+                Type::Struct(self.struct_id(name, span))
+            }
             _ => {
                 return Err(Diagnostic::new(
                     token.span,
-                    "expected a type: 'int', 'void', or 'BoxInt'",
+                    "expected a type: 'int', 'void', 'BoxInt', or 'struct Name'",
                 ));
             }
         };
         if self.consume(&Token::Caret) {
-            return match base {
-                Type::Int => Ok(Type::IntBorrow { mutable: !shared }),
-                Type::BoxInt => Ok(Type::BoxBorrow { mutable: !shared }),
-                _ => Err(Diagnostic::new(token.span, "void cannot be borrowed")),
-            };
+            return base
+                .borrowed(!shared)
+                .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"));
         }
         if shared {
             return Err(Diagnostic::new(
@@ -155,14 +209,18 @@ impl Parser {
         }
 
         let kind;
-        if self.at(&Token::Int) || self.at(&Token::BoxInt) || self.at(&Token::Const) {
+        if self.at(&Token::Int)
+            || self.at(&Token::BoxInt)
+            || self.at(&Token::Const)
+            || self.at(&Token::Struct)
+        {
             let ty = self.type_name()?;
             let (name, _) = self.identifier()?;
             self.expect(
                 Token::Equal,
                 "local variables need an initializer: 'type name = expression;'",
             )?;
-            let initializer = self.expression(1)?;
+            let initializer = self.initializer()?;
             kind = StatementKind::Local {
                 name,
                 ty,
@@ -256,7 +314,75 @@ impl Parser {
                 },
             });
         }
-        return self.primary();
+        return self.postfix();
+    }
+
+    fn postfix(&mut self) -> Result<Expression, Diagnostic> {
+        let mut expression = self.primary()?;
+        loop {
+            let arrow = self.consume(&Token::Arrow);
+            if !arrow && !self.consume(&Token::Dot) {
+                break;
+            }
+            let (name, span) = self.identifier()?;
+            if arrow {
+                expression = Expression {
+                    span: expression.span,
+                    kind: ExpressionKind::Unary {
+                        operator: UnaryOperator::Dereference,
+                        operand: Box::new(expression),
+                    },
+                };
+            }
+            expression = Expression {
+                span: expression.span.through(span),
+                kind: ExpressionKind::Field {
+                    base: Box::new(expression),
+                    name,
+                },
+            };
+        }
+        return Ok(expression);
+    }
+
+    fn initializer(&mut self) -> Result<Expression, Diagnostic> {
+        if self.at(&Token::LeftBrace) {
+            return self.struct_literal(None);
+        }
+        return self.expression(1);
+    }
+
+    fn struct_literal(&mut self, id: Option<usize>) -> Result<Expression, Diagnostic> {
+        let start = self.expect(
+            Token::LeftBrace,
+            "expected '{' to start a struct initializer",
+        )?;
+        let mut fields = Vec::new();
+        while !self.at(&Token::RightBrace) {
+            self.expect(
+                Token::Dot,
+                "struct initializers need named fields: '.field = value'",
+            )?;
+            let (name, span) = self.identifier()?;
+            self.expect(Token::Equal, "expected '=' after the field name")?;
+            let value = self.initializer()?;
+            fields.push(FieldInitializer {
+                name,
+                span: span.through(value.span),
+                value,
+            });
+            if !self.consume(&Token::Comma) {
+                break;
+            }
+        }
+        let end = self.expect(
+            Token::RightBrace,
+            "expected '}' after the struct initializer",
+        )?;
+        return Ok(Expression {
+            span: start.through(end),
+            kind: ExpressionKind::StructLiteral { id, fields },
+        });
     }
 
     fn primary(&mut self) -> Result<Expression, Diagnostic> {
@@ -291,6 +417,19 @@ impl Parser {
                 });
             }
             Token::LeftParen => {
+                if self.at(&Token::Struct) {
+                    let ty = self.type_name()?;
+                    let Type::Struct(id) = ty else {
+                        return Err(Diagnostic::new(
+                            token.span,
+                            "a compound literal needs a struct value type",
+                        ));
+                    };
+                    self.expect(Token::RightParen, "expected ')' after the struct type")?;
+                    let mut literal = self.struct_literal(Some(id))?;
+                    literal.span = token.span.through(literal.span);
+                    return Ok(literal);
+                }
                 let mut expression = self.expression(1)?;
                 let end = self.expect(Token::RightParen, "expected ')' after the expression")?;
                 expression.span = token.span.through(end);
