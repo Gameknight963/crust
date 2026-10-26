@@ -6,6 +6,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
 mod semantic;
+mod semantic_tokens;
 mod signature;
 mod workspace;
 
@@ -65,6 +66,10 @@ struct DocumentId {
 pub fn serve(connection: &Connection) -> ServerResult<()> {
     let (id, params) = connection.initialize_start()?;
     let mut workspace_roots = workspace::roots(&params);
+    let semantic_refresh = params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"]
+        .as_bool()
+        .unwrap_or(false);
+    let mut next_refresh = 0_u64;
     let document_changes = params["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"]
         .as_bool()
         .unwrap_or(false);
@@ -80,6 +85,10 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "documentSymbolProvider": true,
                 "workspaceSymbolProvider": true,
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
+                "semanticTokensProvider": {
+                    "legend": { "tokenTypes": semantic_tokens::TYPES, "tokenModifiers": semantic_tokens::MODIFIERS },
+                    "full": true
+                },
                 "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
                 "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">"] },
                 "textDocumentSync": { "openClose": true, "change": 1 }
@@ -122,6 +131,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/completion"
                         | "workspace/symbol"
                         | "textDocument/signatureHelp"
+                        | "textDocument/semanticTokens/full"
                 ) {
                     match semantic::request(
                         &request.method,
@@ -152,6 +162,10 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 if shutdown {
                     continue;
                 }
+                let refresh = matches!(
+                    notification.method.as_str(),
+                    "textDocument/didOpen" | "textDocument/didChange" | "textDocument/didClose"
+                );
                 let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
                     workspace::change(notification.params, &mut workspace_roots)
                 } else {
@@ -164,6 +178,16 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                             json!({
                                 "type": 2, "message": error.to_string()
                             }),
+                        )
+                        .into(),
+                    )?;
+                } else if semantic_refresh && refresh {
+                    next_refresh += 1;
+                    connection.sender.send(
+                        lsp_server::Request::new(
+                            format!("crust-semantic-refresh-{next_refresh}").into(),
+                            "workspace/semanticTokens/refresh".to_owned(),
+                            Value::Null,
                         )
                         .into(),
                     )?;

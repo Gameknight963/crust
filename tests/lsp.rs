@@ -56,6 +56,11 @@ impl Server {
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
         assert_eq!(capabilities["workspaceSymbolProvider"], true);
+        assert_eq!(capabilities["semanticTokensProvider"]["full"], true);
+        assert_eq!(
+            capabilities["semanticTokensProvider"]["legend"]["tokenModifiers"],
+            json!(["declaration", "defaultLibrary"])
+        );
         assert_eq!(
             capabilities["signatureHelpProvider"]["triggerCharacters"],
             json!(["(", ","])
@@ -911,6 +916,167 @@ fn signature_help_uses_current_unsaved_imported_parameter_types() {
         response.result.unwrap()["signatures"][0]["label"],
         "int convert(char byte)"
     );
+    server.stop();
+}
+
+fn semantic_tokens(server: &mut Server, uri: &str) -> Vec<[u64; 5]> {
+    let response = server.request(
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = response.result.unwrap();
+    let data = result["data"].as_array().unwrap();
+    assert_eq!(data.len() % 5, 0);
+    let (mut line, mut column) = (0, 0);
+    return data
+        .chunks_exact(5)
+        .map(|token| {
+            let delta_line = token[0].as_u64().unwrap();
+            line += delta_line;
+            column = if delta_line == 0 {
+                column + token[1].as_u64().unwrap()
+            } else {
+                token[1].as_u64().unwrap()
+            };
+            return [
+                line,
+                column,
+                token[2].as_u64().unwrap(),
+                token[3].as_u64().unwrap(),
+                token[4].as_u64().unwrap(),
+            ];
+        })
+        .collect();
+}
+
+#[test]
+fn semantic_tokens_classify_bound_names_and_builtins_with_utf16_positions() {
+    let source = "typedef int Count;\r\nenum Status { Ready };\r\nstruct Item { int field; int get(int amount) const { return this->field + amount; } };\r\nT identity<T>(T value) { return value; }\r\nint main() { /* 🦀 */ Count count = 1; Item item = { .field = count }; int int64_t = 5; print(item.get(identity<int>(count))); print(Status::Ready == Ready); print(int64_t); return 0; }";
+    let uri = "untitled:semantic-tokens.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let tokens = semantic_tokens(&mut server, uri);
+    for (needle, advance, kind, modifiers) in [
+        ("Count;", 0, 0, 1),
+        ("Count count", 0, 0, 0),
+        ("Status {", 0, 2, 1),
+        ("Ready };", 0, 8, 1),
+        ("Item {", 0, 1, 1),
+        ("field;", 0, 7, 1),
+        ("get(int", 0, 6, 1),
+        ("amount)", 0, 9, 1),
+        ("this->field", 0, 9, 2),
+        ("this->field", 6, 7, 0),
+        ("identity<T>", 0, 5, 1),
+        ("identity<T>", 9, 4, 1),
+        ("T value", 0, 4, 0),
+        ("count = 1", 0, 10, 1),
+        ("item.get", 0, 10, 0),
+        ("item.get", 5, 6, 0),
+        ("print(item", 0, 5, 2),
+        ("identity<int>", 0, 5, 0),
+        ("identity<int>", 9, 0, 2),
+        ("Status::Ready", 0, 2, 0),
+        ("Status::Ready", 8, 8, 0),
+        ("int64_t =", 0, 10, 1),
+        ("int64_t);", 0, 10, 0),
+    ] {
+        let location = at(source, source.find(needle).unwrap() + advance);
+        let token = tokens
+            .iter()
+            .find(|token| {
+                token[0] == location["line"].as_u64().unwrap()
+                    && token[1] == location["character"].as_u64().unwrap()
+            })
+            .unwrap_or_else(|| panic!("missing token for {needle} + {advance}"));
+        assert_eq!((token[3], token[4]), (kind, modifiers), "{needle}");
+        assert!(token[2] > 0);
+    }
+    server.stop();
+}
+
+#[test]
+fn semantic_tokens_clear_after_errors_and_close_and_recover_with_unsaved_text() {
+    let uri = "untitled:semantic-recovery.cr";
+    let mut server = Server::start();
+    server.open(uri, 1, "int main() { return 0; }");
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
+    server.change(uri, 2, "int main() { return missing; }");
+    server.diagnostics();
+    assert!(semantic_tokens(&mut server, uri).is_empty());
+    server.change(uri, 3, "int main() { int value = 1; return value; }");
+    server.diagnostics();
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    server.diagnostics();
+    assert!(semantic_tokens(&mut server, uri).is_empty());
+    let response = server.request(
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {}}),
+    );
+    assert_eq!(response.error.unwrap().code, -32602);
+    server.stop();
+}
+
+#[test]
+fn semantic_tokens_follow_imported_type_and_function_declarations() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-semantic-tokens")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("helper.cr"),
+        "struct Shared { int value; }; int read(const Shared^ item) { return item->value; }",
+    )
+    .unwrap();
+    let source = "import \"helper.cr\"; int main() { Shared item = { .value = 1 }; return read(^const item); }";
+    let uri = file_uri(&root.join("main.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&uri, 1, source)["diagnostics"], json!([]));
+    let tokens = semantic_tokens(&mut server, &uri);
+    for (needle, kind) in [("Shared item", 1), ("read(^const", 5), ("value = 1", 7)] {
+        let location = point(source, needle);
+        let token = tokens
+            .iter()
+            .find(|token| {
+                token[0] == location["line"].as_u64().unwrap()
+                    && token[1] == location["character"].as_u64().unwrap()
+            })
+            .unwrap();
+        assert_eq!((token[3], token[4]), (kind, 0), "{needle}");
+    }
+    server.stop();
+}
+
+#[test]
+fn semantic_tokens_request_supported_client_refreshes_after_document_updates() {
+    let uri = "untitled:semantic-refresh.cr";
+    let mut server = Server::start_with_capabilities(
+        json!({"workspace": {"semanticTokens": {"refreshSupport": true}}}),
+    );
+    server.open(uri, 1, "int main() { return 0; }");
+    let Message::Request(request) = server.receive() else {
+        panic!("expected a semantic-token refresh request");
+    };
+    assert_eq!(request.method, "workspace/semanticTokens/refresh");
+    Message::Response(Response::new_ok(request.id, Value::Null))
+        .write(&mut server.input)
+        .unwrap();
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
+    server.change(uri, 2, "int main() { int value = 1; return value; }");
+    server.diagnostics();
+    let Message::Request(request) = server.receive() else {
+        panic!("expected a semantic-token refresh request");
+    };
+    assert_eq!(request.method, "workspace/semanticTokens/refresh");
+    Message::Response(Response::new_ok(request.id, Value::Null))
+        .write(&mut server.input)
+        .unwrap();
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
     server.stop();
 }
 

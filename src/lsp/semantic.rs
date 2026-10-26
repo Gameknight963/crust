@@ -34,8 +34,8 @@ struct RenameParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DocumentParams {
-    text_document: DocumentId,
+pub(super) struct DocumentParams {
+    pub(super) text_document: DocumentId,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +258,9 @@ pub(super) fn request(
     document_changes: bool,
     workspace_roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
+    if method == "textDocument/semanticTokens/full" {
+        return super::semantic_tokens::request(params, documents);
+    }
     if method == "textDocument/signatureHelp" {
         return super::signature::request(params, documents);
     }

@@ -39,6 +39,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
 | `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
 | `src/lsp/signature.rs` | Signature-help responses and active parameters |
+| `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
@@ -97,6 +98,13 @@ Workspace symbol queries load every target in the configured workspace projects
 and combine them with open-document source graphs. Unsaved documents override
 disk text. Results deduplicate canonical declaration locations across shared
 imports, and folder notifications update the project's search roots.
+
+Semantic tokens combine canonical declaration kinds with resolved source uses.
+The encoder walks source text once to compute UTF-16 positions across Unicode
+comments, string literals, and line endings. Unambiguous bindings receive their
+symbol kind, and built-in names receive the `defaultLibrary` modifier. Full-token
+responses clear on frontend errors. Clients advertising refresh support receive
+`workspace/semanticTokens/refresh` after document notifications.
 
 ## C header bindings
 

@@ -31,6 +31,7 @@ The server also provides:
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
 - Signature help for functions, methods, callbacks, and built-in calls
+- Semantic highlighting for resolved names, declarations, and built-in types and functions
 
 Semantic requests use the current unsaved text and checked compiler analysis.
 Reference searches include reads, writes, and calls. Compatible repeated
@@ -62,6 +63,13 @@ Results include types, functions, methods, fields, enum values, aliases, and
 external variables. Shared imports and repeated declarations appear once.
 Search uses checked targets and current unsaved text, and follows workspace-folder
 additions and removals.
+
+Semantic highlighting distinguishes types, fields, methods, parameters, and other
+bindings through compiler resolution. Declarations and built-in names have
+separate modifiers. Token ranges use UTF-16 positions and update with unsaved
+text. Clients that support semantic-token refresh requests are refreshed after
+document changes, including dependency edits. A compiler error clears semantic
+tokens until the program checks successfully again.
 
 ## VS Code
 
