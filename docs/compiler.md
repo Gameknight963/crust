@@ -17,7 +17,7 @@ ownership checking, C generation, and native compilation.
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
 | `src/parser/calling_conventions.rs` | Target calling conventions and signature normalization |
-| `src/parser/constants.rs` | Enum constant evaluation and declaration dependencies |
+| `src/parser/constants.rs` | Integer constant evaluation, array lengths, and enum dependencies |
 | `src/parser/integers.rs` | C integer type specifiers |
 | `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |

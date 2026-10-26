@@ -59,6 +59,30 @@ impl IntegerConstant {
 }
 
 impl Parser {
+    pub(super) fn global_constant_context<T>(
+        &mut self,
+        position: usize,
+        parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        let saved = self.position;
+        let greater = self.pending_greater.take();
+        let bindings = std::mem::take(&mut self.generics.bindings);
+        let declarations = std::mem::take(&mut self.generics.binding_declarations);
+        let function = self.generics.current_function.take();
+        let owner = self.current_struct.take();
+        let scopes = std::mem::replace(&mut self.value_scopes, vec![HashSet::new()]);
+        self.position = position;
+        let result = parse(self);
+        self.position = saved;
+        self.pending_greater = greater;
+        self.generics.bindings = bindings;
+        self.generics.binding_declarations = declarations;
+        self.generics.current_function = function;
+        self.current_struct = owner;
+        self.value_scopes = scopes;
+        return result;
+    }
+
     pub(super) fn collect_enum_sources(&mut self) {
         let mut depth = 0usize;
         for position in 0..self.tokens.len().saturating_sub(2) {
@@ -132,13 +156,7 @@ impl Parser {
                 "enum constant dependency depth exceeds 64",
             ));
         }
-        let saved = self.position;
-        let greater = self.pending_greater.take();
-        self.position = position;
-        let result = self.enum_definition_until(Some(name));
-        self.position = saved;
-        self.pending_greater = greater;
-        result?;
+        self.global_constant_context(position, |parser| parser.enum_definition_until(Some(name)))?;
         return Ok(());
     }
 
@@ -156,17 +174,13 @@ impl Parser {
                 "constant casts require a declared enum representation",
             ));
         };
-        let saved = self.position;
-        let greater = self.pending_greater.take();
-        self.position = position + 2;
-        let result = if self.consume(&Token::Colon) {
-            self.type_name()
-        } else {
-            Ok(Type::Integer(IntType::I32))
-        };
-        self.position = saved;
-        self.pending_greater = greater;
-        let Type::Integer(kind) = result? else {
+        let ty = self.global_constant_context(position + 2, |parser| {
+            if parser.consume(&Token::Colon) {
+                return parser.type_name();
+            }
+            return Ok(Type::Integer(IntType::I32));
+        })?;
+        let Type::Integer(kind) = ty else {
             return Err(Diagnostic::new(
                 span,
                 "an enum underlying type must be an integer",
@@ -199,6 +213,18 @@ impl Parser {
         name: &str,
         span: Span,
     ) -> Result<IntegerConstant, Diagnostic> {
+        if id.is_none()
+            && self
+                .value_scopes
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(name))
+        {
+            return Err(Diagnostic::new(
+                span,
+                "a local value cannot be used in an integer constant expression",
+            ));
+        }
         let owner = id.or_else(|| self.enumerator_owners.get(name).copied());
         if let Some(owner) = owner
             && !self.enum_constants.contains_key(&(owner, name.to_owned()))
@@ -381,7 +407,7 @@ impl Parser {
             _ => {
                 return Err(Diagnostic::new(
                     span,
-                    "an enum initializer requires an integer constant expression",
+                    "expected an integer constant expression",
                 ));
             }
         }

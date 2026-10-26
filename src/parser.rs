@@ -38,7 +38,6 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     };
     parser.collect_templates()?;
     parser.collect_type_names()?;
-    parser.collect_enum_sources();
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut enums = Vec::new();
@@ -274,7 +273,20 @@ impl Parser {
                 {
                     return Err(Diagnostic::new(token.span, "expected 'typedef type Name;'"));
                 }
-                let paren = (start..end).find(|&index| self.tokens[index].kind == Token::LeftParen);
+                let mut brackets = 0usize;
+                let mut outside_brackets = Vec::new();
+                for index in start..end {
+                    match self.tokens[index].kind {
+                        Token::LeftBracket => brackets += 1,
+                        Token::RightBracket => brackets = brackets.saturating_sub(1),
+                        _ if brackets == 0 => outside_brackets.push(index),
+                        _ => {}
+                    }
+                }
+                let paren = outside_brackets
+                    .iter()
+                    .copied()
+                    .find(|&index| self.tokens[index].kind == Token::LeftParen);
                 let name_position = if let Some(paren) = paren {
                     let mut declarator = paren + 1;
                     if self.tokens.get(declarator).is_some_and(|token| {
@@ -303,7 +315,8 @@ impl Parser {
                         paren.saturating_sub(1)
                     }
                 } else {
-                    (start..end)
+                    outside_brackets
+                        .into_iter()
                         .rfind(|&index| matches!(self.tokens[index].kind, Token::Identifier(_)))
                         .unwrap_or(start)
                 };
@@ -376,6 +389,7 @@ impl Parser {
                 ));
             }
         }
+        self.collect_enum_sources();
         let mut aliases: Vec<_> = self
             .aliases
             .iter()
@@ -418,19 +432,7 @@ impl Parser {
     }
 
     fn read_alias(&mut self, alias: Alias) -> Result<(String, Type), Diagnostic> {
-        let previous = self.position;
-        self.position = alias.position;
-        let bindings = std::mem::take(&mut self.generics.bindings);
-        let binding_declarations = std::mem::take(&mut self.generics.binding_declarations);
-        let owner = self.current_struct.take();
-        let pending = self.pending_greater.take();
-        let result = self.typedef_type();
-        self.generics.bindings = bindings;
-        self.generics.binding_declarations = binding_declarations;
-        self.current_struct = owner;
-        self.pending_greater = pending;
-        self.position = previous;
-        return result;
+        return self.global_constant_context(alias.position, |parser| parser.typedef_type());
     }
 
     fn typedef_type(&mut self) -> Result<(String, Type), Diagnostic> {
@@ -1269,21 +1271,19 @@ impl Parser {
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
         let mut dimensions = Vec::new();
         while self.consume(&Token::LeftBracket) {
-            let token = self.advance();
-            let Token::IntegerLiteral(length) = token.kind else {
-                return Err(Diagnostic::new(
-                    token.span,
-                    "array length must be a positive integer literal",
-                ));
-            };
-            let length = usize::try_from(length)
+            let expression = self.expression(1)?;
+            let value = self.integer_constant(&expression, true)?.value;
+            let length = usize::try_from(value)
                 .ok()
                 .filter(|length| *length > 0)
                 .ok_or_else(|| {
-                    Diagnostic::new(token.span, "array length must fit size_t and be positive")
+                    Diagnostic::new(
+                        expression.span,
+                        "array length must fit size_t and be positive",
+                    )
                 })?;
             self.expect(Token::RightBracket, "expected ']' after array length")?;
-            dimensions.push((length, token.span));
+            dimensions.push((length, expression.span));
         }
         for (length, span) in dimensions.into_iter().rev() {
             if element == Type::Void || element.is_borrow() {

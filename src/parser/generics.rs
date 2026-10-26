@@ -110,12 +110,15 @@ impl Parser {
             return false;
         }
         let mut depth = 0usize;
+        let mut brackets = 0usize;
         let mut position = self.position + 1;
         while let Some(token) = self.tokens.get(position) {
             match token.kind {
-                Token::Less => depth += 1,
-                Token::Greater => depth = depth.saturating_sub(1),
-                Token::GreaterGreater => depth = depth.saturating_sub(2),
+                Token::LeftBracket => brackets += 1,
+                Token::RightBracket => brackets = brackets.saturating_sub(1),
+                Token::Less if brackets == 0 => depth += 1,
+                Token::Greater if brackets == 0 => depth = depth.saturating_sub(1),
+                Token::GreaterGreater if brackets == 0 => depth = depth.saturating_sub(2),
                 Token::EndOfFile | Token::Semicolon => return false,
                 _ => {}
             }
@@ -127,16 +130,18 @@ impl Parser {
         loop {
             match self.tokens.get(position).map(|token| &token.kind) {
                 Some(Token::Star | Token::Const | Token::Caret) => position += 1,
-                Some(Token::LeftBracket)
-                    if matches!(
-                        self.tokens.get(position + 1).map(|token| &token.kind),
-                        Some(Token::IntegerLiteral(_))
-                    ) && self
-                        .tokens
-                        .get(position + 2)
-                        .is_some_and(|token| token.kind == Token::RightBracket) =>
-                {
-                    position += 3
+                Some(Token::LeftBracket) => {
+                    let mut brackets = 1usize;
+                    position += 1;
+                    while brackets != 0 {
+                        match self.tokens.get(position).map(|token| &token.kind) {
+                            Some(Token::LeftBracket) => brackets += 1,
+                            Some(Token::RightBracket) => brackets -= 1,
+                            None | Some(Token::EndOfFile | Token::Semicolon) => return false,
+                            _ => {}
+                        }
+                        position += 1;
+                    }
                 }
                 _ => break,
             }

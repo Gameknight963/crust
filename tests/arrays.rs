@@ -1,5 +1,96 @@
 mod common;
 
+#[test]
+fn constant_lengths_work_in_aliases_fields_and_nested_generic_declarations() {
+    run(
+        r#"
+        typedef int Row[(Columns + 1)];
+        typedef int[1 << 2] Block;
+        enum Sizes { Columns = 1 << 1 };
+        struct Holder<T> { T value; };
+        struct Grid { int cells[Columns + 1]; };
+        int main() {
+            Row row = { 1, 2, 3 };
+            Block block = { 4, 5, 6, 7 };
+            Grid grid = { .cells = row };
+            Holder<Holder<int[8 >> 2]>> nested = { .value = { .value = { 8, 9 } } };
+            Holder<int> copies[1 + 1] = { { .value = 10 }, { .value = 11 } };
+            Holder<int[(1 < 2) + 1]> comparisons = { .value = { 12, 13 } };
+            print(grid.cells[2]); print(block[3]); print(nested.value.value[1]);
+            print(copies[1].value); print(comparisons.value[1]);
+            return 0;
+        }
+    "#,
+        "3\n7\n9\n11\n13\n",
+        "",
+    );
+}
+
+#[test]
+fn computed_lengths_preserve_owning_array_cleanup() {
+    run(
+        "int main() { BoxInt owners[1 << 1] = { box_int(1), box_int(2) }; print(*owners[1]); return 0; }",
+        "2\n",
+        "drop:2\ndrop:1\n",
+    );
+}
+
+#[test]
+fn array_constants_use_global_enum_context_and_respect_local_shadowing() {
+    let source = r#"
+        typedef uint8_t T;
+        int dimensions<T>(int Count) {
+            int values[Sizes::Count] = { 1, 2 };
+            return sizeof(values) == 2 * sizeof(int);
+        }
+        int main() { print(dimensions<int>(99)); return 0; }
+        enum Sizes : T { Count = 2 };
+    "#;
+    run(source, "1\n", "");
+    let shadowed = "enum Sizes { Count = 2 }; int main() { int Count = 2; int values[Count] = { 1, 2 }; return 0; }";
+    assert!(
+        crust::check(shadowed)
+            .unwrap_err()
+            .message
+            .contains("local value")
+    );
+}
+
+#[test]
+fn array_length_expressions_reject_runtime_values_and_invalid_constant_arithmetic() {
+    for expression in ["0", "-1", "1 / 0", "1 << 32", "2147483647 + 1", "length()"] {
+        let source = format!(
+            "int length() {{ return 2; }} int main() {{ int values[{expression}] = {{ 1 }}; return 0; }}"
+        );
+        assert!(crust::check(&source).is_err(), "{expression}");
+    }
+}
+
+#[test]
+fn imported_array_constants_keep_definition_and_reference_locations() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/virtual-array-constants");
+    let entry = "import \"sizes.cr\"; typedef int Row[Columns + 1]; int main() { Row values = { 1, 2, 3 }; return values[2] - 3; }";
+    let helper = "enum Sizes { Columns = 2 };";
+    let sources = crust::source::SourceSet::load_with(&root.join("main.cr"), |path| {
+        return Ok(if path.ends_with("main.cr") {
+            entry.to_owned()
+        } else {
+            helper.to_owned()
+        });
+    })
+    .unwrap();
+    let analysis = sources.analyze().unwrap();
+    let offset = entry.find("Columns +").unwrap();
+    let definition = analysis.definitions_at(0, offset);
+    assert_eq!(definition.len(), 1);
+    assert_eq!(definition[0].location.file, 1);
+    assert_eq!(analysis.references_at(0, offset, true).len(), 2);
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+}
+
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
     assert!(

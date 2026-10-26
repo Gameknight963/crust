@@ -205,7 +205,8 @@ int main() {
 
 - Declarations attach dimensions to the name, as in `int matrix[2][3]`
 - Type expressions can use `int[3]`, including `sizeof(int[3])` and `(int[3]){ 1, 2, 3 }`
-- Lengths are positive integer literals
+- Lengths are positive integer constant expressions that fit `size_t`
+- Length expressions can use enum values and integer arithmetic, including in typedefs and generic type arguments
 - Brace initializers provide every element and evaluate left to right
 - Nested arrays use nested brace initializers
 - Arrays support locals, fields, typedefs, parameters, returns, and whole-array assignment
