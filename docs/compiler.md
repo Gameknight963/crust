@@ -64,6 +64,7 @@ ownership checking, C generation, and native compilation.
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters
 - Unsafe blocks lower to ordinary C blocks with the same cleanup rules
+- Raw pointer indexing captures the base and index once, with checked conversion of offsets to the host `ptrdiff_t` representation
 - Field privacy is checked in the frontend and preserves the C field layout
 
 ## Diagnostics

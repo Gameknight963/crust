@@ -402,9 +402,13 @@ impl FunctionChecker<'_> {
                 self.access(&self.root(name), &[], true, None, statement.span)?;
                 self.set_state(name, State::Available);
             }
-            StatementKind::CompoundAssign { target, value, .. } => {
+            StatementKind::CompoundAssign {
+                target,
+                value,
+                operator,
+            } => {
                 let place = self.checked_place(target)?;
-                if !place.mutable || !matches!(place.ty, Type::Integer(_)) {
+                if !place.mutable || !matches!(place.ty, Type::Integer(_) | Type::Pointer(_)) {
                     return Err(Diagnostic::new(
                         target.span,
                         "compound assignment requires a mutable integer place",
@@ -421,10 +425,20 @@ impl FunctionChecker<'_> {
                     target.span,
                 )?;
                 let actual = self.expression(value)?;
-                let common = self
-                    .integer(place.ty, target.span)?
-                    .common(self.integer(actual, value.span)?);
-                self.convert(value, actual, Type::Integer(common))?;
+                if matches!(place.ty, Type::Pointer(_)) {
+                    if !matches!(operator, BinaryOperator::Add | BinaryOperator::Subtract) {
+                        return Err(Diagnostic::new(
+                            statement.span,
+                            "pointer compound assignments support += and -=",
+                        ));
+                    }
+                    self.pointer_offset(place.ty, value, actual)?;
+                } else {
+                    let common = self
+                        .integer(place.ty, target.span)?
+                        .common(self.integer(actual, value.span)?);
+                    self.convert(value, actual, Type::Integer(common))?;
+                }
                 self.loans.truncate(previous_loans);
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
             }
@@ -1054,6 +1068,33 @@ impl FunctionChecker<'_> {
                 }
                 if matches!(left_type, Type::Pointer(_)) {
                     let right_type = self.expression(right)?;
+                    if matches!(operator, BinaryOperator::Add | BinaryOperator::Subtract)
+                        && right_type.integer().is_some()
+                    {
+                        self.pointer_offset(left_type, right, right_type)?;
+                        return Ok(left_type);
+                    }
+                    if *operator == BinaryOperator::Subtract
+                        && matches!(right_type, Type::Pointer(_))
+                    {
+                        self.require_unsafe(expression.span, "raw pointer subtraction")?;
+                        let Type::Pointer(left_id) = left_type else {
+                            unreachable!()
+                        };
+                        let Type::Pointer(right_id) = right_type else {
+                            unreachable!()
+                        };
+                        if self.types.pointers[left_id].pointee == Type::Void
+                            || self.types.pointers[left_id].pointee
+                                != self.types.pointers[right_id].pointee
+                        {
+                            return Err(Diagnostic::new(
+                                expression.span,
+                                "pointer subtraction requires matching object types",
+                            ));
+                        }
+                        return Ok(Type::Integer(IntType::named("ptrdiff_t").unwrap()));
+                    }
                     if !matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -1112,6 +1153,10 @@ impl FunctionChecker<'_> {
                 let left_kind = self.integer(left_type, left.span)?;
                 let right_type = self.expression(right)?;
                 if matches!(right_type, Type::Pointer(_)) {
+                    if *operator == BinaryOperator::Add {
+                        self.pointer_offset(right_type, left, left_type)?;
+                        return Ok(right_type);
+                    }
                     if !matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -1270,20 +1315,114 @@ impl FunctionChecker<'_> {
         return Ok(());
     }
 
+    fn pointer_offset(
+        &mut self,
+        pointer: Type,
+        offset: &Expression,
+        offset_type: Type,
+    ) -> Result<(), Diagnostic> {
+        self.require_unsafe(offset.span, "raw pointer arithmetic or indexing")?;
+        let Type::Pointer(id) = pointer else {
+            unreachable!()
+        };
+        if self.types.pointers[id].pointee == Type::Void {
+            return Err(Diagnostic::new(
+                offset.span,
+                "void pointers must be cast before arithmetic or indexing",
+            ));
+        }
+        self.integer(offset_type, offset.span)?;
+        return self.convert(
+            offset,
+            offset_type,
+            Type::Integer(IntType::named("ptrdiff_t").unwrap()),
+        );
+    }
+
     // Resolve the receiver's type without evaluating it. In particular, probing
     // move(value).method() must not move value before checking the actual call.
-    fn receiver_type(&self, expression: &Expression) -> Result<Type, Diagnostic> {
+    fn receiver_type(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        if let Some(value) = constant_integer(expression) {
+            return Ok(Type::Integer(if IntType::I32.fits(value) {
+                IntType::I32
+            } else if IntType::I64.fits(value) {
+                IntType::I64
+            } else {
+                IntType::U64
+            }));
+        }
         match &expression.kind {
+            ExpressionKind::Boolean(_) => return Ok(Type::Bool),
+            ExpressionKind::SizeofType(_)
+            | ExpressionKind::SizeofValue(_)
+            | ExpressionKind::Alignof(_) => {
+                return Ok(Type::Integer(IntType::named("size_t").unwrap()));
+            }
+            ExpressionKind::StringLiteral { id, .. } => return Ok(Type::Array(*id)),
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Address,
+                operand,
+            } => {
+                let pointee = self.receiver_type(operand)?;
+                let mutable = self.probe_mutability(operand)?;
+                return Ok(self.types.pointer_to(pointee, mutable));
+            }
+            ExpressionKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let a = self.receiver_type(left)?;
+                let b = self.receiver_type(right)?;
+                if matches!(
+                    operator,
+                    BinaryOperator::Equal
+                        | BinaryOperator::NotEqual
+                        | BinaryOperator::Less
+                        | BinaryOperator::LessEqual
+                        | BinaryOperator::Greater
+                        | BinaryOperator::GreaterEqual
+                        | BinaryOperator::And
+                        | BinaryOperator::Or
+                ) {
+                    return Ok(Type::Integer(IntType::I32));
+                }
+                if matches!(operator, BinaryOperator::Add | BinaryOperator::Subtract) {
+                    if matches!(a, Type::Pointer(_)) {
+                        return Ok(
+                            if *operator == BinaryOperator::Subtract
+                                && matches!(b, Type::Pointer(_))
+                            {
+                                Type::Integer(IntType::named("ptrdiff_t").unwrap())
+                            } else {
+                                a
+                            },
+                        );
+                    }
+                    if *operator == BinaryOperator::Add && matches!(b, Type::Pointer(_)) {
+                        return Ok(b);
+                    }
+                }
+                return Ok(Type::Integer(
+                    self.integer(a, left.span)?
+                        .common(self.integer(b, right.span)?),
+                ));
+            }
             ExpressionKind::Cast { ty, .. } => return Ok(*ty),
             ExpressionKind::Variable(name) => return Ok(self.available(name, expression.span)?.ty),
             ExpressionKind::Field { base, name } => {
-                return self.field_type(self.receiver_type(base)?, name, expression.span);
+                let ty = self.receiver_type(base)?;
+                return self.field_type(ty, name, expression.span);
             }
             ExpressionKind::Index { base, .. } => {
-                let Type::Array(id) = self.receiver_type(base)? else {
-                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                return match self.receiver_type(base)? {
+                    Type::Array(id) => Ok(self.types.arrays[id].element),
+                    Type::Pointer(id) => Ok(self.types.pointers[id].pointee),
+                    _ => Err(Diagnostic::new(
+                        base.span,
+                        "indexing requires an array or raw pointer",
+                    )),
                 };
-                return Ok(self.types.arrays[id].element);
             }
             ExpressionKind::Unary {
                 operator: UnaryOperator::Dereference,
@@ -1298,6 +1437,22 @@ impl FunctionChecker<'_> {
                         "dereference needs a BoxInt or a borrow",
                     )),
                 };
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Borrow { mutable },
+                operand,
+            } => {
+                return self
+                    .receiver_type(operand)?
+                    .borrowed(*mutable)
+                    .ok_or_else(|| Diagnostic::new(expression.span, "invalid borrow type"));
+            }
+            ExpressionKind::Unary { operator, operand } => {
+                if *operator == UnaryOperator::Not {
+                    return Ok(Type::Integer(IntType::I32));
+                }
+                let ty = self.receiver_type(operand)?;
+                return Ok(Type::Integer(self.integer(ty, operand.span)?.promoted()));
             }
             ExpressionKind::StaticCall { id, name, .. } => {
                 return self
@@ -1334,6 +1489,31 @@ impl FunctionChecker<'_> {
             ExpressionKind::StructLiteral { id: Some(id), .. } => return Ok(Type::Struct(*id)),
             _ => return Ok(self.place(expression)?.ty),
         }
+    }
+
+    fn probe_mutability(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
+        return match &expression.kind {
+            ExpressionKind::Variable(name) => {
+                Ok(!self.available(name, expression.span)?.ty.is_borrow())
+            }
+            ExpressionKind::Field { base, .. } => self.probe_mutability(base),
+            ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
+                Type::Pointer(id) => Ok(self.types.pointers[id].mutable),
+                _ => self.probe_mutability(base),
+            },
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => match self.receiver_type(operand)? {
+                Type::Borrow { mutable, .. } => Ok(mutable),
+                Type::Pointer(id) => Ok(self.types.pointers[id].mutable),
+                _ => self.probe_mutability(operand),
+            },
+            _ => Err(Diagnostic::new(
+                expression.span,
+                "address target must be a place",
+            )),
+        };
     }
 
     fn array_literal(
@@ -1417,9 +1597,17 @@ impl FunctionChecker<'_> {
     fn checked_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
-                let place = self.checked_place(base)?;
-                let Type::Array(id) = place.ty else {
-                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                let place = if base.is_place() {
+                    self.checked_place(base)?
+                } else {
+                    self.temporary_pointer_place(base)?
+                };
+                let element = match place.ty {
+                    Type::Array(id) => self.types.arrays[id].element,
+                    Type::Pointer(id) => self.types.pointers[id].pointee,
+                    _ => {
+                        return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                    }
                 };
                 let previous_loans = self.loans.len();
                 self.borrow(
@@ -1431,14 +1619,24 @@ impl FunctionChecker<'_> {
                 )?;
                 let index_type = self.expression(index)?;
                 self.integer(index_type, index.span)?;
-                if let Some(value) = constant_integer(index)
-                    && (value < 0 || value >= self.types.arrays[id].length as i128)
-                {
-                    return Err(Diagnostic::new(index.span, "array index is out of bounds"));
+                if let Type::Array(id) = place.ty {
+                    if let Some(value) = constant_integer(index)
+                        && (value < 0 || value >= self.types.arrays[id].length as i128)
+                    {
+                        return Err(Diagnostic::new(index.span, "array index is out of bounds"));
+                    }
+                } else {
+                    self.pointer_offset(place.ty, index, index_type)?;
                 }
                 self.loans.truncate(previous_loans);
+                let mutable = if let Type::Pointer(id) = place.ty {
+                    self.types.pointers[id].mutable
+                } else {
+                    place.mutable
+                };
                 return Ok(Place {
-                    ty: self.types.arrays[id].element,
+                    ty: element,
+                    mutable,
                     ..place
                 });
             }
@@ -1458,40 +1656,10 @@ impl FunctionChecker<'_> {
                 operator: UnaryOperator::Dereference,
                 operand,
             } => {
-                let place = if is_place(operand) {
+                let place = if operand.is_place() {
                     self.checked_place(operand)?
                 } else {
-                    let operand_type = self.receiver_type(operand)?;
-                    if !operand_type.is_borrow() && !matches!(operand_type, Type::Pointer(_)) {
-                        return Err(Diagnostic::new(
-                            operand.span,
-                            "dereference of a temporary requires a returned borrow",
-                        ));
-                    }
-                    let ty = self.expression(operand)?;
-                    if self.unevaluated || matches!(ty, Type::Pointer(_)) {
-                        Place {
-                            ty,
-                            mutable: false,
-                            root: (self.scopes.len(), format!("@{}", operand.span.start)),
-                            fields: Vec::new(),
-                            via: None,
-                        }
-                    } else {
-                        let id = self.references[&operand.span];
-                        let loan = self
-                            .loans
-                            .iter()
-                            .find(|loan| loan.id == id)
-                            .expect("returned reference has a loan");
-                        Place {
-                            ty,
-                            mutable: false,
-                            root: loan.root.clone(),
-                            fields: loan.fields.clone(),
-                            via: Some(id),
-                        }
-                    }
+                    self.temporary_pointer_place(operand)?
                 };
                 let (ty, mutable) = match place.ty {
                     Type::BoxInt => (Type::Integer(IntType::I32), place.mutable),
@@ -1527,6 +1695,38 @@ impl FunctionChecker<'_> {
                 ));
             }
         }
+    }
+
+    fn temporary_pointer_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
+        let ty = self.expression(expression)?;
+        if !ty.is_borrow() && !matches!(ty, Type::Pointer(_)) {
+            return Err(Diagnostic::new(
+                expression.span,
+                "dereference of a temporary requires a returned borrow or raw pointer",
+            ));
+        }
+        if self.unevaluated || matches!(ty, Type::Pointer(_)) {
+            return Ok(Place {
+                ty,
+                mutable: false,
+                root: (self.scopes.len(), format!("@{}", expression.span.start)),
+                fields: Vec::new(),
+                via: None,
+            });
+        }
+        let id = self.references[&expression.span];
+        let loan = self
+            .loans
+            .iter()
+            .find(|loan| loan.id == id)
+            .expect("returned reference has a loan");
+        return Ok(Place {
+            ty,
+            mutable: false,
+            root: loan.root.clone(),
+            fields: loan.fields.clone(),
+            via: Some(id),
+        });
     }
 
     fn field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
@@ -1765,19 +1965,6 @@ fn same_owner_states(left: &Scopes, right: &Scopes, types: &Types) -> bool {
         }
     }
     return true;
-}
-
-fn is_place(expression: &Expression) -> bool {
-    return matches!(
-        expression.kind,
-        ExpressionKind::Variable(_)
-            | ExpressionKind::Field { .. }
-            | ExpressionKind::Index { .. }
-            | ExpressionKind::Unary {
-                operator: UnaryOperator::Dereference,
-                ..
-            }
-    );
 }
 
 fn fields_overlap(left: &[String], right: &[String]) -> bool {

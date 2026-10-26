@@ -324,6 +324,21 @@ pub struct Expression {
     pub span: Span,
 }
 
+impl Expression {
+    pub fn is_place(&self) -> bool {
+        return matches!(
+            self.kind,
+            ExpressionKind::Variable(_)
+                | ExpressionKind::Field { .. }
+                | ExpressionKind::Index { .. }
+                | ExpressionKind::Unary {
+                    operator: UnaryOperator::Dereference,
+                    ..
+                }
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     EnumValue {

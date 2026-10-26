@@ -157,3 +157,121 @@ fn unevaluated_size_queries_allow_raw_pointer_types_without_accessing_memory() {
         "",
     );
 }
+
+#[test]
+fn pointer_arithmetic_indexing_and_compound_steps_follow_c_element_sizes() {
+    run(
+        r#"
+        int main() {
+            int values[4] = { 10, 20, 30, 40 };
+            unsafe {
+                int* start = &values[0];
+                int* middle = start + 2;
+                print(*middle); print(middle[-1]);
+                print(middle - start);
+                print(*(1 + start));
+                middle -= 1; print(*middle);
+                middle += 2; print(*middle);
+                *(middle - 1) = 99;
+                (&values[0])[0] = 5;
+                print(start[0]); print(start[2]);
+                const int* view = start;
+                print(view[3]); print(middle - view);
+                int one = 1;
+                *(start + -(-one)) = 8;
+                print(start[1]);
+                *(start + (start != 0)) += 1;
+                print(start[1]);
+                *(start + sizeof(char)) = 11;
+                print(start[1]);
+            }
+            return 0;
+        }
+    "#,
+        "30\n20\n2\n20\n20\n40\n5\n99\n40\n3\n8\n9\n11\n",
+        "",
+    );
+}
+
+#[test]
+fn pointer_index_bases_and_indices_evaluate_once_in_assignment_order() {
+    run(
+        r#"
+        int mark(int n) { print(n); return n; }
+        int* base(int* p, int n) { print(n); return p; }
+        int main() {
+            int values[3] = { 0, 0, 0 };
+            unsafe {
+                int* p = &values[0];
+                base(p, 1)[mark(2)] = mark(3);
+                base(p, 1)[mark(2)] += mark(3);
+                print(p[2]);
+            }
+            return 0;
+        }
+    "#,
+        "3\n1\n2\n1\n2\n3\n6\n",
+        "",
+    );
+}
+
+#[test]
+fn pointer_offsets_reject_values_outside_ptrdiff_range() {
+    for operation in ["p[index]", "*(p + index)"] {
+        let source = format!(
+            "int main() {{ int n = 1; unsafe {{ int* p = &n; uint64_t index = 18446744073709551615; print({operation}); }} return 0; }}"
+        );
+        let output = common::tracked_run(&source);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("integer conversion out of range")
+        );
+    }
+    for source in [
+        "int main() { int* p = 0; print(p[0]); return 0; }",
+        "int main() { int* p = 0; int* q = p + 1; return 0; }",
+        "int main() { int* p = 0; p += 1; return 0; }",
+        "int main() { int* p = 0; print(p - p); return 0; }",
+        "int main() { unsafe { void* p = 0; print(p[0]); } return 0; }",
+        "int main() { unsafe { void* p = 0; void* q = p + 1; } return 0; }",
+        "int main() { unsafe { const int* p = 0; p[0] = 1; } return 0; }",
+        "int main() { unsafe { int* p = 0; char* q = 0; print(p - q); } return 0; }",
+        "int main() { unsafe { int* p = 0; p *= 2; } return 0; }",
+    ] {
+        assert!(crust::check(source).is_err(), "should reject {source}");
+    }
+}
+
+#[test]
+fn c_backed_buffer_has_checked_access_and_automatic_cleanup() {
+    run(
+        include_str!("../examples/int_buffer.cr"),
+        "10\n20\n30\n",
+        "drop:10\n",
+    );
+    let definitions = include_str!("../examples/int_buffer.cr")
+        .split("int main()")
+        .next()
+        .unwrap();
+    run(
+        &format!(
+            "{definitions} int main() {{ IntBuffer empty = IntBuffer::create(0); print(empty.count()); IntBuffer values = IntBuffer::create(2); {{ int^ first = values.at_mut(0); *first = 7; }} IntBuffer moved = move(values); print(*moved.at(1)); return 0; }}"
+        ),
+        "0\n0\n",
+        "drop:7\n",
+    );
+    let output = common::tracked_run(&format!(
+        "{definitions} int main() {{ IntBuffer values = IntBuffer::create(2); print(*values.at(2)); return 0; }}"
+    ));
+    assert!(
+        !output.status.success(),
+        "out-of-bounds access must terminate before reading memory"
+    );
+    for body in [
+        "IntBuffer values = IntBuffer::create(2); int^ view = values.at_mut(0); IntBuffer next = move(values);",
+        "IntBuffer values = IntBuffer::create(2); const int^ view = values.at(0); values = IntBuffer::create(3);",
+        "IntBuffer values = { .data = 0, .length = 3 };",
+    ] {
+        assert!(crust::check(&format!("{definitions} int main() {{ {body} return 0; }}")).is_err());
+    }
+}

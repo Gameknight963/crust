@@ -459,6 +459,10 @@ int main() {
 - Integer literal zero converts to a null pointer
 - `&place` creates a raw pointer inside an `unsafe` block
 - Raw pointer dereferencing, casts, and external C calls require `unsafe`
+- Raw pointer indexing, addition, subtraction, `+=`, and `-=` require `unsafe`
+- Pointer offsets count elements and must fit `ptrdiff_t`
+- Pointer subtraction requires matching object types and returns `ptrdiff_t`
+- Raw pointer indexing relies on the unsafe caller to keep access within the allocation
 - Pointers can be cast to other raw pointer types, booleans, or pointer-sized integers
 - Borrows can be explicitly cast to raw pointers inside `unsafe`
 - An implicit pointer conversion can add read-only permission or convert to a compatible `void*`
@@ -474,6 +478,8 @@ lifetimes. External declarations must match the linked C function's ABI.
 named or unnamed. Signatures use C values and raw pointers. Arrays cross the
 boundary by pointer. The [C owner example](../examples/c_owner.cr) uses `malloc`
 and `free` behind private fields, checked getters, and a destructor.
+The [integer buffer example](../examples/int_buffer.cr) adds checked allocation
+sizes, initialized elements, bounds-checked getters, and move-only cleanup.
 
 For a shared borrow of a raw pointer binding, use a typedef such as
 `typedef int* IntPointer;` followed by `const IntPointer^`.

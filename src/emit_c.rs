@@ -401,6 +401,21 @@ impl Emitter<'_> {
                 value,
             } => {
                 let target_type = self.place_type(target);
+                if matches!(target_type, Type::Pointer(_)) {
+                    let place = self.place(target);
+                    let address =
+                        self.temporary(target_type.borrowed(true).unwrap(), &format!("&({place})"));
+                    let old = self.temporary(target_type, &format!("*{address}"));
+                    let right = self.value_expression(value);
+                    let symbol = if *operator == BinaryOperator::Add {
+                        "+"
+                    } else {
+                        "-"
+                    };
+                    let result = self.temporary(target_type, &format!("{old} {symbol} {right}"));
+                    self.line(&format!("*{address} = {result};"));
+                    return;
+                }
                 let common = target_type
                     .integer()
                     .unwrap()
@@ -847,6 +862,21 @@ impl Emitter<'_> {
                     self.line("}");
                     return Some(result);
                 }
+                if (matches!(self.expression_type(left), Type::Pointer(_))
+                    || matches!(self.expression_type(right), Type::Pointer(_)))
+                    && matches!(operator, BinaryOperator::Add | BinaryOperator::Subtract)
+                {
+                    let right = self.value_expression(right);
+                    let symbol = if *operator == BinaryOperator::Add {
+                        "+"
+                    } else {
+                        "-"
+                    };
+                    return Some(self.temporary(
+                        self.expression_type(expression),
+                        &format!("{left_value} {symbol} {right}"),
+                    ));
+                }
                 let kind = if matches!(self.expression_type(left), Type::Pointer(_))
                     || matches!(self.expression_type(right), Type::Pointer(_))
                 {
@@ -878,6 +908,16 @@ impl Emitter<'_> {
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
                 let base_type = self.place_type(base);
+                if matches!(base_type, Type::Pointer(_)) {
+                    let value = if base.is_place() {
+                        self.place(base)
+                    } else {
+                        self.value_expression(base)
+                    };
+                    let address = self.temporary(base_type, &value);
+                    let index = self.value_expression(index);
+                    return format!("({address})[{index}]");
+                }
                 let Type::Array(id) = base_type else {
                     unreachable!()
                 };
@@ -909,16 +949,7 @@ impl Emitter<'_> {
                 operator: UnaryOperator::Dereference,
                 operand,
             } => {
-                let pointer = if matches!(
-                    operand.kind,
-                    ExpressionKind::Variable(_)
-                        | ExpressionKind::Field { .. }
-                        | ExpressionKind::Index { .. }
-                        | ExpressionKind::Unary {
-                            operator: UnaryOperator::Dereference,
-                            ..
-                        }
-                ) {
+                let pointer = if operand.is_place() {
                     self.place(operand)
                 } else {
                     self.value_expression(operand)
@@ -932,10 +963,11 @@ impl Emitter<'_> {
     fn place_type(&self, expression: &Expression) -> Type {
         match &expression.kind {
             ExpressionKind::Index { base, .. } => {
-                let Type::Array(id) = self.place_type(base) else {
-                    unreachable!()
+                return match self.place_type(base) {
+                    Type::Array(id) => self.types.arrays[id].element,
+                    Type::Pointer(id) => self.types.pointers[id].pointee,
+                    _ => unreachable!(),
                 };
-                return self.types.arrays[id].element;
             }
             ExpressionKind::Field { base, name } => {
                 return self
@@ -964,6 +996,14 @@ impl Emitter<'_> {
     fn place_mutable(&self, expression: &Expression) -> bool {
         match &expression.kind {
             ExpressionKind::Variable(name) => return !self.local(name).ty.is_borrow(),
+            ExpressionKind::Index { base, .. }
+                if matches!(self.place_type(base), Type::Pointer(_)) =>
+            {
+                let Type::Pointer(id) = self.place_type(base) else {
+                    unreachable!()
+                };
+                return self.types.pointers[id].mutable;
+            }
             ExpressionKind::Field { base, .. } | ExpressionKind::Index { base, .. } => {
                 return self.place_mutable(base);
             }
