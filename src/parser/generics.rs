@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) struct Template {
+    pub(super) is_union: bool,
     start: usize,
     body: usize,
     parameters: Vec<String>,
@@ -204,7 +205,7 @@ impl Parser {
                 continue;
             }
             let is_struct = depth == 0
-                && self.tokens[position].kind == Token::Struct
+                && matches!(self.tokens[position].kind, Token::Struct | Token::Union)
                 && self
                     .tokens
                     .get(position + 2)
@@ -269,6 +270,7 @@ impl Parser {
                     }
                 }
                 let template = Template {
+                    is_union: is_struct && self.tokens[position].kind == Token::Union,
                     start,
                     body,
                     constraints: names
@@ -449,6 +451,9 @@ impl Parser {
         }
         let id = self.struct_names.len();
         self.struct_names.push((display_name, span));
+        if template.is_union {
+            self.union_tags.insert(id);
+        }
         self.generics.struct_instances.insert(key, id);
         let context = self.enter_template(&template, arguments.clone(), template.body);
         let definition = self.struct_body(id, name, template.span);
@@ -507,6 +512,7 @@ impl Parser {
             };
             let interface = self.generics.interfaces[name].clone();
             let signature_template = Template {
+                is_union: false,
                 start: interface.body,
                 body: interface.body,
                 parameters: vec!["Self".to_owned()],

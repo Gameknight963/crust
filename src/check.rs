@@ -1923,6 +1923,16 @@ impl FunctionChecker<'_> {
             ));
         }
         let declared = self.types.structs[id].fields.clone();
+        let is_union = self.types.structs[id].is_union;
+        if is_union {
+            self.require_unsafe(expression.span, "initializing a union")?;
+            if fields.len() != 1 {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "a union initializer selects exactly one field",
+                ));
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for field in fields {
             if !seen.insert(field.name.as_str()) {
@@ -1935,7 +1945,7 @@ impl FunctionChecker<'_> {
             self.require_type(&field.value, ty)?;
         }
         for field in &declared {
-            if !seen.contains(field.name.as_str()) {
+            if !is_union && !seen.contains(field.name.as_str()) {
                 return Err(Diagnostic::new(
                     expression.span,
                     format!("missing initializer for field '{}'", field.name),
@@ -1996,8 +2006,14 @@ impl FunctionChecker<'_> {
             ExpressionKind::Field { base, name } => {
                 let place = self.checked_place(base)?;
                 let ty = self.field_type(place.ty, name, expression.span)?;
+                let projection = if matches!(place.ty, Type::Struct(id) if self.types.structs[id].is_union)
+                {
+                    "*"
+                } else {
+                    name
+                };
                 let mut fields = place.fields;
-                fields.push(name.clone());
+                fields.push(projection.to_owned());
                 return Ok(Place {
                     ty,
                     fields,
@@ -2084,6 +2100,9 @@ impl FunctionChecker<'_> {
 
     fn field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
         let field_type = self.types.field(ty, name, span)?;
+        if matches!(ty, Type::Struct(id) if self.types.structs[id].is_union) {
+            self.require_unsafe(span, "accessing a union field")?;
+        }
         if let Type::Struct(id) = ty
             && self.current_struct != Some(id)
             && self.types.structs[id]
@@ -2327,5 +2346,13 @@ fn same_owner_states(left: &Scopes, right: &Scopes, types: &Types) -> bool {
 }
 
 fn fields_overlap(left: &[String], right: &[String]) -> bool {
-    return left.iter().zip(right).all(|(a, b)| a == b);
+    for (a, b) in left.iter().zip(right) {
+        if a == "*" || b == "*" {
+            return true;
+        }
+        if a != b {
+            return false;
+        }
+    }
+    return true;
 }

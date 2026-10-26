@@ -9,6 +9,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         tokens,
         position: 0,
         struct_names: Vec::new(),
+        union_tags: HashSet::new(),
         current_struct: None,
         methods: Vec::new(),
         aliases: HashMap::new(),
@@ -49,17 +50,17 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
                 .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Colon))
         {
             enums.push(parser.enum_definition()?);
-        } else if parser.at(&Token::Struct)
+        } else if matches!(parser.current().kind, Token::Struct | Token::Union)
             && parser
                 .tokens
                 .get(parser.position + 2)
                 .is_some_and(|token| token.kind == Token::Semicolon)
         {
-            parser.advance();
+            let is_union = parser.advance().kind == Token::Union;
             let (name, span) = parser.identifier()?;
-            parser.struct_id(name, span);
+            parser.tagged_struct_id(name, span, is_union)?;
             parser.advance();
-        } else if parser.at(&Token::Struct)
+        } else if matches!(parser.current().kind, Token::Struct | Token::Union)
             && parser
                 .tokens
                 .get(parser.position + 2)
@@ -76,6 +77,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
+        union_tags: parser.union_tags,
         interface_checks: parser.generics.interface_checks,
         function_types: parser.function_types,
         pointers: parser.pointers,
@@ -99,6 +101,7 @@ struct Parser {
     tokens: Vec<SpannedToken>,
     position: usize,
     struct_names: Vec<(String, Span)>,
+    union_tags: HashSet<usize>,
     current_struct: Option<usize>,
     methods: Vec<Function>,
     aliases: HashMap<String, Alias>,
@@ -142,7 +145,7 @@ impl Parser {
                 self.enum_id(name, span);
             }
             if depth == 0
-                && token.kind == Token::Struct
+                && matches!(token.kind, Token::Struct | Token::Union)
                 && self
                     .tokens
                     .get(position + 2)
@@ -155,7 +158,7 @@ impl Parser {
                 if name == "Self" || name == "this" {
                     return Err(Diagnostic::new(span, "Self and this are reserved names"));
                 }
-                self.struct_id(name, span);
+                self.tagged_struct_id(name, span, token.kind == Token::Union)?;
             }
             if depth == 0 && token.kind == Token::Typedef {
                 let start = position + 1;
@@ -455,6 +458,7 @@ impl Parser {
             | Token::Void
             | Token::BoxInt
             | Token::Struct
+            | Token::Union
             | Token::Enum
             | Token::Const => true,
             Token::Identifier(name) => {
@@ -521,6 +525,34 @@ impl Parser {
         let id = self.struct_names.len();
         self.struct_names.push((name, span));
         return id;
+    }
+
+    fn tagged_struct_id(
+        &mut self,
+        name: String,
+        span: Span,
+        is_union: bool,
+    ) -> Result<usize, Diagnostic> {
+        if self.enum_names.iter().any(|entry| entry.0 == name) {
+            return Err(Diagnostic::new(
+                span,
+                format!("type tag '{name}' is already used by an enum"),
+            ));
+        }
+        if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
+            if self.union_tags.contains(&id) != is_union {
+                return Err(Diagnostic::new(
+                    span,
+                    format!("tag '{name}' has a different struct or union kind"),
+                ));
+            }
+            return Ok(id);
+        }
+        let id = self.struct_id(name, span);
+        if is_union {
+            self.union_tags.insert(id);
+        }
+        return Ok(id);
     }
 
     fn enum_id(&mut self, name: String, span: Span) -> usize {
@@ -596,9 +628,10 @@ impl Parser {
     }
 
     fn struct_definition(&mut self) -> Result<StructDefinition, Diagnostic> {
-        let start = self.advance().span;
+        let token = self.advance();
+        let start = token.span;
         let (name, span) = self.identifier()?;
-        let id = self.struct_id(name.clone(), span);
+        let id = self.tagged_struct_id(name.clone(), span, token.kind == Token::Union)?;
         return self.struct_body(id, &name, start);
     }
 
@@ -862,13 +895,19 @@ impl Parser {
             Token::Bool => Type::Bool,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
-            Token::Struct => {
+            Token::Struct | Token::Union => {
                 let (name, span) = self.identifier()?;
                 if self.generics.structs.contains_key(&name) {
+                    if self.generics.structs[&name].is_union != (token.kind == Token::Union) {
+                        return Err(Diagnostic::new(
+                            span,
+                            "generic tag has a different struct or union kind",
+                        ));
+                    }
                     let arguments = self.type_arguments()?;
                     self.instantiate_struct(&name, arguments, span)?
                 } else {
-                    Type::Struct(self.struct_id(name, span))
+                    Type::Struct(self.tagged_struct_id(name, span, token.kind == Token::Union)?)
                 }
             }
             Token::Enum => {
@@ -1099,6 +1138,7 @@ impl Parser {
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Struct)
+            || self.at(&Token::Union)
             || self.at(&Token::Enum)
             || self.local_type_name()
         {

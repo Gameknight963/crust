@@ -42,6 +42,7 @@ to the original path and byte range.
 - Enums lower to distinct generated typedef names with their declared integer representation
 - Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
 - Struct values use generated aliases, and opaque aliases preserve their native C tags
+- Union types share the aggregate type registry and generate native C unions, including opaque union tags
 - External declarations and calls retain their C symbol names
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
@@ -91,6 +92,7 @@ to the original path and byte range.
 - `init` stores an evaluated value into raw storage without dropping previous contents, and `destroy` calls the existing cleanup operation without deallocating the storage
 - `move` transfers owning locals and copies ordinary values, allowing the same generic body to accept either
 - Unsafe moves from raw pointer dereferences or indices capture a whole value without destroying its source, leaving initialization bookkeeping to the container
+- Union field projections include a wildcard path component, making overlapping storage remain overlapping through nested fields and reborrows
 
 ## Diagnostics
 

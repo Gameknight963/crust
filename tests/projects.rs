@@ -495,6 +495,49 @@ fn native_variadic_functions_receive_promoted_wide_and_function_pointer_argument
 }
 
 #[test]
+fn native_unions_match_value_pointer_layout_and_opaque_tag_abis() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nsources=['native.c']\n");
+    fixture.write("native.c", r#"
+        #include <stdint.h>
+        #include <stddef.h>
+        union Native { int32_t narrow; int64_t wide; uint8_t bytes[8]; };
+        union Native native_make(int64_t value) { union Native result = { .wide = value }; return result; }
+        int64_t native_read(union Native value) { return value.wide; }
+        int64_t native_pointer(union Native *value) { return value->wide; }
+        size_t native_size(void) { return sizeof(union Native); }
+        size_t native_align(void) { return _Alignof(union Native); }
+        union Opaque { uint64_t value; };
+        static union Opaque opaque = { .value = 13 };
+        union Opaque *opaque_get(void) { return &opaque; }
+        uint64_t opaque_read(union Opaque *value) { return value->value; }
+    "#);
+    fixture.write("main.cr", r#"
+        union Native { int narrow; int64_t wide; uint8_t bytes[8]; };
+        union Opaque;
+        extern Native native_make(int64_t value);
+        extern int64_t native_read(Native value);
+        extern int64_t native_pointer(Native* value);
+        extern size_t native_size();
+        extern size_t native_align();
+        extern union Opaque* opaque_get();
+        extern uint64_t opaque_read(union Opaque* value);
+        int main() {
+            unsafe {
+                Native value = { .wide = 2147483648 }; print(native_read(value)); print(native_pointer(&value));
+                Native next = native_make(42); print(next.wide);
+                print(sizeof(Native) == native_size()); print(alignof(Native) == native_align());
+                print(opaque_read(opaque_get()));
+            }
+            return 0;
+        }
+    "#);
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "2147483648\n2147483648\n42\n1\n1\n13\n");
+}
+
+#[test]
 fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     let fixture = Fixture::new();
     for arguments in [

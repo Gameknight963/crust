@@ -695,6 +695,39 @@ struct Resource {
 - Explicit destructor calls are rejected
 - `drop` is an ordinary method name
 
+## Unions
+
+```c
+union Value {
+    int integer;
+    uint64_t wide;
+};
+
+int main() {
+    unsafe {
+        Value value = { .integer = 42 };
+        print(value.integer);
+        value.wide = 7;
+        print(value.wide);
+    }
+    return 0;
+}
+```
+
+- Union fields share storage and use the native C union layout
+- Initializers select exactly one field
+- Initializing a union and accessing, assigning, or borrowing a field require an unsafe context
+- The caller ensures the selected field contains a valid value of its type
+- The borrow checker treats union fields and their nested fields as overlapping
+- Fields contain copyable values or raw pointers
+- Whole union values copy normally, and a custom destructor makes the union move-only
+- Unions support typedefs, arrays, generics, methods, raw pointers, and C-compatible calls
+- `union Name;` declares an opaque C union, and `struct` and `union` tags retain their distinct kinds
+
+`sizeof` and `alignof` use the union's native layout. A wrapper can keep its union
+private and expose safe methods that track the selected field. See
+[the union example](../examples/unions.cr).
+
 ## Variadic C calls
 
 External declarations and function pointer typedefs can end their parameter list
@@ -721,7 +754,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

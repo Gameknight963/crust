@@ -62,7 +62,8 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         } else {
             info.name.clone()
         };
-        emitter.line(&format!("typedef struct {tag} crust_type_{id};"));
+        let kind = if info.is_union { "union" } else { "struct" };
+        emitter.line(&format!("typedef {kind} {tag} crust_type_{id};"));
     }
     for id in 0..checked.types.arrays.len() {
         emitter.line(&format!("struct crust_array_{id};"));
@@ -317,7 +318,8 @@ impl Emitter<'_> {
             if !info.complete {
                 continue;
             }
-            self.line(&format!("struct crust_struct_{id} {{"));
+            let kind = if info.is_union { "union" } else { "struct" };
+            self.line(&format!("{kind} crust_struct_{id} {{"));
             self.indent += 1;
             for field in &info.fields {
                 self.line(&format!("{} crust_field_{};", c_type(field.ty), field.name));
@@ -352,7 +354,7 @@ impl Emitter<'_> {
             let info = &self.types.structs[*id];
             if info.owns {
                 self.line(&format!(
-                    "static inline void crust_drop_struct_{id}(struct crust_struct_{id} *value) {{"
+                    "static inline void crust_drop_struct_{id}(crust_type_{id} *value) {{"
                 ));
                 self.indent += 1;
                 if info.has_destructor {

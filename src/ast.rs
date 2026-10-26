@@ -181,6 +181,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub union_tags: std::collections::HashSet<usize>,
     pub interface_checks: Vec<InterfaceCheck>,
     pub function_types: Vec<FunctionType>,
     pub pointers: Vec<PointerType>,

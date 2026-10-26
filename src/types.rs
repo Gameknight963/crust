@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
+    pub is_union: bool,
     pub complete: bool,
     pub name: String,
     pub fields: Vec<Field>,
@@ -85,6 +86,7 @@ impl Types {
         for (id, (name, _)) in program.struct_names.iter().enumerate() {
             let Some(definition) = definitions[id] else {
                 structs.push(StructInfo {
+                    is_union: program.union_tags.contains(&id),
                     name: name.clone(),
                     complete: false,
                     fields: Vec::new(),
@@ -96,7 +98,11 @@ impl Types {
             if definition.fields.is_empty() {
                 return Err(Diagnostic::new(
                     definition.span,
-                    "a struct needs at least one field",
+                    if program.union_tags.contains(&id) {
+                        "a union needs at least one field"
+                    } else {
+                        "a struct needs at least one field"
+                    },
                 ));
             }
             let mut names = HashSet::new();
@@ -118,6 +124,7 @@ impl Types {
                 }
             }
             structs.push(StructInfo {
+                is_union: program.union_tags.contains(&id),
                 complete: true,
                 name: name.clone(),
                 fields: definition.fields.clone(),
@@ -209,7 +216,14 @@ impl Types {
                     "struct fields require a complete object type",
                 ));
             }
-            owns |= self.visit(field.ty, states, array_states, field.span)?;
+            let field_owns = self.visit(field.ty, states, array_states, field.span)?;
+            if self.structs[id].is_union && field_owns {
+                return Err(Diagnostic::new(
+                    field.span,
+                    "union fields require copyable values or raw pointers",
+                ));
+            }
+            owns |= field_owns;
         }
         self.structs[id].owns = owns;
         states[id] = 2;
@@ -360,7 +374,15 @@ impl Types {
             Type::Bool => String::from("bool"),
             Type::Void => String::from("void"),
             Type::BoxInt => String::from("BoxInt"),
-            Type::Struct(id) => format!("struct {}", self.structs[id].name),
+            Type::Struct(id) => format!(
+                "{} {}",
+                if self.structs[id].is_union {
+                    "union"
+                } else {
+                    "struct"
+                },
+                self.structs[id].name
+            ),
             Type::Enum(id) => format!("enum {}", self.enum_names[id]),
             Type::Pointer(id) => format!(
                 "{}{}*",
