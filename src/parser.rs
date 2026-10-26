@@ -3,6 +3,7 @@ use crate::diagnostic::{Diagnostic, Span};
 use crate::lexer::{SpannedToken, Token};
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 mod calling_conventions;
+mod constants;
 mod generics;
 mod integers;
 mod symbols;
@@ -29,9 +30,15 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         source_declarations: Vec::new(),
         type_references: Vec::new(),
         type_annotations: Vec::new(),
+        enum_constants: HashMap::new(),
+        enum_representations: HashMap::new(),
+        enum_sources: HashMap::new(),
+        enumerator_owners: HashMap::new(),
+        evaluating_enums: HashSet::new(),
     };
     parser.collect_templates()?;
     parser.collect_type_names()?;
+    parser.collect_enum_sources();
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut enums = Vec::new();
@@ -102,6 +109,11 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    enum_constants: HashMap<(usize, String), constants::EnumConstant>,
+    enum_representations: HashMap<usize, IntType>,
+    enum_sources: HashMap<usize, usize>,
+    enumerator_owners: HashMap<String, usize>,
+    evaluating_enums: HashSet<usize>,
     source_declarations: Vec<SourceDeclaration>,
     type_references: Vec<TypeReference>,
     type_annotations: Vec<(Span, Type)>,
@@ -729,9 +741,14 @@ impl Parser {
     }
 
     fn enum_definition(&mut self) -> Result<EnumDefinition, Diagnostic> {
+        return self.enum_definition_until(None);
+    }
+
+    fn enum_definition_until(&mut self, stop: Option<&str>) -> Result<EnumDefinition, Diagnostic> {
         let start = self.advance().span;
         let (name, span) = self.identifier()?;
         let id = self.enum_id(name, span);
+        self.evaluating_enums.insert(id);
         let underlying = if self.consume(&Token::Colon) {
             let ty = self.type_name()?;
             let Type::Integer(kind) = ty else {
@@ -745,27 +762,14 @@ impl Parser {
             IntType::I32
         };
         let body_start = self.expect(Token::LeftBrace, "expected '{' before enum values")?;
+        self.enum_representations.insert(id, underlying);
         let mut variants = Vec::new();
         let mut next = 0i128;
         while !self.at(&Token::RightBrace) {
             let (name, span) = self.identifier()?;
             let value = if self.consume(&Token::Equal) {
-                let negative = self.consume(&Token::Minus);
-                if !negative {
-                    self.consume(&Token::Plus);
-                }
-                let token = self.advance();
-                let Token::IntegerLiteral(value) = token.kind else {
-                    return Err(Diagnostic::new(
-                        token.span,
-                        "an enum value must be an integer literal",
-                    ));
-                };
-                if negative {
-                    -i128::from(value)
-                } else {
-                    i128::from(value)
-                }
+                let expression = self.expression(1)?;
+                self.integer_constant(&expression, true)?.value
             } else {
                 next
             };
@@ -775,14 +779,31 @@ impl Parser {
                     "enum value does not fit its underlying type",
                 ));
             }
+            self.enum_constants
+                .entry((id, name.clone()))
+                .or_insert(constants::EnumConstant {
+                    value,
+                    kind: underlying,
+                    span,
+                });
             variants.push(EnumVariant { name, value, span });
             next = value + 1;
+            if stop.is_some_and(|name| variants.last().unwrap().name == name) {
+                break;
+            }
             if !self.consume(&Token::Comma) {
                 break;
             }
         }
-        self.expect(Token::RightBrace, "expected '}' after enum values")?;
-        let end = self.expect(Token::Semicolon, "expected ';' after enum definition")?;
+        let end = if stop
+            .is_some_and(|name| variants.last().is_some_and(|variant| variant.name == name))
+        {
+            self.tokens[self.position - 1].span
+        } else {
+            self.expect(Token::RightBrace, "expected '}' after enum values")?;
+            self.expect(Token::Semicolon, "expected ';' after enum definition")?
+        };
+        self.evaluating_enums.remove(&id);
         return Ok(EnumDefinition {
             name_span: span,
             header_span: Span {

@@ -272,7 +272,9 @@ int main() {
 - Each enum has a distinct type and supports locals, fields, arrays, parameters, returns, and borrows
 - The underlying integer type defaults to `int` and can be specified after `:`
 - The first value defaults to zero, and subsequent values increment by one
-- Explicit values use integer literals with an optional sign
+- Explicit values use integer constant expressions with arithmetic, shifts, bitwise and logical operators, comparisons, and integer, boolean, or enum casts
+- Initializers can use earlier members of the same enum and values from other enum declarations, including imported files
+- Constant arithmetic uses the ordinary integer promotion, conversion, overflow, and short-circuit rules
 - Multiple names can have the same value
 - Values fit the underlying type, including automatically incremented values
 - Values can be named directly or through the enum type or a typedef, such as `Status::Ready`
