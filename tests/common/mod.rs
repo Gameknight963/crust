@@ -19,6 +19,12 @@ pub fn tracked_run_sizes(source: &str) -> Output {
 }
 
 fn run_with_tracking(source: &str, sizes: bool) -> Output {
+    let generated = crust::compile(source).unwrap();
+    return tracked_generated_c(&generated, sizes);
+}
+
+#[allow(dead_code)]
+pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ownership-tests");
@@ -26,7 +32,6 @@ fn run_with_tracking(source: &str, sizes: bool) -> Output {
     let id = NEXT_CASE.fetch_add(1, Ordering::Relaxed);
     let path = directory.join(format!("case_{}_{}.c", std::process::id(), id));
     let executable = path.with_extension(std::env::consts::EXE_EXTENSION);
-    let generated = crust::compile(source).unwrap();
     let prefix = r#"
         #include <stdlib.h>
         #include <stdio.h>

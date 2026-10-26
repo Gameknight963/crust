@@ -1,6 +1,6 @@
 # Compiler
 
-The compiler processes each target's entry file through tokenization, parsing,
+The compiler processes each target's entry file and imported sources through tokenization, parsing,
 ownership checking, C generation, and native compilation.
 
 ## Source files
@@ -20,9 +20,21 @@ ownership checking, C generation, and native compilation.
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
+| `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
+
+## Source loading
+
+`source::SourceSet` loads relative imports once and assigns each file a distinct
+byte-offset range. Tokens retain their file-local lines and columns. File-end
+markers keep declarations within their source file, and frontend errors map back
+to the original path and byte range.
+
+`SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
+`compile` methods process the full import graph. The string-based `check` and
+`compile` functions process the supplied source text directly.
 
 ## Native compilation
 

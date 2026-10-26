@@ -28,7 +28,14 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
 
-    while !parser.at(&Token::EndOfFile) {
+    loop {
+        if parser.at(&Token::EndOfFile) {
+            if parser.position + 1 == parser.tokens.len() {
+                break;
+            }
+            parser.position += 1;
+            continue;
+        }
         if parser.skip_template() {
             continue;
         }
@@ -631,6 +638,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    requires_unsafe: false,
                     external: false,
                     name: destructor_name(id),
                     return_type: Type::Void,
@@ -649,7 +657,9 @@ impl Parser {
                 continue;
             }
             let private = self.consume(&Token::Private);
+            let unsafe_prefix = self.consume(&Token::Unsafe);
             let is_static = self.consume(&Token::Static);
+            let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix;
             let ty = self.type_name()?;
             let (name, span) = self.identifier()?;
             if self.at(&Token::LeftParen) {
@@ -661,12 +671,19 @@ impl Parser {
                 } else {
                     method_name(id, &name)
                 };
-                let method = self.function_body(ty, key, span, Some(id), is_static, false)?;
+                let mut method = self.function_body(ty, key, span, Some(id), is_static, false)?;
+                method.requires_unsafe = requires_unsafe;
                 self.methods.push(method);
                 continue;
             }
             if is_static {
                 return Err(Diagnostic::new(span, "static currently applies to methods"));
+            }
+            if requires_unsafe {
+                return Err(Diagnostic::new(
+                    span,
+                    "unsafe applies to functions and methods",
+                ));
             }
             let ty = self.array_suffix(ty)?;
             self.expect(Token::Semicolon, "expected ';' after the field")?;
@@ -690,7 +707,9 @@ impl Parser {
 
     fn function(&mut self) -> Result<Function, Diagnostic> {
         let start = self.current().span;
+        let unsafe_prefix = self.consume(&Token::Unsafe);
         let external = self.consume(&Token::Extern);
+        let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix || external;
         let return_type = self.type_name()?;
         let (mut name, _) = self.identifier()?;
         if self.at(&Token::Less) {
@@ -700,7 +719,9 @@ impl Parser {
                     Diagnostic::new(start, "generic function needs type arguments")
                 })?;
         }
-        return self.function_body(return_type, name, start, None, false, external);
+        let mut function = self.function_body(return_type, name, start, None, false, external)?;
+        function.requires_unsafe = requires_unsafe;
+        return Ok(function);
     }
 
     fn function_body(
@@ -800,6 +821,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            requires_unsafe: external,
             external,
             name,
             return_type,

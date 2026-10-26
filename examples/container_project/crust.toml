@@ -1,0 +1,7 @@
+[project]
+name = "container"
+
+[[targets]]
+name = "container"
+kind = "executable"
+entry = "src/main.cr"

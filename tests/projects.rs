@@ -380,6 +380,57 @@ fn project_diagnostics_keep_the_source_filename_and_location() {
 }
 
 #[test]
+fn project_imports_build_and_report_errors_in_dependencies() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='src/main.cr'");
+    fixture.write(
+        "src/main.cr",
+        "import \"helper.cr\"; int main() { print(answer()); return 0; }",
+    );
+    fixture.write("src/helper.cr", "int answer() { return 42; }");
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    fixture.write("src/helper.cr", "int answer() {\n    return missing;\n}");
+    let output = fixture.invoke(&["check"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("helper.cr:2:12"));
+}
+
+#[test]
+fn generated_outputs_preserve_imported_sources_in_selected_and_other_targets() {
+    let fixture = Fixture::new();
+    let source = "int helper() { return 0; }";
+    fixture.write("target/crust/main.c", source);
+    fixture.write(
+        "main.cr",
+        "import \"target/crust/main.c\"; int main() { return helper(); }",
+    );
+    let output = fixture.invoke(&["build", "main.cr"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("overwrite an input"));
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join("target/crust/main.c")).unwrap(),
+        source
+    );
+
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write(
+        "other.cr",
+        "import \"target/crust/first/first.c\"; int main() { return helper(); }",
+    );
+    fixture.write("target/crust/first/first.c", source);
+    fixture.manifest("[[targets]]\nname='first'\nkind='executable'\nentry='main.cr'\n[[targets]]\nname='other'\nkind='executable'\nentry='other.cr'");
+    let output = fixture.invoke(&["build", "--target", "first"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("overwrite an input"));
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join("target/crust/first/first.c")).unwrap(),
+        source
+    );
+}
+
+#[test]
 fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     let fixture = Fixture::new();
     for arguments in [

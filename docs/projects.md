@@ -12,7 +12,8 @@ kind = "executable"
 entry = "src/main.cr"
 ```
 
-Entry paths are relative to the manifest. Each target compiles its entry file.
+Entry paths are relative to the manifest. Each target compiles its entry file
+and the files reached through imports.
 Target names start with a letter or digit and use letters, digits, `_`, and `-`.
 Names are unique ignoring ASCII case, giving projects consistent names across
 Windows and Unix filesystems.
@@ -36,10 +37,28 @@ crust build --project path/to/crust.toml
 - Each executable's output goes to `<project>/target/crust/<target>/`
 - Generated files are checked against the manifest and all entry files before writing
 - Native source files and explicit link inputs are also protected from output collisions
+- Imported source files from every target are protected before build output is written
 
 The loader validates field names and TOML types. Configuration errors include
-the manifest filename. Source diagnostics include the entry filename and source
-location.
+the manifest filename. Source diagnostics include the original filename and
+source location, including errors in imported files.
+
+## Source imports
+
+```c
+import "buffer.cr";
+```
+
+Paths are relative to the importing file. Imported declarations participate in
+the target's global namespace, including generic types, functions, and interfaces.
+The compiler loads repeated imports once and permits cycles with forward references.
+
+The [container project](../examples/container_project/) puts a generic buffer
+and its caller in separate files. Run it with:
+
+```powershell
+cargo run -- run --project examples/container_project
+```
 
 ## Native C code
 
@@ -86,7 +105,7 @@ cargo run -- run --project examples/native_project
 
 ## Planned additions
 
-- Modules and imports to collect source dependencies from the entry file
+- Module namespaces and visibility
 - Path dependencies between Crust projects
 - Static and shared library targets
 - Build profiles and platform-specific settings

@@ -135,7 +135,7 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
 fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> {
     let single = matches!(options.mode, Mode::Run | Mode::EmitC | Mode::Tokens);
     let targets = project.select(options.target.as_deref(), single)?;
-    let protected: Vec<_> = project
+    let mut protected: Vec<_> = project
         .targets
         .iter()
         .flat_map(|target| {
@@ -145,6 +145,13 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
         })
         .chain(std::iter::once(project.manifest.clone()))
         .collect();
+    if matches!(options.mode, Mode::Build | Mode::Run) {
+        for target in &project.targets {
+            let sources =
+                crust::source::SourceSet::load(&target.entry).map_err(|error| error.to_string())?;
+            protected.extend(sources.files().iter().map(|file| file.path.clone()));
+        }
+    }
     for target in targets {
         let output = project
             .directory
@@ -173,10 +180,10 @@ fn process_source(
     protected: &[PathBuf],
     native: &crust::native::Options,
 ) -> Result<ExitCode, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|error| format!("{}: could not read file: {error}", path.display()))?;
     match mode {
         Mode::Tokens => {
+            let source = fs::read_to_string(path)
+                .map_err(|error| format!("{}: could not read file: {error}", path.display()))?;
             let tokens = crust::lexer::tokenize(&source)
                 .map_err(|error| format!("{}:{error}", path.display()))?;
             for token in tokens {
@@ -191,19 +198,26 @@ fn process_source(
             return Ok(ExitCode::SUCCESS);
         }
         Mode::Check => {
-            crust::check(&source).map_err(|error| format!("{}:{error}", path.display()))?;
+            let sources =
+                crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
+            sources.check().map_err(|error| error.to_string())?;
             println!("{}: OK", path.display());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
     }
-    let generated =
-        crust::compile(&source).map_err(|error| format!("{}:{error}", path.display()))?;
+    let sources = crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
+    let generated = sources.compile().map_err(|error| error.to_string())?;
     if mode == Mode::EmitC {
         print!("{generated}");
         return Ok(ExitCode::SUCCESS);
     }
-    let executable = build(&generated, output, protected, native)?;
+    let protected: Vec<_> = protected
+        .iter()
+        .cloned()
+        .chain(sources.files().iter().map(|file| file.path.clone()))
+        .collect();
+    let executable = build(&generated, output, &protected, native)?;
     if mode == Mode::Build {
         println!("Built {}", executable.display());
         return Ok(ExitCode::SUCCESS);

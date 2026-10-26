@@ -13,8 +13,10 @@ Put `target/debug/crust-lsp` on `PATH`, or configure the editor with its absolut
 path. On Windows the executable is `crust-lsp.exe`.
 
 The server starts with `crust-lsp --stdio` and uses full-document synchronization.
-It checks each open document with the compiler frontend, publishes its first
-diagnostic, and clears diagnostics when the document is fixed or closed.
+It checks entry files and their imports with the compiler frontend, using unsaved
+text for open dependencies. In a project, opening a dependency also analyzes its
+entry target. Diagnostics appear on the source file containing the error and
+update when a dependency changes or an import is removed.
 Positions use UTF-16 code units. Document versions prevent stale updates from
 replacing newer text.
 
@@ -58,5 +60,5 @@ to stderr.
 ## Further work
 
 - Shared symbols and type information for hover, completion, and navigation
-- Project-wide analysis as modules and imports are added
+- Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

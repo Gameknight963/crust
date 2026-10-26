@@ -306,7 +306,9 @@ impl Parser {
                         declaration_start = position + 1;
                     }
                 }
-                Token::Semicolon if depth == 0 => declaration_start = position + 1,
+                Token::Semicolon | Token::EndOfFile if depth == 0 => {
+                    declaration_start = position + 1
+                }
                 _ => {}
             }
             position += 1;
@@ -534,7 +536,9 @@ impl Parser {
         let mut names = HashSet::new();
         while !self.at(&Token::RightBrace) {
             let start = self.current().span;
+            let unsafe_prefix = self.consume(&Token::Unsafe);
             let is_static = self.consume(&Token::Static) || all_static;
+            let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix;
             let result = self.type_name()?;
             let (name, span) = self.identifier()?;
             if !names.insert(name.clone()) {
@@ -548,7 +552,8 @@ impl Parser {
             } else {
                 method_name(id, &name)
             };
-            let function = self.function_body(result, key, start, Some(id), is_static, true)?;
+            let mut function = self.function_body(result, key, start, Some(id), is_static, true)?;
+            function.requires_unsafe = requires_unsafe;
             let mut parameters = HashSet::new();
             for parameter in &function.parameters {
                 if !parameters.insert(&parameter.name) || (is_static && parameter.name == "this") {

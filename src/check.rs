@@ -23,6 +23,7 @@ pub(crate) struct FunctionAnalysis {
 
 #[derive(Clone)]
 struct Signature {
+    requires_unsafe: bool,
     external: bool,
     return_type: Type,
     parameters: Vec<Type>,
@@ -82,6 +83,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             name.to_owned(),
             Signature {
+                requires_unsafe: false,
                 external: false,
                 return_type,
                 parameters,
@@ -186,6 +188,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         signatures.insert(
             function.name.clone(),
             Signature {
+                requires_unsafe: function.requires_unsafe,
                 external: function.external,
                 return_type: function.return_type,
                 return_borrow,
@@ -206,7 +209,9 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
                 .map(|parameter| parameter.ty)
                 .collect();
             let satisfied = signatures.get(&requirement.name).is_some_and(|signature| {
-                signature.return_type == requirement.return_type && signature.parameters == expected
+                signature.return_type == requirement.return_type
+                    && signature.parameters == expected
+                    && (!signature.requires_unsafe || requirement.requires_unsafe)
             });
             if !satisfied {
                 return Err(Diagnostic::new(
@@ -226,6 +231,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         Some(signature)
             if signature.return_type == Type::Integer(IntType::I32)
                 && !signature.external
+                && !signature.requires_unsafe
                 && signature.parameters.is_empty() => {}
         Some(_) => {
             let function = program
@@ -273,7 +279,7 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             conversions: &mut analysis.conversions,
             constants: &mut analysis.constants,
             unevaluated: false,
-            unsafe_depth: 0,
+            unsafe_depth: usize::from(function.requires_unsafe),
             current_struct: if let Some(method) = function
                 .name
                 .strip_prefix('@')
@@ -1028,6 +1034,8 @@ impl FunctionChecker<'_> {
 
                 if signature.external {
                     self.require_unsafe(expression.span, "calling an external C function")?;
+                } else if signature.requires_unsafe {
+                    self.require_unsafe(expression.span, "calling an unsafe function")?;
                 }
 
                 if name == "move" {

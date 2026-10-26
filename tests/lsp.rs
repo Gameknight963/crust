@@ -259,3 +259,132 @@ fn shutdown_rejects_further_requests_and_exit_requires_shutdown() {
     server.exit(true);
     Server::start().exit(false);
 }
+
+#[test]
+fn unsaved_imports_recheck_entries_and_keep_diagnostics_on_the_right_document() {
+    let mut server = Server::start();
+    let main = "file:///crust-lsp-unsaved-test/main.cr";
+    let helper = "file:///crust-lsp-unsaved-test/helper.cr";
+    let entry = "import \"helper.cr\"; int main() { return answer(); }";
+    assert!(
+        server.open(main, 1, entry)["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not read")
+    );
+    let result = server.open(helper, 1, "int answer() { return 42; }");
+    assert_eq!(result["uri"], helper);
+    assert_eq!(result["diagnostics"], json!([]));
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], main);
+    assert_eq!(result["diagnostics"], json!([]));
+
+    server.change(helper, 2, "// 🦀\nint answer() { return missing; }");
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], helper);
+    assert_eq!(result["version"], 2);
+    assert_eq!(
+        result["diagnostics"][0]["range"]["start"],
+        json!({"line": 1, "character": 22})
+    );
+
+    server.change(helper, 3, "int answer(int value) { return value; }");
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], helper);
+    assert_eq!(result["diagnostics"], json!([]));
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], main);
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expects 1 argument")
+    );
+
+    server.change(helper, 4, "int answer() { return 42; }");
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], main);
+    assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}
+
+#[test]
+fn opening_only_a_project_dependency_uses_the_entry_and_unsaved_dependency_text() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-project-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("crust.toml"),
+        "[project]\nname='example'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("main.cr"),
+        "import \"helper.cr\"; int main() { return answer(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("helper.cr"),
+        "int answer() { return missing_on_disk; }",
+    )
+    .unwrap();
+    let path = root.join("helper.cr").to_string_lossy().replace('\\', "/");
+    let uri = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    let mut server = Server::start();
+    let result = server.open(&uri, 1, "int answer() { return 42; }");
+    assert_eq!(result["diagnostics"], json!([]));
+    server.change(&uri, 2, "int answer() { return missing_in_editor; }");
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], uri);
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing_in_editor")
+    );
+    server.stop();
+}
+
+#[test]
+fn diagnostics_for_closed_dependencies_clear_when_the_import_is_removed() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-closed-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("helper.cr"), "int answer() { return missing; }").unwrap();
+    let path = root.join("main.cr").to_string_lossy().replace('\\', "/");
+    let uri = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    let mut server = Server::start();
+    assert_eq!(
+        server.open(
+            &uri,
+            1,
+            "import \"helper.cr\"; int main() { return answer(); }"
+        )["diagnostics"],
+        json!([])
+    );
+    let result = server.diagnostics();
+    assert!(result["uri"].as_str().unwrap().ends_with("helper.cr"));
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing")
+    );
+    server.change(&uri, 2, "int main() { return 0; }");
+    assert_eq!(server.diagnostics()["uri"], uri);
+    let result = server.diagnostics();
+    assert!(result["uri"].as_str().unwrap().ends_with("helper.cr"));
+    assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}

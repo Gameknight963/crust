@@ -1,5 +1,19 @@
 # Language reference
 
+## Imports
+
+```c
+import "containers/buffer.cr";
+```
+
+Import paths are relative to the importing file. The compiler loads each file
+once, including dependencies reached through multiple paths or cycles.
+Declarations share the target's global namespace and can refer forward across
+files. Duplicate declarations follow the same rules as declarations in one file.
+
+Imports are top-level declarations. Each file contains complete declarations,
+and file-based commands report errors with the original filename and location.
+
 ## Functions and control flow
 
 - Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names
@@ -565,6 +579,23 @@ int main() {
 Unsafe code is responsible for pointer validity, alignment, aliasing, and resource
 lifetimes. External declarations must match the linked C function's ABI.
 
+Functions and methods can declare an unsafe caller contract:
+
+```c
+unsafe int read(int* value) {
+    return *value;
+}
+```
+
+Calling `read` requires an unsafe context. The function body permits unsafe
+operations and retains ownership and borrow checking. Methods support the same
+modifier, including `static unsafe` factories. Generic instances retain their
+declaration's unsafe contract.
+
+Safe interface requirements require safe implementations. An unsafe requirement
+accepts either a safe or unsafe method. Calls use the concrete method's contract.
+The entry point has a safe signature.
+
 `extern` declares a C function under its native symbol name. Parameters can be
 named or unnamed. Signatures use C values and raw pointers. Arrays cross the
 boundary by pointer. The [C owner example](../examples/c_owner.cr) uses `malloc`
@@ -629,7 +660,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `interface`, `import`, `BoxInt`, `typedef`, `static`, `extern`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

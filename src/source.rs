@@ -1,0 +1,240 @@
+use std::collections::HashSet;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Component, Path, PathBuf};
+
+use crate::diagnostic::{Diagnostic, Span};
+use crate::lexer::{self, SpannedToken, Token};
+
+#[derive(Debug)]
+pub struct SourceError {
+    pub path: PathBuf,
+    pub diagnostic: Diagnostic,
+}
+
+impl fmt::Display for SourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return write!(formatter, "{}:{}", self.path.display(), self.diagnostic);
+    }
+}
+
+impl std::error::Error for SourceError {}
+
+pub struct SourceFile {
+    pub path: PathBuf,
+    pub text: String,
+    offset: usize,
+}
+
+pub struct SourceSet {
+    files: Vec<SourceFile>,
+    tokens: Vec<SpannedToken>,
+    loaded: HashSet<PathBuf>,
+    next_offset: usize,
+}
+
+// Existing paths use filesystem identity. New editor documents use a normalized
+// absolute path so unsaved imports and their disk counterparts share a key.
+pub fn identity(path: &Path) -> io::Result<PathBuf> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Ok(canonical);
+    }
+    let absolute = std::path::absolute(path)?;
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    return Ok(normalized);
+}
+
+impl SourceSet {
+    pub fn load(entry: &Path) -> Result<Self, SourceError> {
+        return Self::load_with(entry, |path| fs::read_to_string(path));
+    }
+
+    pub fn load_with(
+        entry: &Path,
+        mut read: impl FnMut(&Path) -> io::Result<String>,
+    ) -> Result<Self, SourceError> {
+        let mut sources = Self {
+            files: Vec::new(),
+            tokens: Vec::new(),
+            loaded: HashSet::new(),
+            next_offset: 0,
+        };
+        sources.load_file(entry, None, 0, &mut read)?;
+        return Ok(sources);
+    }
+
+    pub fn files(&self) -> &[SourceFile] {
+        return &self.files;
+    }
+
+    pub fn check(&self) -> Result<(), SourceError> {
+        let program =
+            crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
+        crate::check::check(program).map_err(|error| self.locate(error))?;
+        return Ok(());
+    }
+
+    pub fn compile(&self) -> Result<String, SourceError> {
+        let program =
+            crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
+        let checked = crate::check::check(program).map_err(|error| self.locate(error))?;
+        return Ok(crate::emit_c::generate(&checked));
+    }
+
+    fn locate(&self, mut diagnostic: Diagnostic) -> SourceError {
+        let file = self
+            .files
+            .iter()
+            .rev()
+            .find(|file| diagnostic.span.start >= file.offset)
+            .unwrap();
+        diagnostic.span.start = diagnostic.span.start.saturating_sub(file.offset);
+        diagnostic.span.end = diagnostic
+            .span
+            .end
+            .saturating_sub(file.offset)
+            .min(file.text.len());
+        return SourceError {
+            path: file.path.clone(),
+            diagnostic,
+        };
+    }
+
+    fn load_file(
+        &mut self,
+        path: &Path,
+        origin: Option<Span>,
+        import_depth: usize,
+        read: &mut impl FnMut(&Path) -> io::Result<String>,
+    ) -> Result<(), SourceError> {
+        let fallback = Span {
+            start: 0,
+            end: 0,
+            line: 1,
+            column: 1,
+        };
+        let path = identity(path).map_err(|error| SourceError {
+            path: path.to_owned(),
+            diagnostic: Diagnostic::new(fallback, error.to_string()),
+        })?;
+        if !self.loaded.insert(path.clone()) {
+            return Ok(());
+        }
+        if import_depth >= 128 || self.files.len() >= 1024 {
+            return Err(self.locate(Diagnostic::new(
+                origin.unwrap_or(fallback),
+                "source import limit exceeded",
+            )));
+        }
+        let text = read(&path).map_err(|error| {
+            let diagnostic = Diagnostic::new(
+                origin.unwrap_or(fallback),
+                format!("could not read {}: {error}", path.display()),
+            );
+            return if origin.is_some() {
+                self.locate(diagnostic)
+            } else {
+                SourceError {
+                    path: path.clone(),
+                    diagnostic,
+                }
+            };
+        })?;
+        let mut tokens = lexer::tokenize(&text).map_err(|diagnostic| SourceError {
+            path: path.clone(),
+            diagnostic,
+        })?;
+        let mut end = tokens.pop().unwrap();
+        let offset = self.next_offset;
+        self.next_offset += text.len() + 1;
+        self.files.push(SourceFile {
+            path: path.clone(),
+            text,
+            offset,
+        });
+        for token in &mut tokens {
+            token.span.start += offset;
+            token.span.end += offset;
+        }
+        end.span.start += offset;
+        end.span.end += offset;
+        let mut imports = Vec::new();
+        let mut position = 0;
+        let mut depth = 0usize;
+        let mut declaration_start = true;
+        while position < tokens.len() {
+            let token = &tokens[position];
+            if token.kind == Token::Import && depth == 0 {
+                if !declaration_start {
+                    return Err(self.locate(Diagnostic::new(
+                        token.span,
+                        "imports must be top-level declarations",
+                    )));
+                }
+                let Some(SpannedToken {
+                    kind: Token::StringLiteral(bytes),
+                    ..
+                }) = tokens.get(position + 1)
+                else {
+                    return Err(
+                        self.locate(Diagnostic::new(token.span, "expected a quoted import path"))
+                    );
+                };
+                let name = std::str::from_utf8(bytes)
+                    .ok()
+                    .filter(|name| !name.is_empty() && !name.contains('\0'))
+                    .ok_or_else(|| {
+                        self.locate(Diagnostic::new(
+                            token.span,
+                            "import paths must be nonempty UTF-8 without null bytes",
+                        ))
+                    })?;
+                if !tokens
+                    .get(position + 2)
+                    .is_some_and(|token| token.kind == Token::Semicolon)
+                {
+                    return Err(
+                        self.locate(Diagnostic::new(token.span, "expected ';' after import"))
+                    );
+                }
+                let imported = Path::new(name);
+                if imported
+                    .components()
+                    .any(|part| matches!(part, Component::Prefix(_) | Component::RootDir))
+                {
+                    return Err(self.locate(Diagnostic::new(
+                        token.span,
+                        "import paths must be relative to the source file",
+                    )));
+                }
+                imports.push((path.parent().unwrap().join(imported), token.span));
+                position += 3;
+                continue;
+            }
+            match token.kind {
+                Token::LeftBrace => depth += 1,
+                Token::RightBrace => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            declaration_start =
+                depth == 0 && matches!(token.kind, Token::Semicolon | Token::RightBrace);
+            self.tokens.push(token.clone());
+            position += 1;
+        }
+        self.tokens.push(end);
+        for (imported, span) in imports {
+            self.load_file(&imported, Some(span), import_depth + 1, read)?;
+        }
+        return Ok(());
+    }
+}

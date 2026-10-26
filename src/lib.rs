@@ -9,6 +9,7 @@ pub mod lexer;
 pub mod lsp;
 pub mod native;
 pub mod project;
+pub mod source;
 
 use diagnostic::Diagnostic;
 

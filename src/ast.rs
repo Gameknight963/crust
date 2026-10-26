@@ -253,6 +253,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub requires_unsafe: bool,
     pub external: bool,
     pub name: String,
     pub return_type: Type,

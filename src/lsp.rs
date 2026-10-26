@@ -1,8 +1,9 @@
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::path::{Path, PathBuf};
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -70,6 +71,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
     )?;
 
     let mut documents = HashMap::new();
+    let mut published = HashMap::new();
     let mut shutdown = false;
     for message in &connection.receiver {
         match message {
@@ -110,7 +112,8 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 if shutdown {
                     continue;
                 }
-                if let Err(error) = document_notification(connection, &mut documents, notification)
+                if let Err(error) =
+                    document_notification(connection, &mut documents, &mut published, notification)
                 {
                     connection.sender.send(
                         Notification::new(
@@ -132,6 +135,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
 fn document_notification(
     connection: &Connection,
     documents: &mut HashMap<String, Document>,
+    published: &mut HashMap<String, Value>,
     notification: Notification,
 ) -> ServerResult<()> {
     match notification.method.as_str() {
@@ -145,8 +149,8 @@ fn document_notification(
                 version: item.version,
                 text: item.text,
             };
-            publish(connection, &item.uri, &document)?;
-            documents.insert(item.uri, document);
+            documents.insert(item.uri.clone(), document);
+            publish_all(connection, documents, published, &item.uri)?;
         }
         "textDocument/didChange" => {
             let params: ChangeParams = serde_json::from_value(notification.params)?;
@@ -170,11 +174,12 @@ fn document_notification(
                 document.text = change.text;
             }
             document.version = params.text_document.version;
-            publish(connection, &params.text_document.uri, document)?;
+            publish_all(connection, documents, published, &params.text_document.uri)?;
         }
         "textDocument/didClose" => {
             let params: CloseParams = serde_json::from_value(notification.params)?;
             documents.remove(&params.text_document.uri);
+            published.remove(&params.text_document.uri);
             connection.sender.send(
                 Notification::new(
                     "textDocument/publishDiagnostics".into(),
@@ -184,35 +189,207 @@ fn document_notification(
                 )
                 .into(),
             )?;
+            publish_all(connection, documents, published, &params.text_document.uri)?;
         }
         _ => {}
     }
     return Ok(());
 }
 
-fn publish(connection: &Connection, uri: &str, document: &Document) -> ServerResult<()> {
-    let diagnostics = match crate::check(&document.text) {
-        Ok(()) => Vec::new(),
-        Err(diagnostic) => vec![json!({
-            "range": {
-                "start": position(&document.text, diagnostic.span.start),
-                "end": position(&document.text, diagnostic.span.end)
-            },
-            "severity": 1,
-            "source": "crust",
-            "message": diagnostic.message
-        })],
+fn diagnostic_json(source: &str, diagnostic: crate::diagnostic::Diagnostic) -> Value {
+    return json!({
+        "range": {
+            "start": position(source, diagnostic.span.start),
+            "end": position(source, diagnostic.span.end)
+        },
+        "severity": 1,
+        "source": "crust",
+        "message": diagnostic.message
+    });
+}
+
+fn publish_all(
+    connection: &Connection,
+    documents: &HashMap<String, Document>,
+    published: &mut HashMap<String, Value>,
+    active: &str,
+) -> ServerResult<()> {
+    let paths: HashMap<_, _> = documents
+        .keys()
+        .filter_map(|uri| uri_path(uri).map(|path| (path, uri.clone())))
+        .collect();
+    let read = |path: &Path| {
+        if let Some(uri) = paths.get(path) {
+            return Ok(documents[uri].text.clone());
+        }
+        return std::fs::read_to_string(path);
     };
-    connection.sender.send(
-        Notification::new(
-            "textDocument/publishDiagnostics".into(),
-            json!({
-                "uri": uri, "version": document.version, "diagnostics": diagnostics
-            }),
-        )
-        .into(),
-    )?;
+    let mut diagnostics: HashMap<String, Vec<Value>> = documents
+        .keys()
+        .map(|uri| (uri.clone(), Vec::new()))
+        .collect();
+    let mut graphs = Vec::new();
+    for (uri, document) in documents {
+        if let Some(path) = uri_path(uri) {
+            match crate::source::SourceSet::load_with(&path, read) {
+                Ok(sources) => graphs.push((uri.clone(), path, sources)),
+                Err(error) => {
+                    let target = paths
+                        .get(&error.path)
+                        .cloned()
+                        .unwrap_or_else(|| path_uri(&error.path));
+                    let text = read(&error.path).unwrap_or_default();
+                    diagnostics
+                        .entry(target)
+                        .or_default()
+                        .push(diagnostic_json(&text, error.diagnostic));
+                }
+            }
+        } else if let Err(error) = crate::check(&document.text) {
+            diagnostics
+                .get_mut(uri)
+                .unwrap()
+                .push(diagnostic_json(&document.text, error));
+        }
+    }
+    let manifests: HashSet<_> = paths
+        .keys()
+        .filter_map(|path| {
+            path.parent()?
+                .ancestors()
+                .map(|directory| directory.join("crust.toml"))
+                .find(|manifest| manifest.is_file())
+        })
+        .collect();
+    for manifest in manifests {
+        let Ok(project) = crate::project::Project::load(&manifest) else {
+            continue;
+        };
+        for target in project.targets {
+            if graphs.iter().any(|(_, path, _)| *path == target.entry) {
+                continue;
+            }
+            if let Ok(sources) = crate::source::SourceSet::load_with(&target.entry, read)
+                && sources
+                    .files()
+                    .iter()
+                    .any(|file| paths.contains_key(&file.path))
+            {
+                graphs.push((path_uri(&target.entry), target.entry, sources));
+            }
+        }
+    }
+    // Analyze entries before their open dependencies, including import cycles.
+    graphs.sort_by(|a, b| {
+        b.2.files()
+            .len()
+            .cmp(&a.2.files().len())
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let mut covered = HashSet::new();
+    for (_, path, sources) in graphs {
+        if covered.contains(&path) {
+            continue;
+        }
+        covered.extend(sources.files().iter().map(|file| file.path.clone()));
+        if let Err(error) = sources.check() {
+            let target = paths
+                .get(&error.path)
+                .cloned()
+                .unwrap_or_else(|| path_uri(&error.path));
+            let text = &sources
+                .files()
+                .iter()
+                .find(|file| file.path == error.path)
+                .unwrap()
+                .text;
+            let values = diagnostics.entry(target).or_default();
+            let value = diagnostic_json(text, error.diagnostic);
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+    }
+    for uri in published.keys() {
+        diagnostics.entry(uri.clone()).or_default();
+    }
+    let mut uris: Vec<_> = diagnostics.keys().cloned().collect();
+    uris.sort_by(|a, b| (a != active).cmp(&(b != active)).then_with(|| a.cmp(b)));
+    for uri in uris {
+        let mut payload = json!({ "uri": uri, "diagnostics": diagnostics[&uri] });
+        if let Some(document) = documents.get(&uri) {
+            payload["version"] = json!(document.version);
+        }
+        if published.get(&uri) != Some(&payload) {
+            connection.sender.send(
+                Notification::new("textDocument/publishDiagnostics".into(), payload.clone()).into(),
+            )?;
+            if !documents.contains_key(&uri) && payload["diagnostics"] == json!([]) {
+                published.remove(&uri);
+            } else {
+                published.insert(uri, payload);
+            }
+        }
+    }
     return Ok(());
+}
+
+fn uri_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let (host, encoded) = rest.split_once('/')?;
+    let mut bytes = Vec::new();
+    let mut index = 0;
+    while index < encoded.len() {
+        let byte = encoded.as_bytes()[index];
+        if byte == b'%' {
+            bytes.push(u8::from_str_radix(encoded.get(index + 1..index + 3)?, 16).ok()?);
+            index += 3;
+        } else {
+            if matches!(byte, b'?' | b'#' | 0) {
+                return None;
+            }
+            bytes.push(byte);
+            index += 1;
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    if path.contains('\0') {
+        return None;
+    }
+    let local = host.is_empty() || host.eq_ignore_ascii_case("localhost");
+    let path = if cfg!(windows) && !local {
+        PathBuf::from(format!("//{host}/{path}"))
+    } else if !local {
+        return None;
+    } else if cfg!(windows) && path.as_bytes().get(1) == Some(&b':') {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(format!("/{path}"))
+    };
+    return crate::source::identity(&path).ok();
+}
+
+fn path_uri(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let path = path
+        .strip_prefix("//?/UNC/")
+        .map(|path| format!("//{path}"))
+        .unwrap_or_else(|| path.strip_prefix("//?/").unwrap_or(&path).to_owned());
+    let mut uri = if path.starts_with("//") {
+        "file:".to_owned()
+    } else if path.starts_with('/') {
+        "file://".to_owned()
+    } else {
+        "file:///".to_owned()
+    };
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    return uri;
 }
 
 // Compiler spans use byte offsets and character columns. LSP's default uses
@@ -242,4 +419,27 @@ fn position(source: &str, offset: usize) -> Value {
         }
     }
     return json!({ "line": line, "character": character });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_uris_round_trip_spaces_unicode_reserved_characters_and_existing_paths() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for path in [root.to_owned(), root.join("target/uri test 🦀 #%.cr")] {
+            let identity = crate::source::identity(&path).unwrap();
+            assert_eq!(uri_path(&path_uri(&identity)), Some(identity));
+        }
+        for uri in [
+            "untitled:main.cr",
+            "file:///bad%",
+            "file:///bad%GG",
+            "file:///bad%00",
+            "file:///bad#fragment",
+        ] {
+            assert!(uri_path(uri).is_none(), "{uri}");
+        }
+    }
 }

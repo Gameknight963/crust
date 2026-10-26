@@ -25,13 +25,16 @@
 - Generic structs and functions with explicit type arguments and per-instantiation ownership checking
 - A C-backed generic buffer with checked borrowed access and automatic cleanup
 - Structural interface constraints, static interfaces, and static member requirements
+- Relative source imports, dependency collection, and diagnostics with original file locations
+- Multi-file generic containers and LSP analysis of unsaved dependencies
+- Unsafe function and method contracts, including generic instances and interface requirements
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add modules, imports, visibility, project dependencies, and library targets
+1. Add module namespaces, visibility, project dependencies, and library targets
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
 3. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
 
