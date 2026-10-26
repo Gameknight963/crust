@@ -89,6 +89,9 @@ impl Project {
         let mut names = HashSet::new();
         let mut targets = parsed.targets;
         for target in &mut targets {
+            crate::native::validate_defines(&target.native.defines).map_err(|error| {
+                format!("{}: target '{}': {error}", manifest.display(), target.name)
+            })?;
             if !target
                 .name
                 .bytes()

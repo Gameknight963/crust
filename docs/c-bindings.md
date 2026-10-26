@@ -47,5 +47,7 @@ Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
 
 Link the C implementation or library through the target's
-[native options](projects.md). Generated declarations use the same unsafe-call
+[native options](projects.md). Use matching `defines` and `--define` values when
+the header changes its API through preprocessor configuration.
+Generated declarations use the same unsafe-call
 rules as handwritten `extern` declarations.

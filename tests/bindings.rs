@@ -131,6 +131,11 @@ fn rejects_invalid_selections_and_reports_clang_failures() {
         assert!(generate(&path, &options(&functions)).is_err());
     }
     let mut missing = options(&["native"]);
+    for defines in [vec!["=1"], vec!["VALUE=1", "VALUE=2"]] {
+        missing.defines = defines.into_iter().map(str::to_owned).collect();
+        assert!(generate(&path, &missing).is_err());
+    }
+    missing.defines.clear();
     missing.clang = Some(PathBuf::from("missing-crust-test-clang"));
     assert!(
         generate(&path, &missing)

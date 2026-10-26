@@ -6,6 +6,7 @@ use std::process::Command;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
+    pub defines: Vec<String>,
     pub sources: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
     pub library_dirs: Vec<PathBuf>,
@@ -23,6 +24,7 @@ pub fn compile_file_with_options(
     executable: &Path,
     options: &Options,
 ) -> Result<(), String> {
+    validate_defines(&options.defines)?;
     let compiler = env::var_os("CC").unwrap_or_else(|| {
         if cfg!(windows) {
             return "clang".into();
@@ -32,6 +34,9 @@ pub fn compile_file_with_options(
     let mut command = Command::new(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
+    for define in &options.defines {
+        command.arg("-D").arg(define);
+    }
     for directory in &options.include_dirs {
         command.arg("-I").arg(directory);
     }
@@ -57,6 +62,28 @@ pub fn compile_file_with_options(
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         ));
+    }
+    return Ok(());
+}
+
+pub(crate) fn validate_defines(defines: &[String]) -> Result<(), String> {
+    let mut names = std::collections::HashSet::new();
+    for definition in defines {
+        let head = definition.split('=').next().unwrap();
+        let name = head.split('(').next().unwrap();
+        let mut bytes = name.bytes();
+        if definition.contains(['\0', '\n', '\r'])
+            || !bytes
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            || (head.contains('(') && !head.ends_with(')'))
+        {
+            return Err(format!("invalid C preprocessor definition '{definition}'"));
+        }
+        if !names.insert(name) {
+            return Err(format!("C macro '{name}' is defined more than once"));
+        }
     }
     return Ok(());
 }

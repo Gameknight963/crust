@@ -150,6 +150,39 @@ fn native_options_are_selected_independently_for_each_target() {
 }
 
 #[test]
+fn native_macro_definitions_preserve_values_function_macros_and_per_target_configuration() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "main.cr",
+        "extern int native_value(); int main() { unsafe { print(native_value()); } return 0; }",
+    );
+    fixture.write("native.c", "#include <string.h>\nint native_value(void) { return strcmp(API_TEXT, \"hello world\") == 0 ? API_VALUE + NATIVE_DOUBLE(1) : -1; }\n");
+    fixture.manifest(
+        r#"
+        [[targets]]
+        name = 'first'
+        kind = 'executable'
+        entry = 'main.cr'
+        [targets.native]
+        sources = ['native.c']
+        defines = ['API_VALUE=40', 'NATIVE_DOUBLE(x)=((x)*2)', 'API_TEXT="hello world"']
+        [[targets]]
+        name = 'second'
+        kind = 'executable'
+        entry = 'main.cr'
+        [targets.native]
+        sources = ['native.c']
+        defines = ['API_VALUE=41', 'NATIVE_DOUBLE(x)=((x)*2)', 'API_TEXT="hello world"']
+    "#,
+    );
+    for (target, expected) in [("first", "42\n"), ("second", "43\n")] {
+        let output = fixture.invoke(&["run", "--target", target]);
+        success(&output);
+        assert_eq!(text(&output), expected);
+    }
+}
+
+#[test]
 fn opaque_c_handles_have_private_wrappers_and_destroy_once_after_a_move() {
     let fixture = Fixture::new();
     fixture.write(
@@ -214,6 +247,11 @@ fn native_configuration_checks_paths_kinds_duplicates_and_unknown_fields() {
         "libraries = ['../library']",
         "sources = 'native/helper.c'",
         "flags = ['-O2']",
+        "defines = ['']",
+        "defines = ['1VALUE=1']",
+        "defines = ['VALUE=1', 'VALUE=2']",
+        "defines = ['FUNCTION(x=2']",
+        "defines = 'VALUE=1'",
     ] {
         fixture.manifest(&format!("[[targets]]\nname = 'app'\nkind = 'executable'\nentry = 'main.cr'\n[targets.native]\n{config}\n"));
         let output = fixture.invoke(&["check"]);

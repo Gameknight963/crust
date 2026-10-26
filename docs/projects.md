@@ -73,6 +73,7 @@ entry = "src/main.cr"
 [targets.native]
 sources = ["native/helper.c"]
 include-dirs = ["include"]
+defines = ["API_VERSION=2", "FEATURE_ENABLED"]
 library-dirs = ["native/lib"]
 libraries = ["helper"]
 link-inputs = ["native/extra.o"]
@@ -83,10 +84,12 @@ link-inputs = ["native/extra.o"]
 - Include and library paths identify existing directories
 - `sources` compile as C11 translation units alongside the generated C
 - `include-dirs` configure the native preprocessor's header search
+- `defines` pass object-like or function-like C macro definitions through `-D`
 - `library-dirs` configure the linker's library search
 - `libraries` pass names through the C driver's `-l` option
 - `link-inputs` pass explicit object or library files to the driver
 - Each target has its own native configuration
+- Macro names are validated and each name appears once per target
 - `check`, `tokens`, and `emit-c` validate configuration without invoking a C compiler
 
 Crust calls native functions through matching `extern` declarations. Calls use an

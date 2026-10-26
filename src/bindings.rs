@@ -110,6 +110,7 @@ fn clang(
 }
 
 pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
+    crate::native::validate_defines(&options.defines)?;
     let header = header
         .canonicalize()
         .map_err(|error| format!("{}: {error}", header.display()))?;
