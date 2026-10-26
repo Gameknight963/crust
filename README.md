@@ -70,5 +70,6 @@ cargo run -- examples/ownership.cr
 
 - [Language reference](docs/language.md)
 - [Projects](docs/projects.md)
+- [Editor setup](docs/editors.md)
 - [Compiler and development](docs/compiler.md)
 - [Roadmap](docs/roadmap.md)

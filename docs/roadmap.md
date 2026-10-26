@@ -7,6 +7,8 @@
 - Instance methods, value receivers, and destructors
 - Bare struct names, basic typedefs, and static methods
 - TOML project loading and named executable targets
+- Standalone stdio language server with live compiler diagnostics
+- VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
@@ -26,8 +28,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 ## Editor support
 
 - Expose frontend diagnostics, source symbols, and type information through shared Rust APIs
-- Provide a standalone `crust-lsp` executable over stdio for direct use by Neovim and other LSP clients
-- Build VS Code and Visual Studio integrations on the same language server
+- Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
+- Build Visual Studio integration on the same language server
 - Use `crust.toml` as the authoritative project configuration
 - Add optional MSBuild `.crproj` integration for Visual Studio
 - Add native source-level debugging through the generated C backend

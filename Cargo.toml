@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2024"
 description = "An experimental C-like language with ownership checking"
 publish = false
+default-run = "crust"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9.8", default-features = false, features = ["parse", "serde", "std"] }
+serde_json = "1"
+lsp-server = "0.7.9"
 
 [lints.clippy]
 # Keep explicit returns while the implementation is also a Rust learning project.

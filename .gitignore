@@ -1,5 +1,7 @@
 # Cargo output, including targets in future workspace members.
 target/
+node_modules/
+*.vsix
 
 # Other generated output directories. Generated C belongs here, not beside source.
 /build/

@@ -18,6 +18,8 @@ ownership checking, C generation, and native compilation.
 | `src/emit_c.rs` | Generated C and cleanup |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
+| `src/lsp.rs` | Document synchronization and compiler diagnostics |
+| `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
 ## Native compilation
@@ -56,3 +58,6 @@ cargo clippy --offline --all-targets -- -D warnings
 
 Native execution tests compile generated C. Ownership tests track allocations,
 frees, and destructor output to verify cleanup behavior.
+
+Language-server tests launch `crust-lsp` and exchange framed protocol messages
+through its standard input and output.

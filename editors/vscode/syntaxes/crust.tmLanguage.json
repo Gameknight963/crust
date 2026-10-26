@@ -1,0 +1,23 @@
+{
+  "scopeName": "source.crust",
+  "name": "Crust",
+  "patterns": [
+    { "name": "comment.line.double-slash.crust", "begin": "//", "end": "$" },
+    { "name": "comment.block.crust", "begin": "/\\*", "end": "\\*/" },
+    {
+      "match": "\\b(struct)\\s+([a-zA-Z_][a-zA-Z_0-9]*)",
+      "captures": {
+        "1": { "name": "storage.type.crust" },
+        "2": { "name": "entity.name.type.crust" }
+      }
+    },
+    { "name": "storage.type.crust", "match": "\\b(int|void|BoxInt|Self)\\b" },
+    { "name": "storage.modifier.crust", "match": "\\b(const|static|typedef)\\b" },
+    { "name": "keyword.control.crust", "match": "\\b(return|if|else|while)\\b" },
+    { "name": "support.function.crust", "match": "\\b(print|box_int|move)(?=\\s*\\()" },
+    { "name": "entity.name.function.crust", "match": "~?[a-zA-Z_][a-zA-Z_0-9]*(?=\\s*\\()" },
+    { "name": "constant.numeric.crust", "match": "\\b[0-9]+\\b" },
+    { "name": "variable.language.crust", "match": "\\bthis\\b" },
+    { "name": "keyword.operator.crust", "match": "::|->|==|!=|<=|>=|&&|\\|\\||[=+*/%!<>&|^~-]" }
+  ]
+}
