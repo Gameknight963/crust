@@ -502,6 +502,36 @@ sizes, initialized elements, bounds-checked getters, and move-only cleanup.
 For a shared borrow of a raw pointer binding, use a typedef such as
 `typedef int* IntPointer;` followed by `const IntPointer^`.
 
+## Function pointers and callbacks
+
+```c
+typedef int (*Callback)(int value);
+
+int increment(int value) { return value + 1; }
+
+int main() {
+    Callback callback = increment;
+    unsafe { print(callback(41)); }
+    return 0;
+}
+```
+
+- `typedef int (*Callback)(int);` names a function pointer type
+- `typedef int Operation(int);` names a function type, and `Operation*` points to it
+- Callback signatures use copyable C values and raw pointers
+- A function name or `&function` supplies its address
+- Static methods supply addresses through `Type::method`, typedefs, and `Self`
+- Function addresses can be copied and passed through locals, fields, arrays, parameters, and returns
+- Calls through function pointers require `unsafe`
+- Calls accept `callback(args)`, `(*callback)(args)`, and callback fields such as `handler.apply(args)`
+- The callee evaluates before its arguments, and every part evaluates once
+- Literal zero creates a null function pointer, and equality and null tests use ordinary pointer rules
+- Function types have signatures, while pointer values have object size and alignment
+
+The [native callback example](../examples/callback_project/) passes Crust functions
+to C and calls a function pointer returned by C. Callers of indirect functions
+are responsible for a valid function pointer and the target's unsafe requirements.
+
 ## Destructors
 
 ```c

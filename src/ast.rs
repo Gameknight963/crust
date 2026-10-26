@@ -1,6 +1,6 @@
 use crate::diagnostic::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntType {
     Char,
     I8,
@@ -112,8 +112,9 @@ impl IntType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Type {
+    Function(usize),
     Integer(IntType),
     Bool,
     Void,
@@ -125,7 +126,7 @@ pub enum Type {
     Borrow { pointee: Pointee, mutable: bool },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pointee {
     Integer(IntType),
     Bool,
@@ -180,6 +181,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub function_types: Vec<FunctionType>,
     pub pointers: Vec<PointerType>,
     pub enum_names: Vec<(String, Span)>,
     pub enums: Vec<EnumDefinition>,
@@ -187,6 +189,13 @@ pub struct Program {
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionType {
+    pub result: Type,
+    pub parameters: Vec<Type>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,6 +350,14 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    StaticReference {
+        id: usize,
+        name: String,
+    },
+    IndirectCall {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
     EnumValue {
         id: usize,
         name: String,

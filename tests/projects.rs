@@ -174,6 +174,30 @@ fn opaque_c_handles_have_private_wrappers_and_destroy_once_after_a_move() {
 }
 
 #[test]
+fn native_code_calls_crust_callbacks_and_returns_native_function_pointers() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "crust.toml",
+        include_str!("../examples/callback_project/crust.toml"),
+    );
+    fixture.write(
+        "src/main.cr",
+        include_str!("../examples/callback_project/src/main.cr"),
+    );
+    fixture.write(
+        "include/native_callback.h",
+        include_str!("../examples/callback_project/include/native_callback.h"),
+    );
+    fixture.write(
+        "native/callback.c",
+        include_str!("../examples/callback_project/native/callback.c"),
+    );
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n42\n41\n");
+}
+
+#[test]
 fn native_configuration_checks_paths_kinds_duplicates_and_unknown_fields() {
     let fixture = Fixture::new();
     fixture.write("main.cr", "int main() { return 0; }");

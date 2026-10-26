@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    ArrayType, EnumDefinition, EnumVariant, Field, IntType, PointerType, Program, Type,
+    ArrayType, EnumDefinition, EnumVariant, Field, FunctionType, IntType, PointerType, Program,
+    Type,
 };
 use crate::diagnostic::{Diagnostic, Span};
 
@@ -14,6 +15,7 @@ pub struct StructInfo {
 }
 
 pub struct Types {
+    pub function_types: Vec<FunctionType>,
     pub pointers: Vec<PointerType>,
     pub enums: Vec<EnumDefinition>,
     pub enum_names: Vec<String>,
@@ -125,6 +127,7 @@ impl Types {
         }
 
         let mut types = Types {
+            function_types: program.function_types.clone(),
             pointers: program.pointers.clone(),
             enums,
             enum_names: program
@@ -160,6 +163,9 @@ impl Types {
                 &mut array_states,
                 types.arrays[id].span,
             )?;
+        }
+        for function_type in &types.function_types {
+            types.check_function_type(function_type)?;
         }
         return Ok(types);
     }
@@ -222,11 +228,59 @@ impl Types {
 
     pub fn is_sized(&self, ty: Type) -> bool {
         return match ty {
-            Type::Void => false,
+            Type::Void | Type::Function(_) => false,
             Type::Struct(id) => self.structs[id].complete,
             Type::Array(id) => self.is_sized(self.arrays[id].element),
             _ => true,
         };
+    }
+
+    fn check_function_type(&self, function_type: &FunctionType) -> Result<(), Diagnostic> {
+        let valid = |ty| {
+            self.is_sized(ty) && !self.owns(ty) && !ty.is_borrow() && !matches!(ty, Type::Array(_))
+        };
+        if (function_type.result != Type::Void && !valid(function_type.result))
+            || function_type.parameters.iter().any(|ty| !valid(*ty))
+        {
+            return Err(Diagnostic::new(
+                function_type.span,
+                "callbacks require copyable C values and raw pointers",
+            ));
+        }
+        return Ok(());
+    }
+
+    pub fn function_type(
+        &mut self,
+        result: Type,
+        parameters: Vec<Type>,
+        span: Span,
+    ) -> Result<Type, Diagnostic> {
+        let function_type = FunctionType {
+            result,
+            parameters,
+            span,
+        };
+        self.check_function_type(&function_type)?;
+        let id = if let Some(id) = self.function_types.iter().position(|existing| {
+            existing.result == result && existing.parameters == function_type.parameters
+        }) {
+            id
+        } else {
+            let id = self.function_types.len();
+            self.function_types.push(function_type);
+            id
+        };
+        return Ok(Type::Function(id));
+    }
+
+    pub fn callback(&self, ty: Type) -> Option<&FunctionType> {
+        if let Type::Pointer(id) = ty
+            && let Type::Function(id) = self.pointers[id].pointee
+        {
+            return Some(&self.function_types[id]);
+        }
+        return None;
     }
 
     pub fn byte_array_length(&self, ty: Type) -> Option<usize> {
@@ -281,6 +335,16 @@ impl Types {
 
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
+            Type::Function(id) => format!(
+                "{} ({})",
+                self.describe(self.function_types[id].result),
+                self.function_types[id]
+                    .parameters
+                    .iter()
+                    .map(|ty| self.describe(*ty))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Type::Integer(IntType::I32) => String::from("int"),
             Type::Integer(kind) => kind.c_name().to_owned(),
             Type::Bool => String::from("bool"),

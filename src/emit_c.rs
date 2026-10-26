@@ -29,6 +29,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .filter(|function| function.external)
             .map(|function| function.name.clone())
             .collect(),
+        function_values: &checked.function_values,
     };
     emitter
         .return_types
@@ -65,12 +66,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
     for id in 0..checked.types.arrays.len() {
         emitter.line(&format!("struct crust_array_{id};"));
     }
-    for (id, pointer) in checked.types.pointers.iter().enumerate() {
-        emitter.line(&format!(
-            "typedef {}{} *crust_ptr_{id};",
-            c_type(pointer.pointee),
-            if pointer.mutable { "" } else { " const" }
-        ));
+    let mut declared = HashSet::new();
+    for id in 0..checked.types.pointers.len() {
+        emitter.type_declaration(Type::Pointer(id), &mut declared);
+    }
+    for id in 0..checked.types.function_types.len() {
+        emitter.type_declaration(Type::Function(id), &mut declared);
     }
     emitter.struct_definitions();
     for function in &program.functions {
@@ -126,6 +127,7 @@ fn function_name(name: &str) -> String {
 
 fn c_type(ty: Type) -> String {
     return match ty {
+        Type::Function(id) => format!("crust_function_{id}"),
         Type::Integer(kind) => kind.c_name().to_owned(),
         Type::Bool => String::from("bool"),
         Type::Void => String::from("void"),
@@ -192,6 +194,7 @@ impl Scope {
 }
 
 struct Emitter<'checked> {
+    function_values: &'checked HashMap<Span, String>,
     output: String,
     indent: usize,
     next_name: usize,
@@ -212,6 +215,44 @@ struct LoopContext {
 }
 
 impl Emitter<'_> {
+    fn type_declaration(&mut self, ty: Type, declared: &mut HashSet<Type>) {
+        if !declared.insert(ty) {
+            return;
+        }
+        match ty {
+            Type::Pointer(id) => {
+                let pointer = self.types.pointers[id];
+                self.type_declaration(pointer.pointee, declared);
+                self.line(&format!(
+                    "typedef {}{} *crust_ptr_{id};",
+                    c_type(pointer.pointee),
+                    if pointer.mutable { "" } else { " const" }
+                ));
+            }
+            Type::Function(id) => {
+                let function = self.types.function_types[id].clone();
+                self.type_declaration(function.result, declared);
+                for parameter in &function.parameters {
+                    self.type_declaration(*parameter, declared);
+                }
+                let parameters = if function.parameters.is_empty() {
+                    String::from("void")
+                } else {
+                    function
+                        .parameters
+                        .iter()
+                        .map(|ty| c_type(*ty))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                self.line(&format!(
+                    "typedef {} crust_function_{id}({parameters});",
+                    c_type(function.result)
+                ));
+            }
+            _ => {}
+        }
+    }
     fn unsigned_runtime(&mut self) {
         for kind in [IntType::U32, IntType::U64] {
             let ty = kind.c_name();
@@ -645,10 +686,35 @@ impl Emitter<'_> {
     // assignment, argument, return, or discard. Its temporary is transferred to
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
+        if let Some(name) = self.function_values.get(&expression.span) {
+            let function = if self.external_names.contains(name) {
+                name.clone()
+            } else {
+                function_name(name)
+            };
+            return Some(format!("(&{function})"));
+        }
         if let Some(value) = self.constants.get(&expression.span) {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::StaticReference { .. } => {
+                unreachable!("checked static reference has a function address")
+            }
+            ExpressionKind::IndirectCall { callee, arguments } => {
+                let callee = self.value_expression(callee);
+                let values = arguments
+                    .iter()
+                    .map(|argument| self.value_expression(argument))
+                    .collect::<Vec<_>>();
+                let call = format!("({callee})({})", values.join(", "));
+                let ty = self.expression_type(expression);
+                if ty == Type::Void {
+                    self.line(&format!("{call};"));
+                    return None;
+                }
+                return Some(self.temporary(ty, &call));
+            }
             ExpressionKind::EnumValue { .. } => unreachable!("enum constants have checked values"),
             ExpressionKind::StringLiteral { bytes, .. } => {
                 let ty = self.expression_type(expression);
@@ -747,6 +813,11 @@ impl Emitter<'_> {
                 return Some(temporary);
             }
             ExpressionKind::Call { name, arguments } => {
+                if let Some(call) = self.method_calls.get(&expression.span)
+                    && matches!(call.kind, ExpressionKind::IndirectCall { .. })
+                {
+                    return self.expression(&call.clone());
+                }
                 if name == "move" {
                     let ExpressionKind::Variable(owner) = &arguments[0].kind else {
                         unreachable!("checker requires an owner name in move");
@@ -819,6 +890,14 @@ impl Emitter<'_> {
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.place(expression);
+                    if matches!(self.place_type(expression), Type::Function(_)) {
+                        return Some(
+                            self.temporary(
+                                self.expression_type(expression),
+                                &format!("&({place})"),
+                            ),
+                        );
+                    }
                     let value = self.temporary(self.place_type(expression), &place);
                     return Some(value);
                 }

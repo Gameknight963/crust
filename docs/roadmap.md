@@ -21,17 +21,17 @@
 - Unsafe pointer indexing and arithmetic, plus a C-backed integer buffer with checked access
 - Per-target native C sources, include paths, object/library inputs, and native linking
 - Opaque C struct tags, forward declarations, and private handle wrappers
+- Function pointer typedefs, function and static-method addresses, and C callbacks in both directions
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add function pointers and callbacks
-2. Add generic types and functions, interface constraints, and static interface requirements
-3. Add modules, imports, visibility, project dependencies, and library targets
-4. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-5. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
+1. Add generic types and functions, interface constraints, and static interface requirements
+2. Add modules, imports, visibility, project dependencies, and library targets
+3. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
+4. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
 
 A substantial validation target is a multi-file program using a generic container
 backed by C allocation, with automatic cleanup and safe access to its contents.

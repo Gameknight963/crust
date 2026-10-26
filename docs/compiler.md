@@ -30,6 +30,8 @@ ownership checking, C generation, and native compilation.
 - Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
 - Struct values use generated aliases, and opaque aliases preserve their native C tags
 - External declarations and calls retain their C symbol names
+- Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
+- Callback calls evaluate the function pointer before the arguments and use the declared C signature
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename

@@ -17,6 +17,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         arrays: Vec::new(),
         enum_names: Vec::new(),
         pointers: Vec::new(),
+        function_types: Vec::new(),
     };
     parser.collect_type_names()?;
     let mut functions = Vec::new();
@@ -25,9 +26,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     while !parser.at(&Token::EndOfFile) {
         if parser.consume(&Token::Typedef) {
-            let ty = parser.type_name()?;
-            parser.identifier()?;
-            parser.array_suffix(ty)?;
+            parser.typedef_type()?;
             parser.expect(Token::Semicolon, "expected ';' after typedef")?;
         } else if parser.at(&Token::Enum)
             && parser
@@ -60,6 +59,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     functions.append(&mut parser.methods);
     return Ok(Program {
+        function_types: parser.function_types,
         pointers: parser.pointers,
         enum_names: parser.enum_names,
         enums,
@@ -71,6 +71,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 }
 
 struct Parser {
+    function_types: Vec<FunctionType>,
     pointers: Vec<PointerType>,
     enum_names: Vec<(String, Span)>,
     arrays: Vec<ArrayType>,
@@ -88,7 +89,6 @@ struct Parser {
 #[derive(Clone, Copy)]
 struct Alias {
     position: usize,
-    name_position: usize,
     span: Span,
 }
 
@@ -151,9 +151,30 @@ impl Parser {
                 {
                     return Err(Diagnostic::new(token.span, "expected 'typedef type Name;'"));
                 }
-                let name_position = (start..end)
-                    .rfind(|&index| matches!(self.tokens[index].kind, Token::Identifier(_)))
-                    .unwrap_or(start);
+                let paren = (start..end).find(|&index| self.tokens[index].kind == Token::LeftParen);
+                let name_position = if let Some(paren) = paren {
+                    if self
+                        .tokens
+                        .get(paren + 1)
+                        .is_some_and(|token| token.kind == Token::Star)
+                    {
+                        let mut position = paren + 1;
+                        while self
+                            .tokens
+                            .get(position)
+                            .is_some_and(|token| token.kind == Token::Star)
+                        {
+                            position += 1;
+                        }
+                        position
+                    } else {
+                        paren.saturating_sub(1)
+                    }
+                } else {
+                    (start..end)
+                        .rfind(|&index| matches!(self.tokens[index].kind, Token::Identifier(_)))
+                        .unwrap_or(start)
+                };
                 if name_position <= start {
                     return Err(Diagnostic::new(
                         token.span,
@@ -176,7 +197,6 @@ impl Parser {
                         name.clone(),
                         Alias {
                             position: start,
-                            name_position,
                             span,
                         },
                     )
@@ -230,19 +250,108 @@ impl Parser {
         }
         let previous = self.position;
         self.position = alias.position;
-        let ty = self.type_name()?;
-        if self.position != alias.name_position {
+        let (parsed_name, ty) = self.typedef_type()?;
+        if parsed_name != name {
             return Err(Diagnostic::new(
                 self.current().span,
                 "expected 'typedef type Name;'",
             ));
         }
-        self.identifier()?;
-        let ty = self.array_suffix(ty)?;
         self.position = previous;
         self.resolving_aliases.remove(name);
         self.resolved_aliases.insert(name.to_owned(), ty);
         return Ok(ty);
+    }
+
+    fn typedef_type(&mut self) -> Result<(String, Type), Diagnostic> {
+        let mut ty = self.type_name()?;
+        if self.consume(&Token::LeftParen) {
+            let mut stars = 0;
+            while self.consume(&Token::Star) {
+                stars += 1;
+            }
+            if stars == 0 {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "expected '*' in function pointer typedef",
+                ));
+            }
+            let (name, span) = self.identifier()?;
+            self.expect(
+                Token::RightParen,
+                "expected ')' after function pointer name",
+            )?;
+            ty = self.function_type_suffix(ty, span)?;
+            for _ in 0..stars {
+                ty = self.pointer_type(ty, true);
+            }
+            return Ok((name, ty));
+        }
+        let (name, span) = self.identifier()?;
+        ty = self.array_suffix(ty)?;
+        if self.at(&Token::LeftParen) {
+            ty = self.function_type_suffix(ty, span)?;
+        }
+        return Ok((name, ty));
+    }
+
+    fn pointer_type(&mut self, pointee: Type, mutable: bool) -> Type {
+        let pointer = PointerType { pointee, mutable };
+        let id = if let Some(id) = self
+            .pointers
+            .iter()
+            .position(|existing| *existing == pointer)
+        {
+            id
+        } else {
+            let id = self.pointers.len();
+            self.pointers.push(pointer);
+            id
+        };
+        return Type::Pointer(id);
+    }
+
+    fn function_type_suffix(&mut self, result: Type, span: Span) -> Result<Type, Diagnostic> {
+        self.expect(
+            Token::LeftParen,
+            "expected '(' before callback parameter types",
+        )?;
+        let mut parameters = Vec::new();
+        if self.at(&Token::Void) && self.next_at(&Token::RightParen) {
+            self.advance();
+        } else if !self.at(&Token::RightParen) {
+            loop {
+                let mut ty = self.type_name()?;
+                if matches!(self.current().kind, Token::Identifier(_)) {
+                    self.advance();
+                    ty = self.array_suffix(ty)?;
+                }
+                parameters.push(ty);
+                if !self.consume(&Token::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(
+            Token::RightParen,
+            "expected ')' after callback parameter types",
+        )?;
+        let id = if let Some(id) = self
+            .function_types
+            .iter()
+            .position(|ty| ty.result == result && ty.parameters == parameters)
+        {
+            id
+        } else {
+            let id = self.function_types.len();
+            self.function_types.push(FunctionType {
+                result,
+                parameters,
+                span,
+            });
+            id
+        };
+        return Ok(Type::Function(id));
     }
 
     fn named_type(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
@@ -663,22 +772,13 @@ impl Parser {
                     "raw pointers cannot point to borrow bindings",
                 ));
             }
-            let pointer = PointerType {
-                pointee: base,
-                mutable: !shared,
-            };
-            let id = if let Some(id) = self
-                .pointers
-                .iter()
-                .position(|existing| *existing == pointer)
-            {
-                id
-            } else {
-                let id = self.pointers.len();
-                self.pointers.push(pointer);
-                id
-            };
-            base = Type::Pointer(id);
+            if shared && matches!(base, Type::Function(_)) {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "function types cannot be const-qualified",
+                ));
+            }
+            base = self.pointer_type(base, !shared);
             shared = self.consume(&Token::Const);
         }
         let base = self.array_suffix(base)?;
@@ -1059,6 +1159,17 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expression, Diagnostic> {
         let mut expression = self.primary()?;
         loop {
+            if self.consume(&Token::LeftParen) {
+                let (arguments, end) = self.arguments()?;
+                expression = Expression {
+                    span: expression.span.through(end),
+                    kind: ExpressionKind::IndirectCall {
+                        callee: Box::new(expression),
+                        arguments,
+                    },
+                };
+                continue;
+            }
             if self.consume(&Token::LeftBracket) {
                 let index = self.expression(1)?;
                 let end = self.expect(Token::RightBracket, "expected ']' after index")?;
@@ -1243,10 +1354,12 @@ impl Parser {
                         ));
                     };
                     let (name, _) = self.identifier()?;
-                    self.expect(
-                        Token::LeftParen,
-                        "expected '(' after the static method name",
-                    )?;
+                    if !self.consume(&Token::LeftParen) {
+                        return Ok(Expression {
+                            span: token.span.through(self.tokens[self.position - 1].span),
+                            kind: ExpressionKind::StaticReference { id, name },
+                        });
+                    }
                     let (arguments, end) = self.arguments()?;
                     return Ok(Expression {
                         span: token.span.through(end),

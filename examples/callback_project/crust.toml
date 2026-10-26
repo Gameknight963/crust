@@ -1,0 +1,11 @@
+[project]
+name = "callback-example"
+
+[[targets]]
+name = "callback-example"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["native/callback.c"]
+include-dirs = ["include"]
