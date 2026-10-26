@@ -22,6 +22,8 @@ pub struct Target {
     pub name: String,
     pub kind: TargetKind,
     pub entry: PathBuf,
+    #[serde(default)]
+    pub native: crate::native::Options,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +126,51 @@ impl Project {
                     manifest.display(),
                     target.name
                 ));
+            }
+            let mut inputs = HashSet::new();
+            for (kind, paths, is_directory) in [
+                ("source", &mut target.native.sources, false),
+                ("link input", &mut target.native.link_inputs, false),
+                ("include directory", &mut target.native.include_dirs, true),
+                ("library directory", &mut target.native.library_dirs, true),
+            ] {
+                for path in paths {
+                    let original = directory.join(&*path);
+                    *path = original.canonicalize().map_err(|error| {
+                        format!(
+                            "{}: target '{}' native {kind} {}: {error}",
+                            manifest.display(),
+                            target.name,
+                            original.display()
+                        )
+                    })?;
+                    if (is_directory && !path.is_dir()) || (!is_directory && !path.is_file()) {
+                        return Err(format!(
+                            "{}: target '{}' native {kind} {} must be a {}",
+                            manifest.display(),
+                            target.name,
+                            path.display(),
+                            if is_directory { "directory" } else { "file" }
+                        ));
+                    }
+                    if !is_directory && !inputs.insert(path.clone()) {
+                        return Err(format!(
+                            "{}: target '{}' repeats native input {}",
+                            manifest.display(),
+                            target.name,
+                            path.display()
+                        ));
+                    }
+                }
+            }
+            for library in &target.native.libraries {
+                if library.trim().is_empty() || library.contains(['\0', '/', '\\']) {
+                    return Err(format!(
+                        "{}: target '{}' native library names must be nonempty names. Use link-inputs for paths",
+                        manifest.display(),
+                        target.name
+                    ));
+                }
             }
         }
         return Ok(Project {

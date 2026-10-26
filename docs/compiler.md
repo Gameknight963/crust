@@ -33,6 +33,8 @@ ownership checking, C generation, and native compilation.
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename
 - Project build output goes to `<project>/target/crust/<target>/`
+- Target native options add C11 source files, include paths, explicit link inputs, and library search and name arguments
+- Native paths are resolved relative to the manifest, and compiler arguments are passed directly to the process
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
 - Toolchain environment changes apply to the child compiler process
 - Pointer-sized types follow the Rust host, with a generated C assertion checking native pointer width

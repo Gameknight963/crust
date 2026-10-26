@@ -1,0 +1,11 @@
+[project]
+name = "native-example"
+
+[[targets]]
+name = "native-example"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["native/sum.c"]
+include-dirs = ["include"]

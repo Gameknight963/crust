@@ -1,9 +1,28 @@
+use serde::Deserialize;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Options {
+    pub sources: Vec<PathBuf>,
+    pub include_dirs: Vec<PathBuf>,
+    pub library_dirs: Vec<PathBuf>,
+    pub libraries: Vec<String>,
+    pub link_inputs: Vec<PathBuf>,
+}
 
 // The caller controls artifact locations. This driver never invokes a shell.
 pub fn compile_file(c_path: &Path, executable: &Path) -> Result<(), String> {
+    return compile_file_with_options(c_path, executable, &Options::default());
+}
+
+pub fn compile_file_with_options(
+    c_path: &Path,
+    executable: &Path,
+    options: &Options,
+) -> Result<(), String> {
     let compiler = env::var_os("CC").unwrap_or_else(|| {
         if cfg!(windows) {
             return "clang".into();
@@ -12,7 +31,23 @@ pub fn compile_file(c_path: &Path, executable: &Path) -> Result<(), String> {
     });
     let mut command = Command::new(&compiler);
     configure_windows_toolchain(&mut command);
-    let result = command.arg("-std=c11").arg(c_path).arg("-o").arg(executable)
+    command.arg("-std=c11");
+    for directory in &options.include_dirs {
+        command.arg("-I").arg(directory);
+    }
+    command
+        .args(["-x", "c"])
+        .arg(c_path)
+        .args(&options.sources)
+        .args(["-x", "none"]);
+    command.args(&options.link_inputs);
+    for directory in &options.library_dirs {
+        command.arg("-L").arg(directory);
+    }
+    for library in &options.libraries {
+        command.arg(format!("-l{library}"));
+    }
+    let result = command.arg("-o").arg(executable)
         .output()
         .map_err(|error| format!("could not start C compiler '{}': {error}; set CC to a Clang/GCC-compatible compiler executable", compiler.to_string_lossy()))?;
     if !result.status.success() {

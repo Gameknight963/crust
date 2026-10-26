@@ -19,13 +19,14 @@
 - Native C `char`, raw pointers, unsafe blocks, and external C function declarations
 - Private struct fields and a move-only owner backed by C allocation
 - Unsafe pointer indexing and arithmetic, plus a C-backed integer buffer with checked access
+- Per-target native C sources, include paths, object/library inputs, and native linking
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add function pointers, opaque types, and native linking
+1. Add function pointers and opaque types
 2. Add generic types and functions, interface constraints, and static interface requirements
 3. Add modules, imports, visibility, project dependencies, and library targets
 4. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation

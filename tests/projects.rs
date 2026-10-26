@@ -88,6 +88,115 @@ fn discovers_projects_from_subdirectories_and_runs_the_named_output() {
 }
 
 #[test]
+fn native_sources_includes_objects_and_libraries_link_with_paths_containing_spaces() {
+    let fixture = Fixture::new();
+    fixture.write("src/main.cr", "extern int from_c(int); extern int from_object(); int main() { unsafe { print(from_c(37)); print(from_object()); } return 0; }");
+    fixture.write("native include/answer.h", "#define NATIVE_BONUS 5\n");
+    fixture.write(
+        "native source/answer.input",
+        "#include \"answer.h\"\nint from_c(int value) { return value + NATIVE_BONUS; }\n",
+    );
+    fixture.write(
+        "native source/object.c",
+        "int from_object(void) { return 7; }\n",
+    );
+    fixture.write("native libs/.keep", "");
+    let compiler = std::env::var_os("CC").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "clang".into()
+        } else {
+            "cc".into()
+        }
+    });
+    let result = Command::new(compiler)
+        .args(["-std=c11", "-c"])
+        .arg(fixture.directory.join("native source/object.c"))
+        .arg("-o")
+        .arg(fixture.directory.join("native libs/answer.obj"))
+        .output()
+        .unwrap();
+    success(&result);
+    let library = if cfg!(windows) { "kernel32" } else { "m" };
+    fixture.manifest(&format!("[[targets]]\nname = 'app'\nkind = 'executable'\nentry = 'src/main.cr'\n[targets.native]\nsources = ['native source/answer.input']\ninclude-dirs = ['native include']\nlibrary-dirs = ['native libs']\nlibraries = ['{library}']\nlink-inputs = ['native libs/answer.obj']\n"));
+    let checked = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("check")
+        .env("CC", "missing-native-test-compiler")
+        .current_dir(&fixture.directory)
+        .output()
+        .unwrap();
+    success(&checked);
+    assert!(!fixture.directory.join("target").exists());
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n7\n");
+}
+
+#[test]
+fn native_options_are_selected_independently_for_each_target() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "main.cr",
+        "extern int native_value(); int main() { unsafe { print(native_value()); } return 0; }",
+    );
+    fixture.write("first.c", "int native_value(void) { return 1; }");
+    fixture.write("second.c", "int native_value(void) { return 2; }");
+    fixture.manifest("[[targets]]\nname = 'first'\nkind = 'executable'\nentry = 'main.cr'\n[targets.native]\nsources = ['first.c']\n[[targets]]\nname = 'second'\nkind = 'executable'\nentry = 'main.cr'\n[targets.native]\nsources = ['second.c']\n");
+    success(&fixture.invoke(&["build"]));
+    for (name, expected) in [("first", "1\n"), ("second", "2\n")] {
+        let output = fixture.invoke(&["run", "--target", name]);
+        success(&output);
+        assert_eq!(text(&output), expected);
+    }
+}
+
+#[test]
+fn native_configuration_checks_paths_kinds_duplicates_and_unknown_fields() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("native/helper.c", "int helper(void) { return 1; }");
+    for config in [
+        "sources = ['missing.c']",
+        "sources = ['native']",
+        "sources = ['native/helper.c', 'native/helper.c']",
+        "sources = ['native/helper.c']\nlink-inputs = ['native/helper.c']",
+        "include-dirs = ['native/helper.c']",
+        "library-dirs = ['missing-directory']",
+        "link-inputs = ['native']",
+        "libraries = ['']",
+        "libraries = ['../library']",
+        "sources = 'native/helper.c'",
+        "flags = ['-O2']",
+    ] {
+        fixture.manifest(&format!("[[targets]]\nname = 'app'\nkind = 'executable'\nentry = 'main.cr'\n[targets.native]\n{config}\n"));
+        let output = fixture.invoke(&["check"]);
+        assert!(!output.status.success(), "should reject {config}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("crust.toml"));
+    }
+}
+
+#[test]
+fn build_outputs_preserve_native_sources_and_explicit_link_inputs() {
+    for source_input in [true, false] {
+        let fixture = Fixture::new();
+        fixture.write("main.cr", "int main() { return 0; }");
+        let input = if source_input {
+            "target/crust/app/app.c".to_owned()
+        } else {
+            format!("target/crust/app/app{}", std::env::consts::EXE_SUFFIX)
+        };
+        fixture.write(&input, "native input must be preserved");
+        fixture.manifest(&format!("[[targets]]\nname = 'app'\nkind = 'executable'\nentry = 'main.cr'\n[targets.native]\n{} = ['{input}']\n", if source_input { "sources" } else { "link-inputs" }));
+        let output = fixture.invoke(&["build"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("overwrite an input file"));
+        assert_eq!(
+            fs::read_to_string(fixture.directory.join(input)).unwrap(),
+            "native input must be preserved"
+        );
+    }
+}
+
+#[test]
 fn projects_support_frontend_commands_without_invoking_a_c_compiler() {
     let fixture = Fixture::new();
     fixture.write("src/main.cr", "int main() { return 0; }");

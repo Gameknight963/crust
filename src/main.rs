@@ -66,7 +66,13 @@ fn run() -> Result<ExitCode, String> {
             .join("target")
             .join("crust")
             .join(path.file_name().ok_or("source path needs a filename")?);
-        return process_source(path, options.mode, &output, &[path.to_owned()]);
+        return process_source(
+            path,
+            options.mode,
+            &output,
+            &[path.to_owned()],
+            &crust::native::Options::default(),
+        );
     }
     let directory = env::current_dir().map_err(|error| error.to_string())?;
     let path = Project::discover(&directory)?;
@@ -132,7 +138,11 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
     let protected: Vec<_> = project
         .targets
         .iter()
-        .map(|target| target.entry.clone())
+        .flat_map(|target| {
+            std::iter::once(target.entry.clone())
+                .chain(target.native.sources.clone())
+                .chain(target.native.link_inputs.clone())
+        })
         .chain(std::iter::once(project.manifest.clone()))
         .collect();
     for target in targets {
@@ -142,7 +152,13 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
             .join("crust")
             .join(&target.name)
             .join(&target.name);
-        let code = process_source(&target.entry, options.mode, &output, &protected)?;
+        let code = process_source(
+            &target.entry,
+            options.mode,
+            &output,
+            &protected,
+            &target.native,
+        )?;
         if options.mode == Mode::Run {
             return Ok(code);
         }
@@ -155,6 +171,7 @@ fn process_source(
     mode: Mode,
     output: &Path,
     protected: &[PathBuf],
+    native: &crust::native::Options,
 ) -> Result<ExitCode, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("{}: could not read file: {error}", path.display()))?;
@@ -186,7 +203,7 @@ fn process_source(
         print!("{generated}");
         return Ok(ExitCode::SUCCESS);
     }
-    let executable = build(&generated, output, protected)?;
+    let executable = build(&generated, output, protected, native)?;
     if mode == Mode::Build {
         println!("Built {}", executable.display());
         return Ok(ExitCode::SUCCESS);
@@ -197,7 +214,12 @@ fn process_source(
     return Ok(ExitCode::from(status.code().unwrap_or(1) as u8));
 }
 
-fn build(generated: &str, output: &Path, protected: &[PathBuf]) -> Result<PathBuf, String> {
+fn build(
+    generated: &str,
+    output: &Path,
+    protected: &[PathBuf],
+    native: &crust::native::Options,
+) -> Result<PathBuf, String> {
     let directory = output.parent().ok_or("output path needs a directory")?;
     fs::create_dir_all(directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
@@ -230,6 +252,6 @@ fn build(generated: &str, output: &Path, protected: &[PathBuf]) -> Result<PathBu
     }
     fs::write(&c_path, generated)
         .map_err(|error| format!("could not write {}: {error}", c_path.display()))?;
-    crust::native::compile_file(&c_path, &executable)?;
+    crust::native::compile_file_with_options(&c_path, &executable, native)?;
     return Ok(executable);
 }
