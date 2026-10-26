@@ -198,6 +198,30 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
         );
     }
 
+    for constraint in &program.interface_checks {
+        for requirement in &constraint.requirements {
+            let expected: Vec<_> = requirement
+                .parameters
+                .iter()
+                .map(|parameter| parameter.ty)
+                .collect();
+            let satisfied = signatures.get(&requirement.name).is_some_and(|signature| {
+                signature.return_type == requirement.return_type && signature.parameters == expected
+            });
+            if !satisfied {
+                return Err(Diagnostic::new(
+                    constraint.span,
+                    format!(
+                        "type '{}' does not satisfy interface '{}': missing or incompatible {}",
+                        types.describe(constraint.ty),
+                        constraint.name,
+                        requirement.description()
+                    ),
+                ));
+            }
+        }
+    }
+
     match signatures.get("main") {
         Some(signature)
             if signature.return_type == Type::Integer(IntType::I32)

@@ -181,6 +181,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub interface_checks: Vec<InterfaceCheck>,
     pub function_types: Vec<FunctionType>,
     pub pointers: Vec<PointerType>,
     pub enum_names: Vec<(String, Span)>,
@@ -189,6 +190,14 @@ pub struct Program {
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterfaceCheck {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+    pub requirements: Vec<Function>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,7 +235,7 @@ pub struct ArrayType {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructDefinition {
     pub id: usize,
     pub fields: Vec<Field>,
@@ -242,7 +251,7 @@ pub struct Field {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub external: bool,
     pub name: String,
@@ -272,7 +281,7 @@ impl Function {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
     pub ty: Type,

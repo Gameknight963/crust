@@ -77,6 +77,42 @@ that transfers ownership can return `move(value)`.
 See [the generic buffer](../examples/generic_buffer.cr) for a C-backed container
 with private storage, checked borrows, and automatic deallocation.
 
+## Interfaces
+
+Interfaces declare method requirements. A constraint such as `T: Readable`
+accepts a struct with matching signatures. Parameter names can differ.
+
+```c
+interface Readable {
+    int read() const;
+};
+
+static interface Factory {
+    Self create(int value);
+};
+
+T make<T: Factory>(int value) {
+    return T::create(value);
+}
+
+int read_value<T: Readable>(const T^ value) {
+    return value->read();
+}
+```
+
+- Constraints apply to generic functions and structs, with `+` joining multiple requirements: `T: Readable + Factory`
+- Matching includes the return type, parameter types, receiver kind, and receiver mutability
+- `Self` denotes the implementing struct in interface signatures
+- Instance requirements support shared, exclusive, and explicit `Self this` value receivers
+- An ordinary interface can include individual `static` method requirements
+- A `static interface` makes every member requirement static, and ordinary structs can satisfy it
+- Requirements are checked for each used concrete type, including members the generic body never calls
+- Interface calls use the concrete methods, with the ordinary ownership and borrow rules
+
+Interface declarations describe signatures. Generic bodies are checked with
+their concrete types when instantiated. See [the interface example](../examples/interfaces.cr)
+for a struct satisfying both instance and static requirements.
+
 ## Integers and conversions
 
 | Names | Representation |

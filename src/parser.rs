@@ -64,10 +64,12 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         }
     }
 
+    parser.validate_interfaces()?;
     functions.append(&mut parser.methods);
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
     return Ok(Program {
+        interface_checks: parser.generics.interface_checks,
         function_types: parser.function_types,
         pointers: parser.pointers,
         enum_names: parser.enum_names,
@@ -79,6 +81,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     });
 }
 
+#[derive(Clone)]
 struct Parser {
     generics: generics::Templates,
     pending_greater: Option<SpannedToken>,

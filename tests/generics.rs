@@ -80,10 +80,12 @@ fn nested_type_arguments_and_generic_type_and_value_names_remain_distinct() {
             Wrap<int> second = first;
             print(Wrap<int>(second.value));
             Wrap<int>(second.value);
+            Wrap<int>[2] array = { { .value = 5 }, { .value = 6 } };
+            print(array[1].value);
             return 0;
         }
     "#,
-        "42\n3\n",
+        "42\n3\n6\n",
         "",
     );
 }

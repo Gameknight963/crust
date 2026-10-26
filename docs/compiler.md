@@ -13,7 +13,7 @@ ownership checking, C generation, and native compilation.
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
-| `src/parser/generics.rs` | Generic declarations and concrete instantiation |
+| `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
@@ -35,6 +35,7 @@ ownership checking, C generation, and native compilation.
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature
 - Generic declarations instantiate concrete structs and functions for each used combination of type arguments
 - Expression types, conversions, resolved calls, and constants are recorded separately for each function, including generic instances sharing source spans
+- Interface constraints compare concrete method signatures before function bodies are checked, and calls retain ordinary direct dispatch
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename

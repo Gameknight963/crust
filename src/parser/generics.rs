@@ -5,11 +5,15 @@ pub(super) struct Template {
     start: usize,
     body: usize,
     parameters: Vec<String>,
+    constraints: Vec<(String, String)>,
     span: Span,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Templates {
+    interfaces: HashMap<String, Interface>,
+    checked_interfaces: HashSet<(Type, String)>,
+    pub(super) interface_checks: Vec<InterfaceCheck>,
     pub(super) structs: HashMap<String, Template>,
     functions: HashMap<String, Template>,
     pub(super) ends: HashMap<usize, usize>,
@@ -22,7 +26,15 @@ pub(super) struct Templates {
     depth: usize,
 }
 
-fn parameters(tokens: &[SpannedToken], mut position: usize) -> Option<(Vec<String>, usize)> {
+#[derive(Clone)]
+struct Interface {
+    body: usize,
+    all_static: bool,
+}
+
+type TypeParameters = Vec<(String, Vec<String>)>;
+
+fn parameters(tokens: &[SpannedToken], mut position: usize) -> Option<(TypeParameters, usize)> {
     if tokens.get(position)?.kind != Token::Less {
         return None;
     }
@@ -32,8 +44,24 @@ fn parameters(tokens: &[SpannedToken], mut position: usize) -> Option<(Vec<Strin
         let Token::Identifier(name) = &tokens.get(position)?.kind else {
             return None;
         };
-        names.push(name.clone());
+        let name = name.clone();
         position += 1;
+        let mut constraints = Vec::new();
+        if tokens.get(position)?.kind == Token::Colon {
+            position += 1;
+            loop {
+                let Token::Identifier(constraint) = &tokens.get(position)?.kind else {
+                    return None;
+                };
+                constraints.push(constraint.clone());
+                position += 1;
+                if tokens.get(position)?.kind != Token::Plus {
+                    break;
+                }
+                position += 1;
+            }
+        }
+        names.push((name, constraints));
         match tokens.get(position)?.kind {
             Token::Greater => return Some((names, position + 1)),
             Token::Comma => position += 1,
@@ -91,12 +119,22 @@ impl Parser {
                 break;
             }
         }
-        while self
-            .tokens
-            .get(position)
-            .is_some_and(|token| matches!(token.kind, Token::Star | Token::Const | Token::Caret))
-        {
-            position += 1;
+        loop {
+            match self.tokens.get(position).map(|token| &token.kind) {
+                Some(Token::Star | Token::Const | Token::Caret) => position += 1,
+                Some(Token::LeftBracket)
+                    if matches!(
+                        self.tokens.get(position + 1).map(|token| &token.kind),
+                        Some(Token::IntegerLiteral(_))
+                    ) && self
+                        .tokens
+                        .get(position + 2)
+                        .is_some_and(|token| token.kind == Token::RightBracket) =>
+                {
+                    position += 3
+                }
+                _ => break,
+            }
         }
         return matches!(
             self.tokens.get(position).map(|token| &token.kind),
@@ -109,6 +147,62 @@ impl Parser {
         let mut depth = 0usize;
         let mut declaration_start = 0;
         while position < self.tokens.len() {
+            let all_static = self.tokens[position].kind == Token::Static;
+            let interface_position = position + usize::from(all_static);
+            if depth == 0
+                && self
+                    .tokens
+                    .get(interface_position)
+                    .is_some_and(|token| token.kind == Token::Interface)
+            {
+                let Some(SpannedToken {
+                    kind: Token::Identifier(name),
+                    span,
+                }) = self.tokens.get(interface_position + 1)
+                else {
+                    return Err(Diagnostic::new(
+                        self.tokens[interface_position].span,
+                        "expected an interface name",
+                    ));
+                };
+                let body = interface_position + 2;
+                if !self
+                    .tokens
+                    .get(body)
+                    .is_some_and(|token| token.kind == Token::LeftBrace)
+                {
+                    return Err(Diagnostic::new(
+                        *span,
+                        "expected '{' after the interface name",
+                    ));
+                }
+                let end = closing(&self.tokens, body, Token::LeftBrace, Token::RightBrace)? + 1;
+                if !self
+                    .tokens
+                    .get(end)
+                    .is_some_and(|token| token.kind == Token::Semicolon)
+                {
+                    return Err(Diagnostic::new(
+                        *span,
+                        "expected ';' after interface declaration",
+                    ));
+                }
+                if self
+                    .generics
+                    .interfaces
+                    .insert(name.clone(), Interface { body, all_static })
+                    .is_some()
+                {
+                    return Err(Diagnostic::new(
+                        *span,
+                        format!("interface '{name}' is already defined"),
+                    ));
+                }
+                self.generics.ends.insert(position, end + 1);
+                position = end + 1;
+                declaration_start = position;
+                continue;
+            }
             let is_struct = depth == 0
                 && self.tokens[position].kind == Token::Struct
                 && self
@@ -166,7 +260,7 @@ impl Parser {
                     end += 1;
                 }
                 let mut seen = HashSet::new();
-                for parameter in &names {
+                for (parameter, _) in &names {
                     if matches!(parameter.as_str(), "Self" | "this") || !seen.insert(parameter) {
                         return Err(Diagnostic::new(
                             span,
@@ -177,7 +271,15 @@ impl Parser {
                 let template = Template {
                     start,
                     body,
-                    parameters: names,
+                    constraints: names
+                        .iter()
+                        .flat_map(|(parameter, constraints)| {
+                            constraints
+                                .iter()
+                                .map(move |constraint| (parameter.clone(), constraint.clone()))
+                        })
+                        .collect(),
+                    parameters: names.into_iter().map(|(name, _)| name).collect(),
                     span,
                 };
                 let registry = if is_struct {
@@ -208,6 +310,21 @@ impl Parser {
                 _ => {}
             }
             position += 1;
+        }
+        for template in self
+            .generics
+            .structs
+            .values()
+            .chain(self.generics.functions.values())
+        {
+            for (_, name) in &template.constraints {
+                if !self.generics.interfaces.contains_key(name) {
+                    return Err(Diagnostic::new(
+                        template.span,
+                        format!("unknown interface '{name}'"),
+                    ));
+                }
+            }
         }
         return Ok(());
     }
@@ -331,10 +448,11 @@ impl Parser {
         let id = self.struct_names.len();
         self.struct_names.push((display_name, span));
         self.generics.struct_instances.insert(key, id);
-        let context = self.enter_template(&template, arguments, template.body);
+        let context = self.enter_template(&template, arguments.clone(), template.body);
         let definition = self.struct_body(id, name, template.span);
         self.leave_template(context);
         self.generics.struct_definitions.push(definition?);
+        self.instantiate_constraints(&template, &arguments, span)?;
         return Ok(Type::Struct(id));
     }
 
@@ -354,12 +472,118 @@ impl Parser {
         self.generics
             .function_instances
             .insert(key, internal.clone());
-        let context = self.enter_template(&template, arguments, template.start);
+        let context = self.enter_template(&template, arguments.clone(), template.start);
         self.generics.current_function = Some(internal.clone());
         let definition = self.function();
         self.leave_template(context);
         self.generics.function_definitions.push(definition?);
+        self.instantiate_constraints(&template, &arguments, span)?;
         return Ok(internal);
+    }
+
+    fn instantiate_constraints(
+        &mut self,
+        template: &Template,
+        arguments: &[Type],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        for (parameter, name) in &template.constraints {
+            let index = template
+                .parameters
+                .iter()
+                .position(|item| item == parameter)
+                .unwrap();
+            let ty = arguments[index];
+            if !self.generics.checked_interfaces.insert((ty, name.clone())) {
+                continue;
+            }
+            let Type::Struct(id) = ty else {
+                return Err(Diagnostic::new(
+                    span,
+                    format!("interface '{name}' requires a struct type"),
+                ));
+            };
+            let interface = self.generics.interfaces[name].clone();
+            let signature_template = Template {
+                start: interface.body,
+                body: interface.body,
+                parameters: vec!["Self".to_owned()],
+                constraints: Vec::new(),
+                span,
+            };
+            let context = self.enter_template(&signature_template, vec![ty], interface.body + 1);
+            self.current_struct = Some(id);
+            let requirements = self.interface_requirements(id, interface.all_static);
+            self.leave_template(context);
+            self.generics.interface_checks.push(InterfaceCheck {
+                name: name.clone(),
+                ty,
+                span,
+                requirements: requirements?,
+            });
+        }
+        return Ok(());
+    }
+
+    fn interface_requirements(
+        &mut self,
+        id: usize,
+        all_static: bool,
+    ) -> Result<Vec<Function>, Diagnostic> {
+        let mut requirements = Vec::new();
+        let mut names = HashSet::new();
+        while !self.at(&Token::RightBrace) {
+            let start = self.current().span;
+            let is_static = self.consume(&Token::Static) || all_static;
+            let result = self.type_name()?;
+            let (name, span) = self.identifier()?;
+            if !names.insert(name.clone()) {
+                return Err(Diagnostic::new(
+                    span,
+                    "interface member is already declared",
+                ));
+            }
+            let key = if is_static {
+                static_method_name(id, &name)
+            } else {
+                method_name(id, &name)
+            };
+            let function = self.function_body(result, key, start, Some(id), is_static, true)?;
+            let mut parameters = HashSet::new();
+            for parameter in &function.parameters {
+                if !parameters.insert(&parameter.name) || (is_static && parameter.name == "this") {
+                    return Err(Diagnostic::new(
+                        parameter.span,
+                        "invalid or duplicate interface parameter name",
+                    ));
+                }
+            }
+            requirements.push(function);
+        }
+        return Ok(requirements);
+    }
+
+    pub(super) fn validate_interfaces(&self) -> Result<(), Diagnostic> {
+        if self.generics.interfaces.is_empty() {
+            return Ok(());
+        }
+        // Resolve signatures in an isolated parser. Abstract Self may instantiate
+        // other generic signatures, whose temporary types must not enter output.
+        let mut validation = self.clone();
+        let id = validation.struct_names.len();
+        validation
+            .struct_names
+            .push(("interface Self".to_owned(), self.current().span));
+        let mut interfaces: Vec<_> = validation.generics.interfaces.values().cloned().collect();
+        interfaces.sort_by_key(|interface| interface.body);
+        for interface in interfaces {
+            validation.position = interface.body + 1;
+            validation.pending_greater = None;
+            validation.current_struct = Some(id);
+            validation.generics.bindings = HashMap::from([("Self".to_owned(), Type::Struct(id))]);
+            validation.interface_requirements(id, interface.all_static)?;
+        }
+        return Ok(());
     }
 
     fn enter_template(

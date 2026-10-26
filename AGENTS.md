@@ -23,7 +23,7 @@ and borrows, generates C, and invokes a native C compiler.
 ## Project conventions
 
 - Treat language-design discussion as discussion until implementation is requested.
-- Distinguish implemented features from proposed syntax. Interfaces, constrained/replaceable typedefs, and static constructors remain design topics.
+- Distinguish implemented features from proposed syntax. Constrained/replaceable typedefs and static constructors remain design topics.
 - The user authorized autonomous compiler work along docs/roadmap.md. Make routine implementation decisions and commit completed stages.
 - Continue across completed stages during autonomous work. A finished commit is a checkpoint. Ask about material language-design choices when needed and continue independent work while waiting.
 - Project configuration uses crust.toml. Plan editor support around a standalone LSP executable shared by VS Code, Visual Studio, and direct clients such as Neovim.
