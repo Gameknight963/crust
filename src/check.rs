@@ -144,7 +144,10 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
             method_calls: &mut method_calls,
         };
         for (index, parameter) in function.parameters.iter().enumerate() {
-            if parameter.name == "this" && !(index == 0 && function.name.starts_with('@')) {
+            if parameter.name == "this"
+                && !(index == 0
+                    && (function.name.starts_with('@') || function.name.starts_with('~')))
+            {
                 return Err(Diagnostic::new(
                     parameter.span,
                     "this is reserved for the instance receiver",

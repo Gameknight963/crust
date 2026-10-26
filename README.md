@@ -4,7 +4,7 @@ An experimental C-like language with ownership checking, implemented in Rust.
 
 Crust currently compiles a small language through C and runs the resulting
 native executable. It supports functions, integer expressions, control flow,
-user-defined structs with instance methods and owning fields, a built-in owning heap type, and
+user-defined structs with instance methods, destructors, and owning fields, a built-in owning heap type, and
 shared/exclusive function-argument borrows.
 This is a prototype of the language design, not a complete C-compatible language.
 
@@ -25,6 +25,7 @@ cargo run -- examples/ownership.cr
 cargo run -- examples/borrowing.cr
 cargo run -- examples/structs.cr
 cargo run -- examples/methods.cr
+cargo run -- examples/destructors.cr
 cargo check
 cargo test
 cargo fmt
@@ -41,6 +42,7 @@ to the program as an argument. A bare source filename means compile and run.
 | `borrowing.cr` | `42`, `8`, `99` |
 | `structs.cr` | `1`, `42`, `2`, `43` |
 | `methods.cr` | `42`, `7`, `7` |
+| `destructors.cr` | `20`, `10`, `30` |
 
 The CLI also exposes individual stages:
 
@@ -87,7 +89,7 @@ offers **Crust: check** and **Crust: run example**.
 - `src/ast.rs`: the syntax tree.
 - `src/parser.rs`: recursive-descent parsing and operator precedence.
 - `src/check.rs`: types, scopes, ownership states, and call-argument loans.
-- `src/types.rs`: struct layouts, fields, recursive-layout checks, and ownership propagation.
+- `src/types.rs`: struct layouts, fields, recursive-layout checks, and ownership/destructor propagation.
 - `src/emit_c.rs`: C generation, checked arithmetic, and owner cleanup.
 - `src/native.rs`: the external C compiler driver and Windows toolchain discovery.
 - `tests/`: native execution, error cases, borrowing, and allocator-instrumented cleanup tests.
@@ -106,6 +108,7 @@ offers **Crust: check** and **Crust: run example**.
   integer suffixes, other bases, and floating-point literals are rejected.
 - Parentheses, braces, brackets, semicolons, commas, dots, and colons.
 - Operators: `= + - * / % ! < > & | ^ == != <= >= && || ->`.
+  `~` is tokenized for destructor declarations; bitwise complement is not implemented.
 - Whitespace, `//` comments, and non-nesting `/* ... */` comments.
 - UTF-8 byte spans, one-based character columns, and LF/CRLF/CR line endings.
   Tabs count as one character. Unicode is accepted in comments; identifiers are
@@ -154,8 +157,10 @@ transfer it to the caller. Discarded owning results are freed automatically.
 
 Owners are dropped in reverse declaration order on normal scope exit or return.
 Replacing an owner drops its previous allocation after evaluating the right
-side. Internal null drop flags prevent double frees; null is not a usable
-`BoxInt` value in the source language.
+side. `BoxInt` uses internal null drop flags; owning struct locals and parameters
+use separate initialized-value flags so moved-from values are skipped. These
+flags do not add hidden fields to struct layouts. Null is not a usable `BoxInt`
+value in the source language.
 
 An owner used after a conditional move is rejected unless reinitialized. Loop
 conditions cannot consume outer owners, and continuing iterations must restore
@@ -189,7 +194,7 @@ int main()
   literals such as `(struct Item){ .id = 1, .value = box_int(42) }`.
 - `item.id` accesses a field; `borrowed_item->id` accesses one through a borrow.
   Fields can be assigned, passed by value when copyable, and borrowed directly.
-- A struct containing only copyable fields is itself copyable. Ownership
+- A struct containing only copyable fields and no custom destructor is itself copyable. Ownership
   propagates through nested structs: a struct containing `BoxInt`, directly or
   indirectly, requires an explicit whole-value move.
 - Owning parameters and returns transfer whole structs. Reading any field after
@@ -201,9 +206,6 @@ int main()
   or its pointee; accessing a field directly on a temporary return value is not
   supported yet. Empty structs, borrowed fields, and partial initialization are
   also unsupported.
-
-A custom cleanup hook would be a user-defined destructor for resources the
-compiler cannot infer, such as a file handle. Those hooks remain a future feature.
 
 ## Instance methods
 
@@ -259,6 +261,40 @@ int main() {
   reserved for receivers and cannot be shadowed by local variables or parameters.
   There is no `readonly` or `constexpr` keyword in this prototype.
 
+## Destructors
+
+Custom destructors use `~Type()` inside the struct, with no return type:
+
+```c
+struct Resource {
+    int handle;
+
+    ~Resource() {
+        print(this->handle);
+    }
+};
+```
+
+- A destructor's name must match its enclosing struct. Each struct can define
+  one destructor, with no explicit parameters and no `const` qualifier.
+  Its implicit `this` is an exclusive `Self^` borrow, so its body can read and
+  modify fields and call instance methods using `this->method()`.
+- The compiler calls the destructor on normal scope exit, return cleanup,
+  replacement, or discard of an initialized value. The destructor body runs
+  first, then owning fields are cleaned up in reverse declaration order.
+  An early `return;` from the destructor still leaves field cleanup to the caller.
+- A custom destructor makes the struct move-only, including structs whose fields
+  are all integers. This property propagates to enclosing structs. Whole-value
+  moves transfer destruction responsibility; moved-from locals and parameters
+  are skipped even when their fields are ordinary integers.
+- Explicit destructor calls such as `resource.~Resource()` are rejected. `drop`
+  remains an ordinary method name with no compiler-provided lifecycle meaning.
+- Runtime arithmetic errors and other process termination still do not unwind
+  scopes. Destructors apply to normal control flow in this prototype.
+
+The example prints handles to make destruction observable. Releasing real C
+resources will require the future unsafe/raw-pointer and C-interop features.
+
 ## Borrowing prototype
 
 Borrows currently exist only as function parameters and temporary call arguments:
@@ -296,9 +332,9 @@ int main(void)
 
 ## Not implemented yet
 
-Custom cleanup hooks, generics, interfaces, choice types,
+Generics, interfaces, choice types,
 arrays/slices, strings, raw pointers, unsafe blocks, modules, and C header imports.
 The generated C backend does not by itself provide arbitrary C interop.
 
-Future work can build on struct ownership to add custom cleanup, general
-resource wrappers, and C interop.
+Future work can build on struct ownership and destructors to add general
+resource wrappers and C interop.

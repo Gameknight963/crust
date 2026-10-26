@@ -45,6 +45,7 @@ pub enum Token {
     Ampersand,
     Pipe,
     Caret,
+    Tilde,
     EqualEqual,
     BangEqual,
     LessEqual,
@@ -245,6 +246,7 @@ impl Lexer<'_> {
             Some('&') => Token::Ampersand,
             Some('|') => Token::Pipe,
             Some('^') => Token::Caret,
+            Some('~') => Token::Tilde,
             Some(character) => {
                 self.advance();
                 return Err(self.error(start, &format!("unexpected character {character:?}")));

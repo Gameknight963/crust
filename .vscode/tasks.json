@@ -59,6 +59,14 @@
             "problemMatcher": ["$rustc"]
         },
         {
+            "label": "Crust: run destructors example",
+            "type": "process",
+            "command": "cargo",
+            "args": ["run", "--", "examples/destructors.cr"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$rustc"]
+        },
+        {
             "label": "Crust: test",
             "type": "process",
             "command": "cargo",

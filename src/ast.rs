@@ -55,6 +55,7 @@ pub struct Program {
 pub struct StructDefinition {
     pub id: usize,
     pub fields: Vec<Field>,
+    pub has_destructor: bool,
     pub span: Span,
 }
 
@@ -76,6 +77,9 @@ pub struct Function {
 
 impl Function {
     pub fn description(&self) -> String {
+        if self.name.starts_with('~') {
+            return String::from("destructor");
+        }
         if let Some(method) = self.name.strip_prefix('@') {
             let (_, name) = method.split_once('_').expect("internal method name");
             return format!("method '{name}'");
@@ -211,4 +215,8 @@ pub enum BinaryOperator {
 // free functions, builtins, and methods on other structs.
 pub fn method_name(id: usize, name: &str) -> String {
     return format!("@{id}_{name}");
+}
+
+pub fn destructor_name(id: usize) -> String {
+    return format!("~{id}");
 }

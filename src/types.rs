@@ -7,6 +7,7 @@ pub struct StructInfo {
     pub name: String,
     pub fields: Vec<Field>,
     pub owns: bool,
+    pub has_destructor: bool,
 }
 
 pub struct Types {
@@ -63,6 +64,7 @@ impl Types {
                 name: name.clone(),
                 fields: definition.fields.clone(),
                 owns: false,
+                has_destructor: definition.has_destructor,
             });
         }
 
@@ -91,7 +93,7 @@ impl Types {
             ));
         }
         states[id] = 1;
-        let mut owns = false;
+        let mut owns = self.structs[id].has_destructor;
         for field in self.structs[id].fields.clone() {
             match field.ty {
                 Type::BoxInt => owns = true,

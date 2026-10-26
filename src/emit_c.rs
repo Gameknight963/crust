@@ -35,6 +35,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
     }
+    emitter.drop_functions();
     for function in &program.functions {
         emitter.line("");
         emitter.line(&header(function));
@@ -45,6 +46,13 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
                 Local {
                     name: format!("crust_arg_{index}"),
                     ty: parameter.ty,
+                    live: if matches!(parameter.ty, Type::Struct(_))
+                        && checked.types.owns(parameter.ty)
+                    {
+                        Some(format!("crust_live_arg_{index}"))
+                    } else {
+                        None
+                    },
                 },
             );
         }
@@ -54,6 +62,9 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 }
 
 fn function_name(name: &str) -> String {
+    if let Some(id) = name.strip_prefix('~') {
+        return format!("crust_destructor_{id}");
+    }
     if let Some(method) = name.strip_prefix('@') {
         return format!("crust_method_{method}");
     }
@@ -112,6 +123,9 @@ fn header(function: &Function) -> String {
 struct Local {
     name: String,
     ty: Type,
+    // Named owning structs can be moved without changing their public layout.
+    // Fields and unnamed results are always initialized when cleanup reaches them.
+    live: Option<String>,
 }
 
 #[derive(Default)]
@@ -149,11 +163,21 @@ impl Emitter<'_> {
             }
             self.indent -= 1;
             self.line("};");
+            self.line("");
+        }
+    }
+
+    fn drop_functions(&mut self) {
+        for id in &self.types.order {
+            let info = &self.types.structs[*id];
             if info.owns {
                 self.line(&format!(
                     "static inline void crust_drop_struct_{id}(struct crust_struct_{id} *value) {{"
                 ));
                 self.indent += 1;
+                if info.has_destructor {
+                    self.line(&format!("{}(value);", function_name(&destructor_name(*id))));
+                }
                 for field in info.fields.iter().rev() {
                     self.drop_value(field.ty, &format!("value->crust_field_{}", field.name));
                 }
@@ -174,6 +198,19 @@ impl Emitter<'_> {
         }
     }
 
+    fn drop_local(&mut self, local: &Local) {
+        if let Some(live) = &local.live {
+            self.line(&format!("if ({live}) {{"));
+            self.indent += 1;
+            self.drop_value(local.ty, &local.name);
+            self.line(&format!("{live} = 0;"));
+            self.indent -= 1;
+            self.line("}");
+        } else {
+            self.drop_value(local.ty, &local.name);
+        }
+    }
+
     fn block(&mut self, block: &Block) {
         self.block_with_scope(block, Scope::default());
     }
@@ -181,6 +218,11 @@ impl Emitter<'_> {
     fn block_with_scope(&mut self, block: &Block, scope: Scope) {
         self.line("{");
         self.indent += 1;
+        for name in &scope.declaration_order {
+            if let Some(live) = &scope.variables[name].live {
+                self.line(&format!("int {live} = 1;"));
+            }
+        }
         self.scopes.push(scope);
         for statement in &block.statements {
             self.statement(statement);
@@ -201,11 +243,19 @@ impl Emitter<'_> {
                 let value = self.value_expression(initializer);
                 let local = self.fresh_name("local");
                 self.line(&format!("{} {local} = {value};", c_type(*ty)));
+                let live = if matches!(ty, Type::Struct(_)) && self.types.owns(*ty) {
+                    let name = self.fresh_name("live");
+                    self.line(&format!("int {name} = 1;"));
+                    Some(name)
+                } else {
+                    None
+                };
                 self.scopes.last_mut().unwrap().insert(
                     name.clone(),
                     Local {
                         name: local,
                         ty: *ty,
+                        live,
                     },
                 );
             }
@@ -214,8 +264,11 @@ impl Emitter<'_> {
                 // old value, before dropping the destination's previous owner.
                 let value = self.value_expression(value);
                 let local = self.local(name);
-                self.drop_value(local.ty, &local.name);
+                self.drop_local(&local);
                 self.line(&format!("{} = {value};", local.name));
+                if let Some(live) = local.live {
+                    self.line(&format!("{live} = 1;"));
+                }
             }
             StatementKind::Store { target, value } => {
                 let value = self.value_expression(value);
@@ -320,7 +373,10 @@ impl Emitter<'_> {
                     if local.ty == Type::BoxInt {
                         self.line(&format!("{} = NULL;", local.name));
                     } else {
-                        self.line(&format!("{} = ({}){{0}};", local.name, c_type(local.ty)));
+                        self.line(&format!(
+                            "{} = 0;",
+                            local.live.expect("owning struct has a drop flag")
+                        ));
                     }
                     return Some(temporary);
                 }
@@ -486,20 +542,20 @@ impl Emitter<'_> {
 
     fn cleanup_scope(&mut self, index: usize) {
         let scope = &self.scopes[index];
-        let owners: Vec<(String, Type)> = scope
+        let owners: Vec<Local> = scope
             .declaration_order
             .iter()
             .rev()
             .filter_map(|name| {
                 let local = &scope.variables[name];
                 if self.types.owns(local.ty) {
-                    return Some((local.name.clone(), local.ty));
+                    return Some(local.clone());
                 }
                 return None;
             })
             .collect();
-        for (owner, ty) in owners {
-            self.drop_value(ty, &owner);
+        for owner in owners {
+            self.drop_local(&owner);
         }
     }
 

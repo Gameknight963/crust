@@ -59,12 +59,54 @@ impl Parser {
         self.current_struct = Some(id);
         self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
         let mut fields = Vec::new();
+        let mut has_destructor = false;
         while !self.at(&Token::RightBrace) {
             if self.at(&Token::EndOfFile) {
                 return Err(Diagnostic::new(
                     self.current().span,
                     "expected '}' after the struct fields",
                 ));
+            }
+            if self.at(&Token::Tilde) {
+                let start = self.advance().span;
+                let (name, name_span) = self.identifier()?;
+                if name != self.struct_names[id].0 {
+                    return Err(Diagnostic::new(
+                        name_span,
+                        "the destructor name must match its enclosing struct",
+                    ));
+                }
+                if has_destructor {
+                    return Err(Diagnostic::new(
+                        start,
+                        "a struct can only define one destructor",
+                    ));
+                }
+                self.expect(Token::LeftParen, "expected '(' after the destructor name")?;
+                self.expect(
+                    Token::RightParen,
+                    "destructors cannot have explicit parameters",
+                )?;
+                if self.at(&Token::Const) {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "destructors always have an exclusive receiver and cannot be const",
+                    ));
+                }
+                let body = self.block()?;
+                self.methods.push(Function {
+                    name: destructor_name(id),
+                    return_type: Type::Void,
+                    parameters: vec![Parameter {
+                        name: String::from("this"),
+                        ty: Type::StructBorrow { id, mutable: true },
+                        span: start,
+                    }],
+                    span: start.through(body.span),
+                    body,
+                });
+                has_destructor = true;
+                continue;
             }
             let ty = self.type_name()?;
             let (name, span) = self.identifier()?;
@@ -82,6 +124,7 @@ impl Parser {
         return Ok(StructDefinition {
             id,
             fields,
+            has_destructor,
             span: start.through(end),
         });
     }
@@ -382,6 +425,12 @@ impl Parser {
             let arrow = self.consume(&Token::Arrow);
             if !arrow && !self.consume(&Token::Dot) {
                 break;
+            }
+            if self.at(&Token::Tilde) {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "destructors cannot be called explicitly",
+                ));
             }
             let (name, span) = self.identifier()?;
             if arrow {
