@@ -147,6 +147,23 @@ impl Types {
         };
     }
 
+    pub fn byte_array_length(&self, ty: Type) -> Option<usize> {
+        let id = match ty {
+            Type::Array(id)
+            | Type::Borrow {
+                pointee: crate::ast::Pointee::Array(id),
+                ..
+            } => id,
+            _ => return None,
+        };
+        let array = self.arrays[id];
+        return if array.element == Type::Integer(IntType::U8) {
+            Some(array.length)
+        } else {
+            None
+        };
+    }
+
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
             Type::Integer(IntType::I32) => String::from("int"),

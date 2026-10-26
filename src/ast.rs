@@ -285,6 +285,10 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    StringLiteral {
+        id: usize,
+        bytes: Vec<u8>,
+    },
     Index {
         base: Box<Expression>,
         index: Box<Expression>,

@@ -1,4 +1,12 @@
 /* Numeric helpers embedded in generated C after the basic runtime. */
+static inline void crust_rt_print_bytes(const uint8_t *bytes, size_t capacity)
+{
+    size_t length = 0;
+    while (length < capacity && bytes[length] != 0) { ++length; }
+    fwrite(bytes, 1, length, stdout);
+    fputc('\n', stdout);
+}
+
 static inline size_t crust_rt_index_unsigned(uint64_t index, size_t length, size_t line, size_t column)
 {
     if (index >= length) { crust_rt_fail("array index out of bounds", line, column); }

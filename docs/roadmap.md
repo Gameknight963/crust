@@ -11,13 +11,14 @@
 - Fixed-width and pointer-sized integers, checked conversions, casts, and size/alignment queries
 - ASCII character literals and hexadecimal, binary, octal, and decimal integers
 - Fixed-size arrays, nested initializers, checked indexing, array borrows, and owning-element cleanup
+- UTF-8 byte-array string literals, literal concatenation, and bounded text output
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add string literals and enums
+1. Add enums
 2. Extend borrows to locals and returns tied to an input or receiver. Define temporary lifetimes and disjoint field access
 3. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
 4. Add generic types and functions, interface constraints, and static interface requirements

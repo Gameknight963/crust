@@ -467,6 +467,7 @@ impl FunctionChecker<'_> {
             return Ok(Type::Integer(kind));
         }
         match &expression.kind {
+            ExpressionKind::StringLiteral { id, .. } => return Ok(Type::Array(*id)),
             ExpressionKind::Cast { ty, operand } => {
                 if *ty == Type::Void {
                     let previous_loans = self.loans.len();
@@ -678,8 +679,12 @@ impl FunctionChecker<'_> {
                 }
 
                 if name == "print" {
+                    let previous_loans = self.loans.len();
                     let actual = self.expression(&arguments[0])?;
-                    self.integer(actual, arguments[0].span)?;
+                    if self.types.byte_array_length(actual).is_none() {
+                        self.integer(actual, arguments[0].span)?;
+                    }
+                    self.loans.truncate(previous_loans);
                     return Ok(Type::Void);
                 }
 
@@ -766,6 +771,21 @@ impl FunctionChecker<'_> {
     }
 
     fn require_type(&mut self, expression: &Expression, expected: Type) -> Result<(), Diagnostic> {
+        if let ExpressionKind::StringLiteral { bytes, .. } = &expression.kind
+            && let Type::Array(_) = expected
+        {
+            let length = self.types.byte_array_length(expected).ok_or_else(|| {
+                Diagnostic::new(expression.span, "string literals require a uint8_t array")
+            })?;
+            if bytes.len() >= length {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "string literal and its terminating zero do not fit the array",
+                ));
+            }
+            self.expression_types.insert(expression.span, expected);
+            return Ok(());
+        }
         if let Type::Integer(kind) = expected
             && let Some(value) = constant_integer(expression)
         {

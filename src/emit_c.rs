@@ -569,6 +569,19 @@ impl Emitter<'_> {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::StringLiteral { bytes, .. } => {
+                let ty = self.expression_type(expression);
+                let mut values = bytes.iter().map(u8::to_string).collect::<Vec<_>>();
+                values.push(String::from("0"));
+                return Some(self.temporary(
+                    ty,
+                    &format!(
+                        "({}){{ .crust_elements = {{ {} }} }}",
+                        c_type(ty),
+                        values.join(", ")
+                    ),
+                ));
+            }
             ExpressionKind::Cast { ty, operand } => {
                 if *ty == Type::Void {
                     if let Some(value) = self.expression(operand) {
@@ -668,6 +681,15 @@ impl Emitter<'_> {
                     values.push(expression.span.column.to_string());
                 }
                 let function = if name == "print" {
+                    let argument_type = self.expression_type(&arguments[0]);
+                    if let Some(length) = self.types.byte_array_length(argument_type) {
+                        let value = &values[0];
+                        let member = if argument_type.is_borrow() { "->" } else { "." };
+                        self.line(&format!(
+                            "crust_rt_print_bytes(({value}){member}crust_elements, {length});"
+                        ));
+                        return None;
+                    }
                     match self.expression_type(&arguments[0]).integer().unwrap() {
                         IntType::I64 => String::from("crust_rt_print_i64"),
                         IntType::U32 | IntType::U64 => String::from("crust_rt_print_u64"),

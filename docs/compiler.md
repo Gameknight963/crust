@@ -16,7 +16,7 @@ ownership checking, C generation, and native compilation.
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
-| `src/runtime_numbers.h` | Embedded portable C helpers for wide arithmetic and checked conversions |
+| `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
@@ -46,6 +46,8 @@ ownership checking, C generation, and native compilation.
 - Layout dependency ordering includes arrays and rejects cycles through array elements
 - Owning arrays have live-value flags and drop elements in reverse index order
 - Indexed places capture the array address and check the index before element access
+- String literals lower to numeric byte-array initializers, preserving UTF-8 bytes across C compiler execution encodings
+- Text output bounds its zero-byte scan by the array capacity
 - `BoxInt` uses a null pointer as its internal moved-value flag
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters

@@ -29,6 +29,7 @@ pub enum Token {
     // Tokens carrying data.
     Identifier(String),
     IntegerLiteral(u64),
+    StringLiteral(Vec<u8>),
 
     // Punctuation.
     LeftParen,
@@ -133,6 +134,8 @@ impl Lexer<'_> {
                 kind = self.integer(start)?;
             } else if current == '\'' {
                 kind = self.character(start)?;
+            } else if current == '"' {
+                kind = self.string(start)?;
             } else {
                 kind = self.operator_or_punctuation(start)?;
             }
@@ -231,7 +234,7 @@ impl Lexer<'_> {
         let value = match self.peek() {
             Some('\\') => {
                 self.advance();
-                self.character_escape(start)?
+                self.byte_escape(start)?
             }
             Some('\'' | '\n' | '\r') | None => {
                 return Err(self.error(start, "expected one character inside character literal"));
@@ -255,10 +258,35 @@ impl Lexer<'_> {
         return Ok(Token::IntegerLiteral(value));
     }
 
-    fn character_escape(&mut self, start: Span) -> Result<u64, LexError> {
+    fn string(&mut self, start: Span) -> Result<Token, LexError> {
+        self.advance();
+        let mut bytes = Vec::new();
+        loop {
+            match self.peek() {
+                Some('"') => {
+                    self.advance();
+                    return Ok(Token::StringLiteral(bytes));
+                }
+                Some('\n' | '\r') | None => {
+                    return Err(self.error(start, "unterminated string literal"));
+                }
+                Some('\\') => {
+                    self.advance();
+                    bytes.push(self.byte_escape(start)? as u8);
+                }
+                Some(character) => {
+                    let mut buffer = [0u8; 4];
+                    bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    fn byte_escape(&mut self, start: Span) -> Result<u64, LexError> {
         let character = self
             .peek()
-            .ok_or_else(|| self.error(start, "unterminated character escape"))?;
+            .ok_or_else(|| self.error(start, "unterminated escape sequence"))?;
         if character == 'x' || matches!(character, '0'..='7') {
             let hexadecimal = character == 'x';
             let radix = if hexadecimal { 16 } else { 8 };
@@ -279,7 +307,7 @@ impl Lexer<'_> {
                 count += 1;
                 value = value * radix as u64 + digit as u64;
                 if value > 255 {
-                    return Err(self.error(start, "character escape exceeds one byte"));
+                    return Err(self.error(start, "escape exceeds one byte"));
                 }
             }
             if count == 0 {
@@ -297,7 +325,7 @@ impl Lexer<'_> {
             't' => Ok(9),
             'v' => Ok(11),
             '\\' | '\'' | '"' | '?' => Ok(character as u64),
-            _ => Err(self.error(start, "unknown character escape")),
+            _ => Err(self.error(start, "unknown escape sequence")),
         };
     }
 
@@ -632,6 +660,18 @@ mod tests {
         );
         let error = tokenize("18446744073709551616").unwrap_err();
         assert!(error.message.contains("64-bit range"));
+    }
+
+    #[test]
+    fn strings_keep_utf8_bytes_escapes_and_source_locations() {
+        let tokens = tokenize("\"é\\n\"\r\n\"x\"").unwrap();
+        assert_eq!(tokens[0].kind, Token::StringLiteral(vec![195, 169, 10]));
+        assert_eq!((tokens[0].span.start, tokens[0].span.end), (0, 6));
+        assert_eq!((tokens[1].span.line, tokens[1].span.column), (2, 1));
+        for source in ["\"unfinished", "\"line\nbreak\"", r#""\q""#, r#""\x100""#] {
+            let error = tokenize(&format!("\n  {source}")).unwrap_err();
+            assert_eq!((error.span.line, error.span.column), (2, 3));
+        }
     }
 
     #[test]

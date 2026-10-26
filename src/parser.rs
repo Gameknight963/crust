@@ -973,6 +973,34 @@ impl Parser {
     fn primary(&mut self) -> Result<Expression, Diagnostic> {
         let token = self.advance();
         match token.kind {
+            Token::StringLiteral(mut bytes) => {
+                let mut span = token.span;
+                while let Token::StringLiteral(next) = &self.current().kind {
+                    bytes.extend_from_slice(next);
+                    span = span.through(self.advance().span);
+                }
+                let element = Type::Integer(IntType::U8);
+                let length = bytes.len() + 1;
+                let id = if let Some(id) = self
+                    .arrays
+                    .iter()
+                    .position(|array| array.element == element && array.length == length)
+                {
+                    id
+                } else {
+                    let id = self.arrays.len();
+                    self.arrays.push(ArrayType {
+                        element,
+                        length,
+                        span,
+                    });
+                    id
+                };
+                return Ok(Expression {
+                    span,
+                    kind: ExpressionKind::StringLiteral { id, bytes },
+                });
+            }
             Token::True | Token::False => {
                 return Ok(Expression {
                     span: token.span,

@@ -15,7 +15,7 @@
 - Non-void functions must return a value on every path
 - Operands and call arguments evaluate left to right
 - `&&` and `||` short-circuit
-- `print(value)` writes any integer or boolean as a decimal integer and newline
+- `print(value)` writes integers, booleans, or byte-array text followed by a newline
 
 Signed arithmetic overflow and division or remainder by zero terminate the program
 with a source-location diagnostic. Normal scope exits and
@@ -117,6 +117,33 @@ assignment evaluates its right side before the destination's index expressions.
 Compound assignment captures its destination and old value before evaluating the
 right side. Index evaluation prevents mutation or moves of the array whose
 address has been captured.
+
+## Strings
+
+```c
+typedef uint8_t Message[16];
+
+int main() {
+    Message text = "Hello, Crust!";
+    text[0] = 'h';
+    print(^const text);
+    print("Adjacent " "literals");
+    return 0;
+}
+```
+
+- String literals contain UTF-8 bytes followed by a terminating zero
+- Their type is a fixed-size `uint8_t` array, including the terminating byte
+- An explicitly sized byte-array destination may provide extra capacity, which is filled with zeros
+- String literals support the same byte escapes as character literals
+- Adjacent literals concatenate, including across whitespace and comments
+- Array copies, indexing, mutation, borrows, fields, parameters, and returns use ordinary array rules
+- `print` accepts a byte array or a shared or mutable borrow of one
+- Text output stops at the first zero or the array's capacity and appends a newline
+- `sizeof` includes the terminating zero and any destination padding
+
+Array declarations specify their capacity. For example, `uint8_t text[3] = "hi"`
+holds two text bytes and the terminating zero.
 
 ## Booleans
 
@@ -357,7 +384,7 @@ struct Resource {
 - `~` complements integer bits in expressions and introduces destructor declarations
 - Comments use `//` or non-nesting `/* ... */`
 - Whitespace supports LF, CRLF, and CR line endings
-- Unicode is accepted in comments
+- Unicode is accepted in comments and UTF-8 string literals
 
 Unsupported literal forms and compound operators produce diagnostics. Examples
 include `42u`, floating-point literals, `++`,
