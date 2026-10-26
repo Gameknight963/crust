@@ -1,0 +1,56 @@
+# Compiler
+
+The compiler processes one source file through tokenization, parsing, ownership
+checking, C generation, and native compilation.
+
+## Source files
+
+| File | Responsibility |
+| --- | --- |
+| `src/main.rs` | CLI commands, source loading, build output, execution |
+| `src/lib.rs` | Frontend and source-to-C APIs |
+| `src/lexer.rs` | Tokens and scanning |
+| `src/diagnostic.rs` | Source locations and diagnostics |
+| `src/ast.rs` | Syntax tree and type representation |
+| `src/parser.rs` | Declarations, statements, expressions |
+| `src/check.rs` | Names, types, ownership states, call-argument borrows |
+| `src/types.rs` | Struct layouts and ownership propagation |
+| `src/emit_c.rs` | Generated C and cleanup |
+| `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
+| `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
+
+## Native compilation
+
+- Generated C uses C11
+- The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
+- Compiler arguments follow the Clang/GCC convention
+- Build output goes to `target/crust/`, using the source file's basename
+- On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
+- Toolchain environment changes apply to the child compiler process
+- `run` forwards the low eight bits of the native program's exit code
+
+## Ownership and cleanup
+
+- Named owning structs have separate initialized-value flags in generated functions
+- A move clears the source's flag, and reassignment restores it
+- Cleanup checks the flag before destroying a named struct
+- Struct layouts contain the declared fields
+- `BoxInt` uses a null pointer as its internal moved-value flag
+- Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
+- Method calls lower to ordinary functions with receiver parameters
+
+## Diagnostics
+
+Diagnostics use `file:line:column` locations. Spans contain UTF-8 byte offsets
+and one-based character columns. Tabs count as one column.
+
+## Development
+
+```powershell
+cargo fmt --check
+cargo test --offline
+cargo clippy --offline --all-targets -- -D warnings
+```
+
+Native execution tests compile generated C. Ownership tests track allocations,
+frees, and destructor output to verify cleanup behavior.

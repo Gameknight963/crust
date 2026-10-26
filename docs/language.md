@@ -1,0 +1,203 @@
+# Language reference
+
+## Functions and control flow
+
+- Types: `int`, `void`, `BoxInt`, and `struct Name`
+- Functions support named parameters, forward calls, and recursion
+- The entry point is `int main()` or `int main(void)`
+- Local declarations require initializers
+- Blocks support nested scopes and variable shadowing
+- `if`, `else`, and `while` bodies use braces
+- Non-void functions must return a value on every path
+- Operands and call arguments evaluate left to right
+- `&&` and `||` short-circuit
+- `print(int)` writes a decimal integer and newline
+
+`int` is signed 32-bit. Arithmetic overflow and division or remainder by zero
+terminate the program with a source-location diagnostic. Normal scope exits and
+returns run cleanup. Runtime termination ends the process immediately.
+
+## Ownership
+
+```c
+int main() {
+    BoxInt first = box_int(42);
+    BoxInt second = move(first);
+    print(*second);
+    return 0;
+}
+```
+
+- `box_int(int)` allocates an owned integer
+- `move(variable)` transfers a whole owning value and invalidates its source
+- Moved variables can be reinitialized
+- Owning parameters and return values transfer ownership
+- Scope exits, returns, replacement, and discarded results run cleanup
+- Local owners are destroyed in reverse declaration order
+- Replacement evaluates the right side before destroying the previous value
+- After a conditional move, further use requires reinitialization
+- Loop conditions preserve outer owners, and continuing iterations restore moved outer owners
+
+## Structs
+
+```c
+struct Item {
+    int id;
+    BoxInt value;
+};
+
+int main() {
+    struct Item first = { .id = 1, .value = box_int(42) };
+    struct Item second = move(first);
+    print(second.id);
+    print(*second.value);
+    return 0;
+}
+```
+
+- Struct definitions appear at the top level
+- Fields may contain other structs, including types defined later in the file
+- By-value layouts must be acyclic
+- Named initializers specify every field exactly once and evaluate in written order
+- Nested brace initializers and `(struct Item){ ... }` compound literals are supported
+- `item.id` accesses a field, and `borrowed_item->id` accesses one through a borrow
+- Fields are public
+- Structs with copyable fields are copyable unless they define a destructor
+- Owning fields and custom destructors make the enclosing struct move-only
+- Ownership transfers use whole-struct moves
+- Owning fields are destroyed in reverse declaration order
+
+Field access and borrowed method receivers currently require a named variable,
+field, or pointee. Empty structs, borrowed fields, partial initialization, and
+partial field moves need further language support.
+
+## Borrows
+
+```c
+void increment(int^ value) {
+    *value = *value + 1;
+}
+
+int read(const int^ value) {
+    return *value;
+}
+
+int main() {
+    int number = 41;
+    increment(^number);
+    print(read(^const number));
+    return 0;
+}
+```
+
+| Type | Creation | Access |
+| --- | --- | --- |
+| `int^` | `^number` | Exclusive, mutable |
+| `const int^` | `^const number` | Shared, read-only |
+| `BoxInt^` | `^owner` | Exclusive access to the owner slot |
+| `const BoxInt^` | `^const owner` | Shared access through the owner |
+| `struct Name^` | `^value` | Exclusive struct access |
+| `const struct Name^` | `^const value` | Shared struct access |
+
+- `^*owner` borrows a boxed integer's contents
+- Multiple shared borrows may coexist
+- Exclusive borrows prevent conflicting reads, writes, moves, and borrows
+- Borrow permissions apply through fields and owning pointees
+- Borrows remain active through the call, including later argument evaluation
+- Field borrows currently lock the whole parent
+- Borrow parameters can be forwarded or reborrowed for nested calls
+- Parameters require matching borrow types. Use `^const *reference` to explicitly create a shared reborrow
+- Borrow parameters keep their binding and permit writes through mutable pointees
+- Borrows currently live in function parameters and temporary call arguments
+
+Borrowed locals, fields, and return values require future lifetime rules.
+
+## Methods
+
+```c
+struct Counter {
+    int value;
+
+    int get() const {
+        return this->value;
+    }
+
+    void increment() {
+        this->value = this->value + 1;
+    }
+};
+```
+
+- `Self` names the enclosing struct inside its definition
+- A trailing `const` gives the method a shared `const Self^ this` receiver
+- An ordinary method receives an exclusive `Self^ this`
+- `counter.get()` automatically borrows the receiver
+- Through a borrow, use `reference->get()`
+- Within borrowed methods, use `this->field` and `this->method()`
+- Receiver evaluation precedes argument evaluation
+- Forward calls and recursion are supported
+- Method names are scoped to their struct, with one method per name
+- Field and method names within a struct must be distinct
+- `this` is reserved for the receiver
+
+Receiver borrows follow the call rules above. An exclusive call such as
+`counter.set(counter.get())` conflicts with the shared access in its argument.
+Read the argument into a local before calling `set`.
+
+### Value receivers
+
+An explicit `Self this` first parameter passes the receiver by value:
+
+```c
+int finish(Self this) {
+    return *this.value;
+}
+```
+
+- Owning receivers use `move(resource).finish()`
+- Copyable receivers pass a copy
+- Value receivers use `this.field`
+- Returning `move(this)` transfers the receiver to the caller
+- Consuming calls can accept temporary struct results
+- A value receiver uses ownership transfer instead of a trailing `const` qualifier
+
+## Destructors
+
+```c
+struct Resource {
+    int handle;
+
+    ~Resource() {
+        print(this->handle);
+    }
+};
+```
+
+- A destructor matches its enclosing struct's name and has an exclusive `Self^ this` receiver
+- Each struct permits one destructor with an empty parameter list
+- Destructors use the `~Type()` declaration syntax
+- Normal cleanup invokes the destructor before destroying owning fields
+- `return;` ends the destructor body, then automatic field cleanup continues
+- Custom destructors make their struct and enclosing structs move-only
+- Moves transfer responsibility for destruction
+- Explicit destructor calls are rejected
+- `drop` is an ordinary method name
+
+## Lexical rules
+
+- Keywords: `int`, `void`, `return`, `if`, `else`, `while`, `const`, `struct`, `BoxInt`
+- Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
+- `Self` is recognized as a type name inside struct definitions
+- `print`, `box_int`, and `move` tokenize as identifiers
+- Decimal literals are unsuffixed, with a separate minus token
+- The lexer accepts magnitudes through `9223372036854775807`, and type checking restricts integers to signed 32-bit
+- `-2147483648` is supported
+- Operators: `= + - * / % ! < > & | ^ == != <= >= && || ->`
+- `~` introduces destructor declarations
+- Comments use `//` or non-nesting `/* ... */`
+- Whitespace supports LF, CRLF, and CR line endings
+- Unicode is accepted in comments
+
+Unsupported literal forms and compound operators produce diagnostics. Examples
+include leading-zero integers, `0xff`, `42u`, floating-point literals, `++`,
+`+=`, and `<<`.
