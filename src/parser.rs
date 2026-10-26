@@ -885,6 +885,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    dll_import: false,
                     calling_convention: CallingConvention::C,
                     name_span,
                     link_name: None,
@@ -998,7 +999,15 @@ impl Parser {
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().span;
         let unsafe_prefix = self.consume(&Token::Unsafe);
+        let import_prefix = self.dll_import_attribute()?;
         let external = self.consume(&Token::Extern);
+        let dll_import = self.dll_import_attribute()? || import_prefix;
+        if dll_import && !external {
+            return Err(Diagnostic::new(
+                start,
+                "__declspec(dllimport) requires an extern declaration",
+            ));
+        }
         let unsafe_suffix = self.consume(&Token::Unsafe);
         let requires_unsafe = unsafe_suffix || unsafe_prefix || external;
         let (return_type, readonly) = self.qualified_type_name(external)?;
@@ -1024,6 +1033,7 @@ impl Parser {
                 "expected ';' after external variable declaration",
             )?;
             return Ok(Declaration::Global(ExternalVariable {
+                dll_import,
                 name,
                 name_span,
                 ty,
@@ -1059,6 +1069,7 @@ impl Parser {
             declaration,
         )?;
         function.requires_unsafe = requires_unsafe;
+        function.dll_import = dll_import;
         function.calling_convention = Self::signature_convention(
             convention.unwrap_or(CallingConvention::C),
             function.variadic,
@@ -1218,6 +1229,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            dll_import: false,
             calling_convention: CallingConvention::C,
             name_span,
             link_name,

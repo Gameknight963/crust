@@ -89,7 +89,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
     emitter.struct_definitions();
     for variable in &program.globals {
         emitter.line(&format!(
-            "extern {}{} {};",
+            "extern {}{}{} {};",
+            if variable.dll_import {
+                "__declspec(dllimport) "
+            } else {
+                ""
+            },
             c_type(variable.ty),
             if variable.readonly { " const" } else { "" },
             variable.link_name
@@ -203,7 +208,12 @@ fn header(function: &Function) -> String {
         parameters.push_str(", ...");
     }
     return format!(
-        "{result} {}{}({parameters})",
+        "{}{result} {}{}({parameters})",
+        if function.dll_import {
+            "__declspec(dllimport) "
+        } else {
+            ""
+        },
         if function.name == "main" {
             ""
         } else {

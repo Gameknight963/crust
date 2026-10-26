@@ -19,7 +19,7 @@ ownership checking, C generation, and native compilation.
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
-| `src/parser/calling_conventions.rs` | Target calling conventions and signature normalization |
+| `src/parser/calling_conventions.rs` | Target calling conventions and DLL import attributes |
 | `src/parser/constants.rs` | Integer constant evaluation, array lengths, and enum dependencies |
 | `src/parser/integers.rs` | C integer type specifiers |
 | `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
@@ -81,6 +81,7 @@ The CLI writes the generated UTF-8 file after validation. See
 - External declarations and calls retain their C symbol names
 - Renamed imports keep separate Crust and C names, and declarations sharing a C symbol are checked for compatible signatures
 - External variables emit native object declarations, retain const permissions, and share borrow roots across aliases of one C symbol
+- Windows DLL imports preserve native storage attributes across compatible declarations and native-symbol aliases
 - Function and pointer typedefs are emitted in dependency order, including callbacks returning or accepting other function pointers
 - Function declarations and callback typedefs emit their effective calling convention, with matching checks for native symbols and interface requirements
 - Callback calls evaluate the function pointer before the arguments and use the declared C signature

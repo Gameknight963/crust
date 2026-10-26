@@ -149,6 +149,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                 .map_err(|error| error.to_string())?,
         );
     }
+    let mut imported = HashSet::new();
     for (index, name) in names.iter().enumerate() {
         let function = index < options.functions.len();
         let expected = if function { "FunctionDecl" } else { "VarDecl" };
@@ -163,6 +164,21 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             ));
         }
         for declaration in matches {
+            if children(declaration)
+                .iter()
+                .any(|node| kind(node) == "DLLImportAttr")
+            {
+                imported.insert(name.clone());
+            }
+            if !function
+                && children(declaration)
+                    .iter()
+                    .any(|node| kind(node) == "DLLExportAttr")
+            {
+                return Err(format!(
+                    "C variable '{name}' is declared for DLL export. Use the header's consumer configuration"
+                ));
+            }
             if declaration["storageClass"] == "static" {
                 return Err(format!(
                     "C {label} '{name}' has internal linkage. Expose it through a native C wrapper"
@@ -174,12 +190,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             {
                 return Err(format!("C {label} '{name}' uses an assembler symbol label"));
             }
-            if !function
-                && (!declaration["tls"].is_null()
-                    || children(declaration)
-                        .iter()
-                        .any(|node| kind(node) == "DLLImportAttr"))
-            {
+            if !function && !declaration["tls"].is_null() {
                 return Err(format!(
                     "C variable '{name}' requires storage attributes. Expose it through a native C wrapper"
                 ));
@@ -226,11 +237,16 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         } else {
             format!(" = \"{native}\"")
         };
+        let attribute = if imported.contains(native) {
+            "__declspec(dllimport) "
+        } else {
+            ""
+        };
         if index >= options.functions.len() {
             let ty = renderer
                 .object_type(node)
                 .map_err(|error| format!("C variable '{native}': {error}"))?;
-            declarations.push(format!("extern {ty} {name}{link};"));
+            declarations.push(format!("extern {attribute}{ty} {name}{link};"));
             variable_checks.push((name, native));
             continue;
         }
@@ -238,7 +254,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             .signature(node)
             .map_err(|error| format!("C function '{native}': {error}"))?;
         declarations.push(format!(
-            "extern {} {}{}({}){link};",
+            "extern {attribute}{} {}{}({}){link};",
             signature.result, signature.convention, name, signature.parameters
         ));
         let check_name = renderer.check_name(index);

@@ -39,6 +39,7 @@ command protects its input header from replacement.
 - Opaque struct and union tags
 - Function pointers, callback returns, and variadic functions
 - Mutable and const external variables, including pointers and callback globals
+- Windows DLL imports for functions and data
 - [Native calling conventions](language.md#calling-conventions)
 
 Clang preprocesses includes and macros before Crust reads the function types.
@@ -52,7 +53,7 @@ The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.
 Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
-Thread-local and DLL-imported data require native C accessor functions.
+Thread-local data require native C accessor functions.
 
 Link the C implementation or library through the target's
 [native options](projects.md). Use matching `defines` and `--define` values when

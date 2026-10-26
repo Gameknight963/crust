@@ -1,6 +1,26 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn dll_import_attribute(&mut self) -> Result<bool, Diagnostic> {
+        if !self.consume(&Token::Declspec) {
+            return Ok(false);
+        }
+        let span = self.tokens[self.position - 1].span;
+        self.expect(Token::LeftParen, "expected '(' after __declspec")?;
+        let (attribute, name_span) = self.identifier()?;
+        if attribute != "dllimport" {
+            return Err(Diagnostic::new(
+                name_span,
+                "__declspec supports the dllimport attribute",
+            ));
+        }
+        self.expect(Token::RightParen, "expected ')' after dllimport")?;
+        if !cfg!(windows) {
+            return Err(Diagnostic::new(span, "dllimport requires a Windows target"));
+        }
+        return Ok(true);
+    }
+
     pub(super) fn calling_convention(&mut self) -> Result<Option<CallingConvention>, Diagnostic> {
         let convention = match self.current().kind {
             Token::Cdecl => CallingConvention::C,

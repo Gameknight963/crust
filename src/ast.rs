@@ -278,6 +278,7 @@ pub struct Program {
 
 #[derive(Debug)]
 pub struct ExternalVariable {
+    pub dll_import: bool,
     pub name: String,
     pub name_span: Span,
     pub ty: Type,
@@ -417,6 +418,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub dll_import: bool,
     pub calling_convention: CallingConvention,
     pub name_span: Span,
     pub link_name: Option<String>,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
@@ -78,7 +78,29 @@ struct LoopContext {
     continues: Vec<(Scopes, Span)>,
 }
 
-pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
+pub(crate) fn check(mut program: Program) -> Result<CheckedProgram, Diagnostic> {
+    let imported: HashSet<_> = program
+        .functions
+        .iter()
+        .filter(|function| function.dll_import)
+        .filter_map(|function| function.link_name.clone())
+        .chain(
+            program
+                .globals
+                .iter()
+                .filter(|global| global.dll_import)
+                .map(|global| global.link_name.clone()),
+        )
+        .collect();
+    for function in &mut program.functions {
+        function.dll_import = function
+            .link_name
+            .as_ref()
+            .is_some_and(|name| imported.contains(name));
+    }
+    for global in &mut program.globals {
+        global.dll_import = imported.contains(&global.link_name);
+    }
     let mut types = Types::build(&program)?;
     let mut analyses = HashMap::new();
     let mut signatures = HashMap::new();

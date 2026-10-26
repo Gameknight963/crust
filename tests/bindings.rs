@@ -363,9 +363,13 @@ fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarati
 
 #[cfg(windows)]
 #[test]
-fn dll_import_variable_attributes_on_later_declarations_require_a_native_wrapper() {
+fn dll_import_variable_attributes_on_later_declarations_are_preserved() {
     let path = header("extern int value; __declspec(dllimport) extern int value;");
     let mut selected = options(&[]);
     selected.variables.push("value".to_owned());
-    assert!(generate(&path, &selected).is_err());
+    assert!(
+        generate(&path, &selected)
+            .unwrap()
+            .contains("extern __declspec(dllimport) int value;")
+    );
 }

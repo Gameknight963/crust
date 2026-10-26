@@ -1,5 +1,17 @@
 mod common;
 
+#[cfg(not(windows))]
+#[test]
+fn dllimport_requires_a_windows_target() {
+    let source = "extern __declspec(dllimport) int value; int main() { return 0; }";
+    assert!(
+        crust::check(source)
+            .unwrap_err()
+            .message
+            .contains("Windows target")
+    );
+}
+
 #[test]
 fn native_variables_support_reads_writes_addresses_const_objects_and_callbacks() {
     let source = r#"

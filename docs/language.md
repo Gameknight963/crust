@@ -695,6 +695,19 @@ extern int local_name = "native_name";
 The [native globals project](../examples/global_project/) imports mutable storage,
 a const object, and a callback variable from a separate C file.
 
+On Windows, DLL declarations can use `__declspec(dllimport)`:
+
+```c
+extern __declspec(dllimport) int count;
+extern __declspec(dllimport) const int limit;
+extern __declspec(dllimport) int increment();
+```
+
+The attribute can precede `extern` or follow it. Compatible declarations and aliases
+of a native symbol share its DLL import storage. Add the DLL's import library to
+the target's `native.link-inputs` and place the DLL beside the executable.
+This uses the native [DLL data import convention](https://learn.microsoft.com/en-us/cpp/build/importing-data-using-declspec-dllimport).
+
 ## Function pointers and callbacks
 
 ```c
@@ -829,7 +842,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
