@@ -36,6 +36,13 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 
     emitter.line(&format!("_Static_assert(sizeof(void *) * CHAR_BIT == {}, \"C compiler target must match the Crust host\");", usize::BITS));
     emitter.unsigned_runtime();
+    for definition in &checked.types.enums {
+        emitter.line(&format!(
+            "typedef {} crust_enum_{};",
+            definition.underlying.c_name(),
+            definition.id
+        ));
+    }
     emitter.struct_definitions();
     for function in &program.functions {
         emitter.line(&format!("{};", header(function)));
@@ -93,6 +100,7 @@ fn c_type(ty: Type) -> String {
         Type::BoxInt => String::from("int32_t *"),
         Type::Struct(id) => format!("struct crust_struct_{id}"),
         Type::Array(id) => format!("struct crust_array_{id}"),
+        Type::Enum(id) => format!("crust_enum_{id}"),
         Type::Borrow { pointee, mutable } => format!(
             "{}{} *",
             c_type(pointee.ty()),
@@ -475,8 +483,14 @@ impl Emitter<'_> {
         if from == Type::Bool || to == Type::Bool {
             return self.temporary(to, &cast);
         }
-        let source = from.integer().expect("numeric conversion source");
-        let target = to.integer().expect("numeric conversion target");
+        let source = self
+            .types
+            .integer_representation(from)
+            .expect("numeric conversion source");
+        let target = self
+            .types
+            .integer_representation(to)
+            .expect("numeric conversion target");
         if target.minimum() <= source.minimum() && target.maximum() >= source.maximum() {
             return self.temporary(to, &cast);
         }
@@ -547,7 +561,10 @@ impl Emitter<'_> {
     }
 
     fn integer_constant(&self, expression: &Expression, value: i128) -> String {
-        let kind = self.expression_type(expression).integer().unwrap();
+        let kind = self
+            .types
+            .integer_representation(self.expression_type(expression))
+            .unwrap();
         let bits = kind.bits();
         if value < 0 {
             if value == kind.minimum() {
@@ -569,6 +586,7 @@ impl Emitter<'_> {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::EnumValue { .. } => unreachable!("enum constants have checked values"),
             ExpressionKind::StringLiteral { bytes, .. } => {
                 let ty = self.expression_type(expression);
                 let mut values = bytes.iter().map(u8::to_string).collect::<Vec<_>>();
@@ -771,10 +789,14 @@ impl Emitter<'_> {
                     return Some(result);
                 }
                 let kind = self
-                    .expression_type(left)
-                    .integer()
+                    .types
+                    .integer_representation(self.expression_type(left))
                     .unwrap()
-                    .common(self.expression_type(right).integer().unwrap());
+                    .common(
+                        self.types
+                            .integer_representation(self.expression_type(right))
+                            .unwrap(),
+                    );
                 let right = self.value_expression(right);
                 let operation =
                     self.operation(*operator, kind, &left_value, &right, expression.span);

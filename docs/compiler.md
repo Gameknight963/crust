@@ -26,6 +26,7 @@ ownership checking, C generation, and native compilation.
 ## Native compilation
 
 - Generated C uses C11
+- Enums lower to distinct generated typedef names with their declared integer representation
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename

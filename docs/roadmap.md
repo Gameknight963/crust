@@ -13,19 +13,19 @@
 - Fixed-size arrays, nested initializers, checked indexing, array borrows, and owning-element cleanup
 - UTF-8 byte-array string literals, literal concatenation, and bounded text output
 - Local references with lexical lifetimes, nested reborrows, and scope-based loan release
+- Distinct enum types, explicit representations, scoped and unscoped values, and checked casts
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add enums
-2. Add borrowed returns tied to an input or receiver, temporary lifetimes, and disjoint field access
-3. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
-4. Add generic types and functions, interface constraints, and static interface requirements
-5. Add modules, imports, visibility, project dependencies, and library targets
-6. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-7. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
+1. Add borrowed returns tied to an input or receiver, temporary lifetimes, and disjoint field access
+2. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
+3. Add generic types and functions, interface constraints, and static interface requirements
+4. Add modules, imports, visibility, project dependencies, and library targets
+5. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
+6. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
 
 A substantial validation target is a multi-file program using a generic container
 backed by C allocation, with automatic cleanup and safe access to its contents.

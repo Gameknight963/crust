@@ -15,10 +15,12 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         resolving_aliases: HashSet::new(),
         value_scopes: vec![HashSet::new()],
         arrays: Vec::new(),
+        enum_names: Vec::new(),
     };
     parser.collect_type_names()?;
     let mut functions = Vec::new();
     let mut structs = Vec::new();
+    let mut enums = Vec::new();
 
     while !parser.at(&Token::EndOfFile) {
         if parser.consume(&Token::Typedef) {
@@ -26,6 +28,13 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
             parser.identifier()?;
             parser.array_suffix(ty)?;
             parser.expect(Token::Semicolon, "expected ';' after typedef")?;
+        } else if parser.at(&Token::Enum)
+            && parser
+                .tokens
+                .get(parser.position + 2)
+                .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Colon))
+        {
+            enums.push(parser.enum_definition()?);
         } else if parser.at(&Token::Struct)
             && parser
                 .tokens
@@ -40,6 +49,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     functions.append(&mut parser.methods);
     return Ok(Program {
+        enum_names: parser.enum_names,
+        enums,
         arrays: parser.arrays,
         functions,
         structs,
@@ -48,6 +59,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 }
 
 struct Parser {
+    enum_names: Vec<(String, Span)>,
     arrays: Vec<ArrayType>,
     tokens: Vec<SpannedToken>,
     position: usize,
@@ -75,6 +87,22 @@ impl Parser {
         let mut position = 0;
         while position < self.tokens.len() {
             let token = self.tokens[position].clone();
+            if depth == 0
+                && token.kind == Token::Enum
+                && self
+                    .tokens
+                    .get(position + 2)
+                    .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Colon))
+                && let Some(SpannedToken {
+                    kind: Token::Identifier(name),
+                    span,
+                }) = self.tokens.get(position + 1).cloned()
+            {
+                if name == "Self" || name == "this" {
+                    return Err(Diagnostic::new(span, "Self and this are reserved names"));
+                }
+                self.enum_id(name, span);
+            }
             if depth == 0
                 && token.kind == Token::Struct
                 && self
@@ -156,6 +184,14 @@ impl Parser {
             }
             position += 1;
         }
+        for (name, span) in &self.enum_names {
+            if self.struct_names.iter().any(|entry| entry.0 == *name) {
+                return Err(Diagnostic::new(
+                    *span,
+                    format!("type tag '{name}' is already used by a struct"),
+                ));
+            }
+        }
         let mut aliases: Vec<_> = self
             .aliases
             .iter()
@@ -212,6 +248,9 @@ impl Parser {
         if let Some(id) = self.struct_names.iter().position(|entry| entry.0 == name) {
             return Ok(Type::Struct(id));
         }
+        if let Some(id) = self.enum_names.iter().position(|entry| entry.0 == name) {
+            return Ok(Type::Enum(id));
+        }
         return Err(Diagnostic::new(span, format!("unknown type '{name}'")));
     }
 
@@ -219,7 +258,8 @@ impl Parser {
         return name == "Self"
             || IntType::named(name).is_some()
             || self.aliases.contains_key(name)
-            || self.struct_names.iter().any(|entry| entry.0 == name);
+            || self.struct_names.iter().any(|entry| entry.0 == name)
+            || self.enum_names.iter().any(|entry| entry.0 == name);
     }
 
     fn type_in_expression(&self) -> bool {
@@ -229,6 +269,7 @@ impl Parser {
             | Token::Void
             | Token::BoxInt
             | Token::Struct
+            | Token::Enum
             | Token::Const => true,
             Token::Identifier(name) => {
                 self.known_type(name)
@@ -272,6 +313,78 @@ impl Parser {
         let id = self.struct_names.len();
         self.struct_names.push((name, span));
         return id;
+    }
+
+    fn enum_id(&mut self, name: String, span: Span) -> usize {
+        if let Some(id) = self.enum_names.iter().position(|entry| entry.0 == name) {
+            return id;
+        }
+        let id = self.enum_names.len();
+        self.enum_names.push((name, span));
+        return id;
+    }
+
+    fn enum_definition(&mut self) -> Result<EnumDefinition, Diagnostic> {
+        let start = self.advance().span;
+        let (name, span) = self.identifier()?;
+        let id = self.enum_id(name, span);
+        let underlying = if self.consume(&Token::Colon) {
+            let ty = self.type_name()?;
+            let Type::Integer(kind) = ty else {
+                return Err(Diagnostic::new(
+                    span,
+                    "an enum underlying type must be an integer",
+                ));
+            };
+            kind
+        } else {
+            IntType::I32
+        };
+        self.expect(Token::LeftBrace, "expected '{' before enum values")?;
+        let mut variants = Vec::new();
+        let mut next = 0i128;
+        while !self.at(&Token::RightBrace) {
+            let (name, span) = self.identifier()?;
+            let value = if self.consume(&Token::Equal) {
+                let negative = self.consume(&Token::Minus);
+                if !negative {
+                    self.consume(&Token::Plus);
+                }
+                let token = self.advance();
+                let Token::IntegerLiteral(value) = token.kind else {
+                    return Err(Diagnostic::new(
+                        token.span,
+                        "an enum value must be an integer literal",
+                    ));
+                };
+                if negative {
+                    -i128::from(value)
+                } else {
+                    i128::from(value)
+                }
+            } else {
+                next
+            };
+            if !underlying.fits(value) {
+                return Err(Diagnostic::new(
+                    span,
+                    "enum value does not fit its underlying type",
+                ));
+            }
+            variants.push(EnumVariant { name, value, span });
+            next = value + 1;
+            if !self.consume(&Token::Comma) {
+                break;
+            }
+        }
+        self.expect(Token::RightBrace, "expected '}' after enum values")?;
+        let end = self.expect(Token::Semicolon, "expected ';' after enum definition")?;
+        return Ok(EnumDefinition {
+            id,
+            underlying,
+            variants,
+            span: start.through(end),
+        });
     }
 
     fn struct_definition(&mut self) -> Result<StructDefinition, Diagnostic> {
@@ -469,6 +582,10 @@ impl Parser {
             Token::Struct => {
                 let (name, span) = self.identifier()?;
                 Type::Struct(self.struct_id(name, span))
+            }
+            Token::Enum => {
+                let (name, span) = self.identifier()?;
+                Type::Enum(self.enum_id(name, span))
             }
             Token::Identifier(ref name) => self.named_type(name, token.span)?,
             _ => {
@@ -669,6 +786,7 @@ impl Parser {
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Struct)
+            || self.at(&Token::Enum)
             || self.local_type_name()
         {
             let ty = self.type_name()?;
@@ -1015,7 +1133,15 @@ impl Parser {
             }
             Token::Identifier(name) => {
                 if self.consume(&Token::ColonColon) {
-                    let Type::Struct(id) = self.named_type(&name, token.span)? else {
+                    let ty = self.named_type(&name, token.span)?;
+                    if let Type::Enum(id) = ty {
+                        let (name, end) = self.identifier()?;
+                        return Ok(Expression {
+                            span: token.span.through(end),
+                            kind: ExpressionKind::EnumValue { id, name },
+                        });
+                    }
+                    let Type::Struct(id) = ty else {
                         return Err(Diagnostic::new(
                             token.span,
                             "static calls require a struct type",

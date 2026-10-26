@@ -145,6 +145,39 @@ int main() {
 Array declarations specify their capacity. For example, `uint8_t text[3] = "hi"`
 holds two text bytes and the terminating zero.
 
+## Enums
+
+```c
+enum Status : uint8_t {
+    Pending,
+    Ready = 4,
+    Failed,
+};
+
+int main() {
+    Status status = Status::Ready;
+    print(status == Ready);
+    print((int)status);
+    return 0;
+}
+```
+
+- Enum definitions appear at the top level
+- `Status` and `enum Status` name the type
+- Each enum has a distinct type and supports locals, fields, arrays, parameters, returns, and borrows
+- The underlying integer type defaults to `int` and can be specified after `:`
+- The first value defaults to zero, and subsequent values increment by one
+- Explicit values use integer literals with an optional sign
+- Multiple names can have the same value
+- Values fit the underlying type, including automatically incremented values
+- Values can be named directly or through the enum type or a typedef, such as `Status::Ready`
+- Unscoped value names share a namespace across enum definitions and free functions
+- Local variables and parameters can shadow an unscoped value name
+- Comparison operands must have the same enum type
+- Arithmetic and integer conversions require explicit casts
+- Integer-to-enum casts check the underlying range and allow unnamed values
+- `sizeof` and `alignof` follow the underlying integer type
+
 ## Booleans
 
 ```c
@@ -398,7 +431,7 @@ struct Resource {
 
 ## Lexical rules
 
-- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `BoxInt`, `typedef`, `static`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `enum`, `BoxInt`, `typedef`, `static`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

@@ -114,6 +114,7 @@ pub enum Type {
     BoxInt,
     Struct(usize),
     Array(usize),
+    Enum(usize),
     Borrow { pointee: Pointee, mutable: bool },
 }
 
@@ -124,6 +125,7 @@ pub enum Pointee {
     BoxInt,
     Struct(usize),
     Array(usize),
+    Enum(usize),
 }
 
 impl Pointee {
@@ -134,6 +136,7 @@ impl Pointee {
             Pointee::BoxInt => Type::BoxInt,
             Pointee::Struct(id) => Type::Struct(id),
             Pointee::Array(id) => Type::Array(id),
+            Pointee::Enum(id) => Type::Enum(id),
         };
     }
 }
@@ -150,6 +153,7 @@ impl Type {
             Type::BoxInt => Pointee::BoxInt,
             Type::Struct(id) => Pointee::Struct(id),
             Type::Array(id) => Pointee::Array(id),
+            Type::Enum(id) => Pointee::Enum(id),
             _ => return None,
         };
         return Some(Type::Borrow { pointee, mutable });
@@ -166,10 +170,27 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub enum_names: Vec<(String, Span)>,
+    pub enums: Vec<EnumDefinition>,
     pub arrays: Vec<ArrayType>,
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumDefinition {
+    pub id: usize,
+    pub underlying: IntType,
+    pub variants: Vec<EnumVariant>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub value: i128,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +306,10 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    EnumValue {
+        id: usize,
+        name: String,
+    },
     StringLiteral {
         id: usize,
         bytes: Vec<u8>,

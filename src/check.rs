@@ -83,6 +83,12 @@ pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
 
     // Signatures are known before bodies, allowing forward calls and recursion.
     for function in &program.functions {
+        if types.enumerator(&function.name).is_some() {
+            return Err(Diagnostic::new(
+                function.span,
+                "function name conflicts with an enum value",
+            ));
+        }
         if let Some(method) = function
             .name
             .strip_prefix('@')
@@ -487,6 +493,23 @@ impl FunctionChecker<'_> {
             return Ok(Type::Integer(kind));
         }
         match &expression.kind {
+            ExpressionKind::EnumValue { id, name } => {
+                let variant = self.types.enums[*id]
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == *name)
+                    .ok_or_else(|| {
+                        Diagnostic::new(
+                            expression.span,
+                            format!(
+                                "enum '{}' has no value '{name}'",
+                                self.types.enum_names[*id]
+                            ),
+                        )
+                    })?;
+                self.constants.insert(expression.span, variant.value);
+                return Ok(Type::Enum(*id));
+            }
             ExpressionKind::StringLiteral { id, .. } => return Ok(Type::Array(*id)),
             ExpressionKind::Cast { ty, operand } => {
                 if *ty == Type::Void {
@@ -495,13 +518,31 @@ impl FunctionChecker<'_> {
                     self.loans.truncate(previous_loans);
                     return Ok(Type::Void);
                 }
-                if ty.integer().is_none() {
+                if self.types.integer_representation(*ty).is_none() {
                     return Err(Diagnostic::new(
                         expression.span,
-                        "casts require a numeric type or void",
+                        "casts require a numeric type, enum, or void",
                     ));
                 }
-                self.require_type(operand, *ty)?;
+                if constant_integer(operand).is_some() {
+                    let representation =
+                        Type::Integer(self.types.integer_representation(*ty).unwrap());
+                    if *ty == Type::Bool {
+                        self.require_type(operand, *ty)?;
+                    } else {
+                        self.require_type(operand, representation)?;
+                        self.conversions.insert(operand.span, *ty);
+                    }
+                } else {
+                    let actual = self.expression(operand)?;
+                    if self.types.integer_representation(actual).is_none() {
+                        return Err(Diagnostic::new(
+                            operand.span,
+                            "casts require a numeric or enum operand",
+                        ));
+                    }
+                    self.conversions.insert(operand.span, *ty);
+                }
                 return Ok(*ty);
             }
             ExpressionKind::SizeofType(ty) | ExpressionKind::Alignof(ty) => {
@@ -632,6 +673,16 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Integer(_) => unreachable!("literal handled above"),
             ExpressionKind::Variable(name) => {
+                if !self
+                    .scopes
+                    .iter()
+                    .rev()
+                    .any(|scope| scope.contains_key(name))
+                    && let Some((id, variant)) = self.types.enumerator(name)
+                {
+                    self.constants.insert(expression.span, variant.value);
+                    return Ok(Type::Enum(id));
+                }
                 let variable = self.available(name, expression.span)?;
                 if self.types.owns(variable.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
@@ -762,6 +813,26 @@ impl FunctionChecker<'_> {
                 right,
             } => {
                 let left_type = self.expression(left)?;
+                if matches!(left_type, Type::Enum(_)) {
+                    let right_type = self.expression(right)?;
+                    if left_type != right_type
+                        || !matches!(
+                            operator,
+                            BinaryOperator::Equal
+                                | BinaryOperator::NotEqual
+                                | BinaryOperator::Less
+                                | BinaryOperator::LessEqual
+                                | BinaryOperator::Greater
+                                | BinaryOperator::GreaterEqual
+                        )
+                    {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "enum comparisons require values of the same enum type; arithmetic requires an explicit integer cast",
+                        ));
+                    }
+                    return Ok(Type::Integer(IntType::I32));
+                }
                 let left_kind = self.integer(left_type, left.span)?;
                 let before_right = self.scopes.clone();
                 let right_type = self.expression(right)?;

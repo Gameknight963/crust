@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{ArrayType, Field, IntType, Program, Type};
+use crate::ast::{ArrayType, EnumDefinition, EnumVariant, Field, IntType, Program, Type};
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
@@ -11,6 +11,8 @@ pub struct StructInfo {
 }
 
 pub struct Types {
+    pub enums: Vec<EnumDefinition>,
+    pub enum_names: Vec<String>,
     pub arrays: Vec<ArrayType>,
     array_owns: Vec<bool>,
     pub structs: Vec<StructInfo>,
@@ -20,6 +22,45 @@ pub struct Types {
 
 impl Types {
     pub fn build(program: &Program) -> Result<Types, Diagnostic> {
+        let mut enums = Vec::new();
+        let mut enumerators = HashSet::new();
+        for (id, (name, span)) in program.enum_names.iter().enumerate() {
+            let mut definitions = program
+                .enums
+                .iter()
+                .filter(|definition| definition.id == id);
+            let definition = definitions
+                .next()
+                .ok_or_else(|| Diagnostic::new(*span, format!("unknown enum '{name}'")))?;
+            if definitions.next().is_some() {
+                return Err(Diagnostic::new(
+                    definition.span,
+                    format!("enum '{name}' is already defined"),
+                ));
+            }
+            if definition.variants.is_empty() {
+                return Err(Diagnostic::new(
+                    definition.span,
+                    "an enum needs at least one value",
+                ));
+            }
+            for variant in &definition.variants {
+                if matches!(
+                    variant.name.as_str(),
+                    "Self" | "this" | "print" | "move" | "box_int"
+                ) || !enumerators.insert(variant.name.clone())
+                {
+                    return Err(Diagnostic::new(
+                        variant.span,
+                        format!(
+                            "enum value '{}' is already defined or reserved",
+                            variant.name
+                        ),
+                    ));
+                }
+            }
+            enums.push(definition.clone());
+        }
         let mut definitions = vec![None; program.struct_names.len()];
         for definition in &program.structs {
             if definitions[definition.id].is_some() {
@@ -71,6 +112,12 @@ impl Types {
         }
 
         let mut types = Types {
+            enums,
+            enum_names: program
+                .enum_names
+                .iter()
+                .map(|entry| entry.0.clone())
+                .collect(),
             arrays: program.arrays.clone(),
             array_owns: vec![false; program.arrays.len()],
             structs,
@@ -164,6 +211,23 @@ impl Types {
         };
     }
 
+    pub fn enumerator(&self, name: &str) -> Option<(usize, &EnumVariant)> {
+        return self.enums.iter().find_map(|definition| {
+            definition
+                .variants
+                .iter()
+                .find(|variant| variant.name == name)
+                .map(|variant| (definition.id, variant))
+        });
+    }
+
+    pub fn integer_representation(&self, ty: Type) -> Option<IntType> {
+        return match ty {
+            Type::Enum(id) => Some(self.enums[id].underlying),
+            _ => ty.integer(),
+        };
+    }
+
     pub fn describe(&self, ty: Type) -> String {
         return match ty {
             Type::Integer(IntType::I32) => String::from("int"),
@@ -172,6 +236,7 @@ impl Types {
             Type::Void => String::from("void"),
             Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!("struct {}", self.structs[id].name),
+            Type::Enum(id) => format!("enum {}", self.enum_names[id]),
             Type::Array(id) => format!(
                 "{}[{}]",
                 self.describe(self.arrays[id].element),
