@@ -59,7 +59,10 @@ struct DocumentId {
 }
 
 pub fn serve(connection: &Connection) -> ServerResult<()> {
-    let (id, _) = connection.initialize_start()?;
+    let (id, params) = connection.initialize_start()?;
+    let document_changes = params["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"]
+        .as_bool()
+        .unwrap_or(false);
     connection.initialize_finish(
         id,
         json!({
@@ -68,6 +71,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "hoverProvider": true,
                 "definitionProvider": true,
                 "referencesProvider": true,
+                "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
@@ -103,13 +107,18 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                     "textDocument/hover"
                         | "textDocument/definition"
                         | "textDocument/references"
+                        | "textDocument/prepareRename"
+                        | "textDocument/rename"
                         | "textDocument/documentSymbol"
                 ) {
-                    match semantic::request(&request.method, request.params, &documents) {
+                    match semantic::request(
+                        &request.method,
+                        request.params,
+                        &documents,
+                        document_changes,
+                    ) {
                         Ok(result) => Response::new_ok(request.id, result),
-                        Err(message) => {
-                            Response::new_err(request.id, ErrorCode::InvalidParams as i32, message)
-                        }
+                        Err(error) => Response::new_err(request.id, error.code, error.message),
                     }
                 } else {
                     Response::new_err(

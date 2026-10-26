@@ -12,6 +12,7 @@ ownership checking, C generation, and native compilation.
 | `src/lexer.rs` | Tokens and scanning |
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
+| `src/analysis/rename.rs` | Local and parameter rename with binding validation |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
@@ -49,6 +50,9 @@ types have no source declaration.
 Symbols expose a canonical declaration location for compatible redeclarations.
 `Analysis::references_at` collects bound uses and optionally declarations, with
 duplicate locations from generic replay removed.
+`Analysis::rename` returns source edits for locals and explicit parameters. It
+reanalyzes edited snapshot text and compares translated reference targets to
+reject name capture. LSP clients receive a workspace edit for review and application.
 
 ## Native compilation
 

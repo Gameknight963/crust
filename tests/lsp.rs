@@ -14,6 +14,10 @@ struct Server {
 
 impl Server {
     fn start() -> Server {
+        return Self::start_with_capabilities(json!({}));
+    }
+
+    fn start_with_capabilities(capabilities: Value) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_crust-lsp"))
             .arg("--stdio")
             .env("CC", "missing-crust-test-compiler")
@@ -38,13 +42,14 @@ impl Server {
             output,
             next_id: 1,
         };
-        let initialized = server.request("initialize", json!({"capabilities": {}}));
+        let initialized = server.request("initialize", json!({"capabilities": capabilities}));
         let capabilities = &initialized.result.unwrap()["capabilities"];
         assert_eq!(capabilities["positionEncoding"], "utf-16");
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
         assert_eq!(capabilities["hoverProvider"], true);
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["referencesProvider"], true);
+        assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
         assert_eq!(capabilities["documentSymbolProvider"], true);
         server.notify("initialized", json!({}));
         return server;
@@ -695,5 +700,105 @@ fn type_navigation_and_outlines_include_aliases_interfaces_and_unused_generics()
             .iter()
             .any(|symbol| symbol["name"] == "read" && symbol["containerName"] == "Readable")
     );
+    server.stop();
+}
+
+#[test]
+fn prepare_and_rename_return_identifier_ranges_and_client_compatible_edits() {
+    let source = "/* 🦀 */ int main() { int value = 1; return (value); }";
+    let uri = "untitled:rename.cr";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let position = point(source, "value);");
+    let prepared = server
+        .request(
+            "textDocument/prepareRename",
+            json!({
+                "textDocument": {"uri": uri}, "position": position
+            }),
+        )
+        .result
+        .unwrap();
+    assert_eq!(prepared["placeholder"], "value");
+    assert_eq!(prepared["range"]["start"], position);
+    assert_eq!(
+        prepared["range"]["end"]["character"].as_u64().unwrap(),
+        position["character"].as_u64().unwrap() + 5
+    );
+    let result = server
+        .request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": uri}, "position": position, "newName": "count"
+            }),
+        )
+        .result
+        .unwrap();
+    let edits = result["changes"][uri].as_array().unwrap();
+    assert_eq!(edits.len(), 2);
+    assert!(edits.iter().all(|edit| edit["newText"] == "count"));
+    assert_eq!(edits[0]["range"]["start"], point(source, "value ="));
+    assert_eq!(edits[1]["range"]["start"], position);
+    assert!(result.get("documentChanges").is_none());
+    let unsupported = server.request(
+        "textDocument/prepareRename",
+        json!({
+            "textDocument": {"uri": uri}, "position": point(source, "main()")
+        }),
+    );
+    assert!(unsupported.result.unwrap_or(Value::Null).is_null());
+    server.stop();
+}
+
+#[test]
+fn rename_uses_current_document_versions_and_rejects_capture_and_invalid_requests() {
+    let uri = "untitled:versioned-rename.cr";
+    let mut server = Server::start_with_capabilities(json!({
+        "workspace": {"workspaceEdit": {"documentChanges": true}}
+    }));
+    server.open(uri, 1, "int main() { return 0; }");
+    let source = "int answer(int value) { return value; } int main() { return answer(1); }";
+    server.change(uri, 7, source);
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    let query = json!({"textDocument": {"uri": uri}, "position": point(source, "value;"), "newName": "input"});
+    let result = server.request("textDocument/rename", query).result.unwrap();
+    assert_eq!(
+        result["documentChanges"][0]["textDocument"],
+        json!({"uri": uri, "version": 7})
+    );
+    assert_eq!(
+        result["documentChanges"][0]["edits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(result.get("changes").is_none());
+    let capture =
+        "int main() { int original = 1; { int taken = 2; print(original); } return original; }";
+    server.change(uri, 8, capture);
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": uri}, "position": point(capture, "original ="), "newName": "taken"
+    }));
+    assert_eq!(response.error.unwrap().code, -32803);
+    let response = server.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": uri}, "position": point(capture, "original =")
+        }),
+    );
+    assert_eq!(response.error.unwrap().code, -32602);
+    server.change(uri, 9, "int main() { return missing; }");
+    assert!(
+        !server.diagnostics()["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": uri}, "position": {"line": 0, "character": 4}, "newName": "entry"
+    }));
+    assert_eq!(response.error.unwrap().code, -32803);
     server.stop();
 }

@@ -1,6 +1,37 @@
 use super::*;
 use crate::analysis::{Analysis, Location, SymbolKind};
 
+pub(super) struct RequestError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl From<serde_json::Error> for RequestError {
+    fn from(error: serde_json::Error) -> Self {
+        return Self {
+            code: ErrorCode::InvalidParams as i32,
+            message: error.to_string(),
+        };
+    }
+}
+
+impl RequestError {
+    fn failed(message: impl Into<String>) -> Self {
+        return Self {
+            code: -32803,
+            message: message.into(),
+        };
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenameParams {
+    #[serde(flatten)]
+    position: PositionParams,
+    new_name: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DocumentParams {
@@ -73,8 +104,8 @@ impl Context {
         return json!({ "start": position(text, location.span.start), "end": position(text, location.span.end) });
     }
 
-    fn location(&self, location: Location) -> Value {
-        let uri = self.analysis.files[location.file]
+    fn uri(&self, file: usize) -> String {
+        return self.analysis.files[file]
             .path
             .as_ref()
             .map(|path| {
@@ -84,7 +115,39 @@ impl Context {
                     .unwrap_or_else(|| path_uri(path))
             })
             .unwrap_or_else(|| self.uri.clone());
-        return json!({ "uri": uri, "range": self.range(location) });
+    }
+
+    fn location(&self, location: Location) -> Value {
+        return json!({ "uri": self.uri(location.file), "range": self.range(location) });
+    }
+
+    fn rename(
+        &self,
+        offset: usize,
+        name: &str,
+        documents: &HashMap<String, Document>,
+        document_changes: bool,
+    ) -> Result<Value, RequestError> {
+        let edits = self
+            .analysis
+            .rename(self.file, offset, name)
+            .map_err(RequestError::failed)?;
+        let mut changes: std::collections::BTreeMap<String, Vec<Value>> =
+            std::collections::BTreeMap::new();
+        for edit in edits {
+            changes
+                .entry(self.uri(edit.location.file))
+                .or_default()
+                .push(json!({ "range": self.range(edit.location), "newText": edit.new_text }));
+        }
+        if document_changes {
+            let changes: Vec<_> = changes.into_iter().map(|(uri, edits)| {
+                let version = documents.get(&uri).map(|document| document.version);
+                return json!({ "textDocument": { "uri": uri, "version": version }, "edits": edits });
+            }).collect();
+            return Ok(json!({ "documentChanges": changes }));
+        }
+        return Ok(json!({ "changes": changes }));
     }
 
     fn hover(&self, offset: usize) -> Value {
@@ -142,24 +205,34 @@ pub(super) fn request(
     method: &str,
     params: Value,
     documents: &HashMap<String, Document>,
-) -> Result<Value, String> {
+    document_changes: bool,
+) -> Result<Value, RequestError> {
     if method == "textDocument/documentSymbol" {
-        let params: DocumentParams =
-            serde_json::from_value(params).map_err(|error| error.to_string())?;
+        let params: DocumentParams = serde_json::from_value(params)?;
         return Ok(Context::load(&params.text_document.uri, documents)
             .map(|context| context.document_symbols())
             .unwrap_or(Value::Null));
     }
-    let (params, include_declarations) = if method == "textDocument/references" {
-        let params: ReferenceParams =
-            serde_json::from_value(params).map_err(|error| error.to_string())?;
-        (params.position, Some(params.context.include_declaration))
+    let (params, include_declarations, new_name) = if method == "textDocument/references" {
+        let params: ReferenceParams = serde_json::from_value(params)?;
+        (
+            params.position,
+            Some(params.context.include_declaration),
+            None,
+        )
+    } else if method == "textDocument/rename" {
+        let params: RenameParams = serde_json::from_value(params)?;
+        (params.position, None, Some(params.new_name))
     } else {
-        let params: PositionParams =
-            serde_json::from_value(params).map_err(|error| error.to_string())?;
-        (params, None)
+        let params: PositionParams = serde_json::from_value(params)?;
+        (params, None, None)
     };
     let Some(context) = Context::load(&params.text_document.uri, documents) else {
+        if new_name.is_some() {
+            return Err(RequestError::failed(
+                "rename requires a successfully checked program",
+            ));
+        }
         return Ok(Value::Null);
     };
     let Some(offset) = offset(&context.analysis.files[context.file].text, &params.position) else {
@@ -167,6 +240,14 @@ pub(super) fn request(
     };
     if method == "textDocument/hover" {
         return Ok(context.hover(offset));
+    }
+    if method == "textDocument/prepareRename" {
+        return Ok(context.analysis.rename_target(context.file, offset)
+            .map(|(symbol, location)| json!({ "range": context.range(location), "placeholder": symbol.name }))
+            .unwrap_or(Value::Null));
+    }
+    if let Some(name) = new_name {
+        return context.rename(offset, &name, documents, document_changes);
     }
     if let Some(include_declarations) = include_declarations {
         return Ok(Value::Array(

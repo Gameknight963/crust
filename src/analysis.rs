@@ -4,6 +4,13 @@ use std::path::PathBuf;
 use crate::ast::{Block, SourceDeclarationKind, Statement, StatementKind, Type, TypeDeclaration};
 use crate::check::CheckedProgram;
 use crate::diagnostic::Span;
+mod rename;
+
+#[derive(Debug, Clone)]
+pub struct TextEdit {
+    pub location: Location,
+    pub new_text: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct File {
