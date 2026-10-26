@@ -44,6 +44,7 @@ struct Place {
     ty: Type,
     mutable: bool,
     root: (usize, String),
+    fields: Vec<String>,
     via: Option<usize>,
 }
 
@@ -51,6 +52,7 @@ struct Place {
 struct Loan {
     id: usize,
     root: (usize, String),
+    fields: Vec<String>,
     mutable: bool,
     parent: Option<usize>,
     scope: Option<usize>,
@@ -354,7 +356,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 self.require_type(value, target.ty)?;
-                self.access(&self.root(name), true, None, statement.span)?;
+                self.access(&self.root(name), &[], true, None, statement.span)?;
                 self.set_state(name, State::Available);
             }
             StatementKind::CompoundAssign { target, value, .. } => {
@@ -368,14 +370,20 @@ impl FunctionChecker<'_> {
                 let previous_loans = self.loans.len();
                 // Reads such as n += n are allowed. Prevent mutation or moves
                 // that could invalidate a captured destination during the RHS.
-                self.borrow(place.root.clone(), false, place.via, target.span)?;
+                self.borrow(
+                    place.root.clone(),
+                    place.fields.clone(),
+                    false,
+                    place.via,
+                    target.span,
+                )?;
                 let actual = self.expression(value)?;
                 let common = self
                     .integer(place.ty, target.span)?
                     .common(self.integer(actual, value.span)?);
                 self.convert(value, actual, Type::Integer(common))?;
                 self.loans.truncate(previous_loans);
-                self.access(&place.root, true, place.via, target.span)?;
+                self.access(&place.root, &place.fields, true, place.via, target.span)?;
             }
             StatementKind::Store { target, value } => {
                 let target_type = self.receiver_type(target)?;
@@ -387,7 +395,7 @@ impl FunctionChecker<'_> {
                         "cannot assign through a shared borrow or rebind a borrow",
                     ));
                 }
-                self.access(&place.root, true, place.via, target.span)?;
+                self.access(&place.root, &place.fields, true, place.via, target.span)?;
             }
             StatementKind::Expression(expression) => {
                 let ty = self.expression(expression)?;
@@ -725,7 +733,13 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
                 let place = self.checked_place(expression)?;
-                self.access(&place.root, false, place.via, expression.span)?;
+                self.access(
+                    &place.root,
+                    &place.fields,
+                    false,
+                    place.via,
+                    expression.span,
+                )?;
                 if self.types.owns(place.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -756,10 +770,16 @@ impl FunctionChecker<'_> {
                 match variable.ty {
                     Type::Borrow { mutable, .. } => {
                         let place = self.place(expression)?;
-                        let id = self.borrow(place.root, mutable, place.via, expression.span)?;
+                        let id = self.borrow(
+                            place.root,
+                            place.fields,
+                            mutable,
+                            place.via,
+                            expression.span,
+                        )?;
                         self.references.insert(expression.span, id);
                     }
-                    _ => self.access(&self.root(name), false, None, expression.span)?,
+                    _ => self.access(&self.root(name), &[], false, None, expression.span)?,
                 }
                 return Ok(variable.ty);
             }
@@ -804,7 +824,7 @@ impl FunctionChecker<'_> {
                                 "move requires an owning value",
                             ));
                         }
-                        self.access(&self.root(owner), true, None, arguments[0].span)?;
+                        self.access(&self.root(owner), &[], true, None, arguments[0].span)?;
                         self.set_state(owner, State::Moved);
                         return Ok(variable.ty);
                     }
@@ -861,7 +881,13 @@ impl FunctionChecker<'_> {
                     let Type::Borrow { mutable, .. } = signature.return_type else {
                         unreachable!()
                     };
-                    let id = self.borrow(source.root, mutable, source.parent, expression.span)?;
+                    let id = self.borrow(
+                        source.root,
+                        source.fields,
+                        mutable,
+                        source.parent,
+                        expression.span,
+                    )?;
                     self.references.insert(expression.span, id);
                 }
                 return Ok(signature.return_type);
@@ -881,13 +907,25 @@ impl FunctionChecker<'_> {
                             "borrows of borrows are not supported; reborrow the pointee instead",
                         )
                     })?;
-                    let id = self.borrow(place.root, *mutable, place.via, expression.span)?;
+                    let id = self.borrow(
+                        place.root,
+                        place.fields,
+                        *mutable,
+                        place.via,
+                        expression.span,
+                    )?;
                     self.references.insert(expression.span, id);
                     return Ok(ty);
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.checked_place(expression)?;
-                    self.access(&place.root, false, place.via, expression.span)?;
+                    self.access(
+                        &place.root,
+                        &place.fields,
+                        false,
+                        place.via,
+                        expression.span,
+                    )?;
                     if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -1207,7 +1245,13 @@ impl FunctionChecker<'_> {
                     return Err(Diagnostic::new(base.span, "indexing requires an array"));
                 };
                 let previous_loans = self.loans.len();
-                self.borrow(place.root.clone(), false, place.via, base.span)?;
+                self.borrow(
+                    place.root.clone(),
+                    place.fields.clone(),
+                    false,
+                    place.via,
+                    base.span,
+                )?;
                 let index_type = self.expression(index)?;
                 self.integer(index_type, index.span)?;
                 if let Some(value) = constant_integer(index)
@@ -1224,7 +1268,13 @@ impl FunctionChecker<'_> {
             ExpressionKind::Field { base, name } => {
                 let place = self.checked_place(base)?;
                 let ty = self.types.field(place.ty, name, expression.span)?;
-                return Ok(Place { ty, ..place });
+                let mut fields = place.fields;
+                fields.push(name.clone());
+                return Ok(Place {
+                    ty,
+                    fields,
+                    ..place
+                });
             }
             ExpressionKind::Variable(_) => return self.place(expression),
             ExpressionKind::Unary {
@@ -1246,6 +1296,7 @@ impl FunctionChecker<'_> {
                             ty,
                             mutable: false,
                             root: (0, String::new()),
+                            fields: Vec::new(),
                             via: None,
                         }
                     } else {
@@ -1259,6 +1310,7 @@ impl FunctionChecker<'_> {
                             ty,
                             mutable: false,
                             root: loan.root.clone(),
+                            fields: loan.fields.clone(),
                             via: Some(id),
                         }
                     }
@@ -1296,20 +1348,21 @@ impl FunctionChecker<'_> {
             ));
         };
         let variable = self.available(name, expression.span)?;
-        let root = if let Some(id) = variable.reference {
-            self.loans
+        let (root, fields) = if let Some(id) = variable.reference {
+            let loan = self
+                .loans
                 .iter()
                 .find(|loan| loan.id == id)
-                .expect("local reference has a live loan")
-                .root
-                .clone()
+                .expect("local reference has a live loan");
+            (loan.root.clone(), loan.fields.clone())
         } else {
-            self.root(name)
+            (self.root(name), Vec::new())
         };
         return Ok(Place {
             ty: variable.ty,
             mutable: !variable.ty.is_borrow(),
             root,
+            fields,
             via: variable.reference,
         });
     }
@@ -1326,6 +1379,7 @@ impl FunctionChecker<'_> {
     fn access(
         &self,
         root: &(usize, String),
+        fields: &[String],
         exclusive: bool,
         via: Option<usize>,
         span: Span,
@@ -1344,7 +1398,10 @@ impl FunctionChecker<'_> {
                 .and_then(|loan| loan.parent);
         }
         if self.loans.iter().any(|loan| {
-            &loan.root == root && !authorized.contains(&loan.id) && (exclusive || loan.mutable)
+            &loan.root == root
+                && fields_overlap(fields, &loan.fields)
+                && !authorized.contains(&loan.id)
+                && (exclusive || loan.mutable)
         }) {
             return Err(Diagnostic::new(
                 span,
@@ -1357,6 +1414,7 @@ impl FunctionChecker<'_> {
     fn borrow(
         &mut self,
         root: (usize, String),
+        fields: Vec<String>,
         mutable: bool,
         parent: Option<usize>,
         span: Span,
@@ -1364,12 +1422,13 @@ impl FunctionChecker<'_> {
         if self.unevaluated {
             return Ok(usize::MAX);
         }
-        self.access(&root, mutable, parent, span)?;
+        self.access(&root, &fields, mutable, parent, span)?;
         let id = self.next_loan;
         self.next_loan += 1;
         self.loans.push(Loan {
             id,
             root,
+            fields,
             mutable,
             parent,
             scope: None,
@@ -1510,4 +1569,8 @@ fn is_place(expression: &Expression) -> bool {
                 ..
             }
     );
+}
+
+fn fields_overlap(left: &[String], right: &[String]) -> bool {
+    return left.iter().zip(right).all(|(a, b)| a == b);
 }

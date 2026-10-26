@@ -40,6 +40,8 @@ ownership checking, C generation, and native compilation.
 
 - A borrow records its pointee type and access permission in a shared type representation
 - Local reference bindings retain a loan ID and source root until their block ends
+- Places and loans retain struct field paths, with overlapping prefixes identifying conflicts between a field and its parents
+- Distinct field paths permit independent access, while array indices remain conservative
 - Reborrow loans record their parent, allowing access through that ancestry while checking conflicts with sibling and child loans
 - Call argument loans are temporary, and scope exit releases local-reference loans
 - Borrowed return signatures identify a single borrowed input, and return checking verifies the source root

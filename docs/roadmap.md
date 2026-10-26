@@ -15,18 +15,18 @@
 - Local references with lexical lifetimes, nested reborrows, and scope-based loan release
 - Distinct enum types, explicit representations, scoped and unscoped values, and checked casts
 - Borrowed returns tied to a single input or receiver, returned-reference chaining, and expression temporary loans
+- Disjoint struct-field borrows with parent overlap checking
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add disjoint field access and refine temporary lifetimes
-2. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
-3. Add generic types and functions, interface constraints, and static interface requirements
-4. Add modules, imports, visibility, project dependencies, and library targets
-5. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-6. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
+1. Add raw pointers, unsafe operations, external C declarations, function pointers, opaque types, and native linking
+2. Add generic types and functions, interface constraints, and static interface requirements
+3. Add modules, imports, visibility, project dependencies, and library targets
+4. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
+5. Extend C header importing and ABI coverage to unions, variadic functions, calling conventions, and layout attributes
 
 A substantial validation target is a multi-file program using a generic container
 backed by C allocation, with automatic cleanup and safe access to its contents.
@@ -47,6 +47,7 @@ APIs become available.
 ## Further design
 
 - Borrowed-field lifetimes and field moves in the presence of destructors
+- Temporary owner lifetimes and borrow contracts with multiple borrowed inputs
 - Tagged unions and fallible-operation conventions
 - Module naming and visibility
 - Constrained `weak`, `expect`, and `replace` typedefs across a build

@@ -297,7 +297,8 @@ int main() {
 - Exclusive borrows prevent conflicting reads, writes, moves, and borrows
 - Borrow permissions apply through fields and owning pointees
 - Argument borrows remain active through the call, including later argument evaluation
-- Field borrows currently lock the whole parent
+- Separate struct fields can be borrowed independently
+- Borrowing a field prevents conflicting access to that field or any containing value
 - Borrow parameters can be forwarded or reborrowed for nested calls
 - Parameters require matching borrow types. Use `^const *reference` to explicitly create a shared reborrow
 - Borrow parameters and local references keep their binding and permit writes through mutable pointees
@@ -329,8 +330,9 @@ print(number);
 - A live reference prevents moves and replacement of its source owner
 - Reference bindings cannot be rebound
 
-Borrows lock the whole parent value and remain active to the end of the block,
-including after their last use. Borrowed fields require further lifetime rules.
+Borrows distinguish separate struct fields. Array element borrows lock the whole
+array. Local references remain active to the end of the block, including after
+their last use. Borrowed fields require further lifetime rules.
 
 ### Borrowed returns
 
@@ -350,6 +352,7 @@ struct Item {
 - A mutable borrowed return requires an exclusive borrowed input
 - Return statements can forward the input through calls and local reborrows
 - The caller's returned reference keeps the source borrowed
+- A returned loan covers the full input region passed by the caller, even when the function returns one of its subfields
 - Returned references support local bindings, call arguments, dereferencing, field access, and method chaining
 - A local binding retains the returned loan until its block ends
 - Unbound returned loans last through the expression statement or initializer
