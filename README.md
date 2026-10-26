@@ -1,3 +1,5 @@
+Crust (C-Rust get it) is to Rust (the language) as Crust is to Rust (the game)
+
 # Crust
 
 An experimental C-like language with ownership checking, implemented in Rust.
