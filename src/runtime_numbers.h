@@ -1,4 +1,16 @@
 /* Numeric helpers embedded in generated C after the basic runtime. */
+static inline size_t crust_rt_index_unsigned(uint64_t index, size_t length, size_t line, size_t column)
+{
+    if (index >= length) { crust_rt_fail("array index out of bounds", line, column); }
+    return (size_t)index;
+}
+
+static inline size_t crust_rt_index_signed(int64_t index, size_t length, size_t line, size_t column)
+{
+    if (index < 0) { crust_rt_fail("array index out of bounds", line, column); }
+    return crust_rt_index_unsigned((uint64_t)index, length, line, column);
+}
+
 static inline void crust_rt_print_i64(int64_t value)
 {
     printf("%" PRId64 "\n", value);

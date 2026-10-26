@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{Field, IntType, Program, Type};
+use crate::ast::{ArrayType, Field, IntType, Program, Type};
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
@@ -11,9 +11,11 @@ pub struct StructInfo {
 }
 
 pub struct Types {
+    pub arrays: Vec<ArrayType>,
+    array_owns: Vec<bool>,
     pub structs: Vec<StructInfo>,
     // Dependencies precede the structs that contain them by value.
-    pub order: Vec<usize>,
+    pub order: Vec<Type>,
 }
 
 impl Types {
@@ -69,51 +71,78 @@ impl Types {
         }
 
         let mut types = Types {
+            arrays: program.arrays.clone(),
+            array_owns: vec![false; program.arrays.len()],
             structs,
             order: Vec::new(),
         };
         let mut states = vec![0; types.structs.len()];
+        let mut array_states = vec![0; types.arrays.len()];
         for id in 0..states.len() {
-            types.visit(id, &mut states, program.struct_names[id].1)?;
+            types.visit(
+                Type::Struct(id),
+                &mut states,
+                &mut array_states,
+                program.struct_names[id].1,
+            )?;
+        }
+        for id in 0..array_states.len() {
+            types.visit(
+                Type::Array(id),
+                &mut states,
+                &mut array_states,
+                types.arrays[id].span,
+            )?;
         }
         return Ok(types);
     }
 
-    fn visit(&mut self, id: usize, states: &mut [u8], span: Span) -> Result<(), Diagnostic> {
-        if states[id] == 2 {
-            return Ok(());
+    fn visit(
+        &mut self,
+        ty: Type,
+        states: &mut [u8],
+        array_states: &mut [u8],
+        span: Span,
+    ) -> Result<bool, Diagnostic> {
+        let state = match ty {
+            Type::Array(id) => array_states[id],
+            Type::Struct(id) => states[id],
+            _ => return Ok(self.owns(ty)),
+        };
+        if state == 2 {
+            return Ok(self.owns(ty));
         }
-        if states[id] == 1 {
+        if state == 1 {
             return Err(Diagnostic::new(
                 span,
-                format!(
-                    "recursive by-value layout involving struct '{}'",
-                    self.structs[id].name
-                ),
+                format!("recursive by-value layout involving {}", self.describe(ty)),
             ));
         }
+        if let Type::Array(id) = ty {
+            array_states[id] = 1;
+            let array = self.arrays[id];
+            self.array_owns[id] = self.visit(array.element, states, array_states, array.span)?;
+            array_states[id] = 2;
+            self.order.push(ty);
+            return Ok(self.array_owns[id]);
+        }
+        let Type::Struct(id) = ty else { unreachable!() };
         states[id] = 1;
         let mut owns = self.structs[id].has_destructor;
         for field in self.structs[id].fields.clone() {
-            match field.ty {
-                Type::BoxInt => owns = true,
-                Type::Struct(child) => {
-                    self.visit(child, states, field.span)?;
-                    owns = owns || self.structs[child].owns;
-                }
-                _ => {}
-            }
+            owns |= self.visit(field.ty, states, array_states, field.span)?;
         }
         self.structs[id].owns = owns;
         states[id] = 2;
-        self.order.push(id);
-        return Ok(());
+        self.order.push(ty);
+        return Ok(owns);
     }
 
     pub fn owns(&self, ty: Type) -> bool {
         return match ty {
             Type::BoxInt => true,
             Type::Struct(id) => self.structs[id].owns,
+            Type::Array(id) => self.array_owns[id],
             _ => false,
         };
     }
@@ -126,6 +155,11 @@ impl Types {
             Type::Void => String::from("void"),
             Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!("struct {}", self.structs[id].name),
+            Type::Array(id) => format!(
+                "{}[{}]",
+                self.describe(self.arrays[id].element),
+                self.arrays[id].length
+            ),
             Type::Borrow { pointee, mutable } => format!(
                 "{}{}^",
                 if mutable { "" } else { "const " },

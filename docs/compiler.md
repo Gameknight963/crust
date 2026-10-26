@@ -14,7 +14,7 @@ ownership checking, C generation, and native compilation.
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
-| `src/types.rs` | Struct layouts and ownership propagation |
+| `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
 | `src/runtime_numbers.h` | Embedded portable C helpers for wide arithmetic and checked conversions |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
@@ -42,6 +42,10 @@ ownership checking, C generation, and native compilation.
 - A move clears the source's flag, and reassignment restores it
 - Cleanup checks the flag before destroying a named struct
 - Struct layouts contain the declared fields
+- Fixed-size arrays use generated C structs containing a native array, preserving by-value copies, returns, size, and alignment
+- Layout dependency ordering includes arrays and rejects cycles through array elements
+- Owning arrays have live-value flags and drop elements in reverse index order
+- Indexed places capture the array address and check the index before element access
 - `BoxInt` uses a null pointer as its internal moved-value flag
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters

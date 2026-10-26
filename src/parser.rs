@@ -14,6 +14,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         resolved_aliases: HashMap::new(),
         resolving_aliases: HashSet::new(),
         value_scopes: vec![HashSet::new()],
+        arrays: Vec::new(),
     };
     parser.collect_type_names()?;
     let mut functions = Vec::new();
@@ -21,8 +22,9 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     while !parser.at(&Token::EndOfFile) {
         if parser.consume(&Token::Typedef) {
-            parser.type_name()?;
+            let ty = parser.type_name()?;
             parser.identifier()?;
+            parser.array_suffix(ty)?;
             parser.expect(Token::Semicolon, "expected ';' after typedef")?;
         } else if parser.at(&Token::Struct)
             && parser
@@ -38,6 +40,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     functions.append(&mut parser.methods);
     return Ok(Program {
+        arrays: parser.arrays,
         functions,
         structs,
         struct_names: parser.struct_names,
@@ -45,6 +48,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 }
 
 struct Parser {
+    arrays: Vec<ArrayType>,
     tokens: Vec<SpannedToken>,
     position: usize,
     struct_names: Vec<(String, Span)>,
@@ -106,7 +110,9 @@ impl Parser {
                 {
                     return Err(Diagnostic::new(token.span, "expected 'typedef type Name;'"));
                 }
-                let name_position = end.saturating_sub(1);
+                let name_position = (start..end)
+                    .rfind(|&index| matches!(self.tokens[index].kind, Token::Identifier(_)))
+                    .unwrap_or(start);
                 if name_position <= start {
                     return Err(Diagnostic::new(
                         token.span,
@@ -182,6 +188,8 @@ impl Parser {
                 "expected 'typedef type Name;'",
             ));
         }
+        self.identifier()?;
+        let ty = self.array_suffix(ty)?;
         self.position = previous;
         self.resolving_aliases.remove(name);
         self.resolved_aliases.insert(name.to_owned(), ty);
@@ -341,6 +349,7 @@ impl Parser {
             if is_static {
                 return Err(Diagnostic::new(span, "static currently applies to methods"));
             }
+            let ty = self.array_suffix(ty)?;
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field { name, ty, span });
         }
@@ -385,6 +394,7 @@ impl Parser {
                     ));
                 }
                 let (name, span) = self.identifier()?;
+                let ty = self.array_suffix(ty)?;
                 parameters.push(Parameter { name, ty, span });
                 if !self.consume(&Token::Comma) {
                     break;
@@ -468,6 +478,7 @@ impl Parser {
                 ));
             }
         };
+        let base = self.array_suffix(base)?;
         if self.consume(&Token::Caret) {
             return base
                 .borrowed(!shared)
@@ -480,6 +491,49 @@ impl Parser {
             ));
         }
         return Ok(base);
+    }
+
+    fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
+        let mut dimensions = Vec::new();
+        while self.consume(&Token::LeftBracket) {
+            let token = self.advance();
+            let Token::IntegerLiteral(length) = token.kind else {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "array length must be a positive integer literal",
+                ));
+            };
+            let length = usize::try_from(length)
+                .ok()
+                .filter(|length| *length > 0)
+                .ok_or_else(|| {
+                    Diagnostic::new(token.span, "array length must fit size_t and be positive")
+                })?;
+            self.expect(Token::RightBracket, "expected ']' after array length")?;
+            dimensions.push((length, token.span));
+        }
+        for (length, span) in dimensions.into_iter().rev() {
+            if element == Type::Void || element.is_borrow() {
+                return Err(Diagnostic::new(span, "array elements must be values"));
+            }
+            let id = if let Some(id) = self
+                .arrays
+                .iter()
+                .position(|array| array.element == element && array.length == length)
+            {
+                id
+            } else {
+                let id = self.arrays.len();
+                self.arrays.push(ArrayType {
+                    element,
+                    length,
+                    span,
+                });
+                id
+            };
+            element = Type::Array(id);
+        }
+        return Ok(element);
     }
 
     fn block(&mut self) -> Result<Block, Diagnostic> {
@@ -625,6 +679,7 @@ impl Parser {
                 ));
             }
             let (name, _) = self.identifier()?;
+            let ty = self.array_suffix(ty)?;
             self.value_scopes.last_mut().unwrap().insert(name.clone());
             self.expect(
                 Token::Equal,
@@ -663,7 +718,7 @@ impl Parser {
     fn assignment_or_expression(&mut self) -> Result<StatementKind, Diagnostic> {
         let target = self.expression(1)?;
         if self.consume(&Token::Equal) {
-            let value = self.expression(1)?;
+            let value = self.initializer()?;
             if let ExpressionKind::Variable(name) = target.kind {
                 return Ok(StatementKind::Assign { name, value });
             }
@@ -791,6 +846,18 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expression, Diagnostic> {
         let mut expression = self.primary()?;
         loop {
+            if self.consume(&Token::LeftBracket) {
+                let index = self.expression(1)?;
+                let end = self.expect(Token::RightBracket, "expected ']' after index")?;
+                expression = Expression {
+                    span: expression.span.through(end),
+                    kind: ExpressionKind::Index {
+                        base: Box::new(expression),
+                        index: Box::new(index),
+                    },
+                };
+                continue;
+            }
             let arrow = self.consume(&Token::Arrow);
             if !arrow && !self.consume(&Token::Dot) {
                 break;
@@ -836,6 +903,21 @@ impl Parser {
 
     fn initializer(&mut self) -> Result<Expression, Diagnostic> {
         if self.at(&Token::LeftBrace) {
+            if !self.next_at(&Token::Dot) && !self.next_at(&Token::RightBrace) {
+                let start = self.advance().span;
+                let mut elements = Vec::new();
+                while !self.at(&Token::RightBrace) {
+                    elements.push(self.initializer()?);
+                    if !self.consume(&Token::Comma) {
+                        break;
+                    }
+                }
+                let end = self.expect(Token::RightBrace, "expected '}' after array initializer")?;
+                return Ok(Expression {
+                    span: start.through(end),
+                    kind: ExpressionKind::ArrayLiteral { id: None, elements },
+                });
+            }
             return self.struct_literal(None);
         }
         return self.expression(1);
@@ -939,23 +1021,35 @@ impl Parser {
                 });
             }
             Token::LeftParen => {
-                if self.at(&Token::Struct)
-                    || (matches!(&self.current().kind, Token::Identifier(name) if self.known_type(name))
-                        && self.next_at(&Token::RightParen)
-                        && self
-                            .tokens
-                            .get(self.position + 2)
-                            .is_some_and(|token| token.kind == Token::LeftBrace))
-                {
+                if self.type_in_expression() {
                     let ty = self.type_name()?;
-                    let Type::Struct(id) = ty else {
-                        return Err(Diagnostic::new(
-                            token.span,
-                            "a compound literal needs a struct value type",
-                        ));
+                    self.expect(
+                        Token::RightParen,
+                        "expected ')' after the compound literal type",
+                    )?;
+                    let mut literal = match ty {
+                        Type::Struct(id) => self.struct_literal(Some(id))?,
+                        Type::Array(id) => {
+                            let mut literal = self.initializer()?;
+                            if let ExpressionKind::ArrayLiteral { id: literal_id, .. } =
+                                &mut literal.kind
+                            {
+                                *literal_id = Some(id);
+                            } else {
+                                return Err(Diagnostic::new(
+                                    literal.span,
+                                    "expected array elements inside braces",
+                                ));
+                            }
+                            literal
+                        }
+                        _ => {
+                            return Err(Diagnostic::new(
+                                token.span,
+                                "a compound literal needs a struct or array type",
+                            ));
+                        }
                     };
-                    self.expect(Token::RightParen, "expected ')' after the struct type")?;
-                    let mut literal = self.struct_literal(Some(id))?;
                     literal.span = token.span.through(literal.span);
                     return Ok(literal);
                 }

@@ -81,6 +81,43 @@ The expression is checked without being evaluated or moving its owners.
 Pointer-sized names follow the compiler host. Generated C checks that the native
 compiler uses the same pointer width.
 
+## Arrays
+
+```c
+typedef int Row[3];
+
+int sum(const Row^ values) {
+    return (*values)[0] + (*values)[1] + (*values)[2];
+}
+
+int main() {
+    int values[3] = { 10, 20, 30 };
+    values[1] += 2;
+    print(sum(^const values));
+    return 0;
+}
+```
+
+- Declarations attach dimensions to the name, as in `int matrix[2][3]`
+- Type expressions can use `int[3]`, including `sizeof(int[3])` and `(int[3]){ 1, 2, 3 }`
+- Lengths are positive integer literals
+- Brace initializers provide every element and evaluate left to right
+- Nested arrays use nested brace initializers
+- Arrays support locals, fields, typedefs, parameters, returns, and whole-array assignment
+- Passing an array by value copies it or transfers ownership with `move`
+- Shared and mutable array borrows preserve the length in their type
+- Indexing checks bounds and evaluates each index once
+- A constant index outside the bounds produces a compiler diagnostic
+- Element borrows lock the whole parent array
+- Arrays of owners require whole-array moves and destroy elements in reverse index order
+- Moving an individual owning element requires further partial-move support
+
+Indexed access starts from a named array, field, or borrowed pointee. Ordinary
+assignment evaluates its right side before the destination's index expressions.
+Compound assignment captures its destination and old value before evaluating the
+right side. Index evaluation prevents mutation or moves of the array whose
+address has been captured.
+
 ## Booleans
 
 ```c

@@ -113,6 +113,7 @@ pub enum Type {
     Void,
     BoxInt,
     Struct(usize),
+    Array(usize),
     Borrow { pointee: Pointee, mutable: bool },
 }
 
@@ -122,6 +123,7 @@ pub enum Pointee {
     Bool,
     BoxInt,
     Struct(usize),
+    Array(usize),
 }
 
 impl Pointee {
@@ -131,6 +133,7 @@ impl Pointee {
             Pointee::Bool => Type::Bool,
             Pointee::BoxInt => Type::BoxInt,
             Pointee::Struct(id) => Type::Struct(id),
+            Pointee::Array(id) => Type::Array(id),
         };
     }
 }
@@ -146,6 +149,7 @@ impl Type {
             Type::Bool => Pointee::Bool,
             Type::BoxInt => Pointee::BoxInt,
             Type::Struct(id) => Pointee::Struct(id),
+            Type::Array(id) => Pointee::Array(id),
             _ => return None,
         };
         return Some(Type::Borrow { pointee, mutable });
@@ -162,9 +166,17 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub arrays: Vec<ArrayType>,
     pub struct_names: Vec<(String, Span)>,
     pub structs: Vec<StructDefinition>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayType {
+    pub element: Type,
+    pub length: usize,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -273,6 +285,14 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Index {
+        base: Box<Expression>,
+        index: Box<Expression>,
+    },
+    ArrayLiteral {
+        id: Option<usize>,
+        elements: Vec<Expression>,
+    },
     Cast {
         ty: Type,
         operand: Box<Expression>,

@@ -51,7 +51,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
                 Local {
                     name: format!("crust_arg_{index}"),
                     ty: parameter.ty,
-                    live: if matches!(parameter.ty, Type::Struct(_))
+                    live: if matches!(parameter.ty, Type::Struct(_) | Type::Array(_))
                         && checked.types.owns(parameter.ty)
                     {
                         Some(format!("crust_live_arg_{index}"))
@@ -92,6 +92,7 @@ fn c_type(ty: Type) -> String {
         Type::Void => String::from("void"),
         Type::BoxInt => String::from("int32_t *"),
         Type::Struct(id) => format!("struct crust_struct_{id}"),
+        Type::Array(id) => format!("struct crust_array_{id}"),
         Type::Borrow { pointee, mutable } => format!(
             "{}{} *",
             c_type(pointee.ty()),
@@ -195,7 +196,17 @@ impl Emitter<'_> {
     }
 
     fn struct_definitions(&mut self) {
-        for id in &self.types.order {
+        for ty in &self.types.order {
+            if let Type::Array(id) = ty {
+                let array = self.types.arrays[*id];
+                self.line(&format!(
+                    "struct crust_array_{id} {{ {} crust_elements[{}]; }};",
+                    c_type(array.element),
+                    array.length
+                ));
+                continue;
+            }
+            let Type::Struct(id) = ty else { unreachable!() };
             let info = &self.types.structs[*id];
             self.line(&format!("struct crust_struct_{id} {{"));
             self.indent += 1;
@@ -209,7 +220,26 @@ impl Emitter<'_> {
     }
 
     fn drop_functions(&mut self) {
-        for id in &self.types.order {
+        for ty in &self.types.order {
+            if let Type::Array(id) = ty {
+                if self.types.owns(*ty) {
+                    let array = self.types.arrays[*id];
+                    self.line(&format!("static inline void crust_drop_array_{id}(struct crust_array_{id} *value) {{"));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "for (size_t crust_index = {}; crust_index > 0; --crust_index) {{",
+                        array.length
+                    ));
+                    self.indent += 1;
+                    self.drop_value(array.element, "value->crust_elements[crust_index - 1]");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
+                continue;
+            }
+            let Type::Struct(id) = ty else { unreachable!() };
             let info = &self.types.structs[*id];
             if info.owns {
                 self.line(&format!(
@@ -234,6 +264,9 @@ impl Emitter<'_> {
             Type::BoxInt => self.line(&format!("crust_rt_drop(&({place}));")),
             Type::Struct(id) if self.types.owns(ty) => {
                 self.line(&format!("crust_drop_struct_{id}(&({place}));"))
+            }
+            Type::Array(id) if self.types.owns(ty) => {
+                self.line(&format!("crust_drop_array_{id}(&({place}));"))
             }
             _ => {}
         }
@@ -284,7 +317,8 @@ impl Emitter<'_> {
                 let value = self.value_expression(initializer);
                 let local = self.fresh_name("local");
                 self.line(&format!("{} {local} = {value};", c_type(*ty)));
-                let live = if matches!(ty, Type::Struct(_)) && self.types.owns(*ty) {
+                let live = if matches!(ty, Type::Struct(_) | Type::Array(_)) && self.types.owns(*ty)
+                {
                     let name = self.fresh_name("live");
                     self.line(&format!("int {name} = 1;"));
                     Some(name)
@@ -582,7 +616,22 @@ impl Emitter<'_> {
                 let literal = format!("({}){{ {} }}", c_type(ty), values.join(", "));
                 return Some(self.temporary(ty, &literal));
             }
-            ExpressionKind::Field { .. } => {
+            ExpressionKind::ArrayLiteral { elements, .. } => {
+                let ty = self.expression_type(expression);
+                let values = elements
+                    .iter()
+                    .map(|element| self.value_expression(element))
+                    .collect::<Vec<_>>();
+                return Some(self.temporary(
+                    ty,
+                    &format!(
+                        "({}){{ .crust_elements = {{ {} }} }}",
+                        c_type(ty),
+                        values.join(", ")
+                    ),
+                ));
+            }
+            ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
                 let place = self.place(expression);
                 return Some(self.temporary(self.expression_type(expression), &place));
             }
@@ -717,10 +766,31 @@ impl Emitter<'_> {
         return self.expression_types[&expression.span];
     }
 
-    // Places have no calls or side effects in this subset, so evaluating the
-    // right side before resolving an assignment destination is unambiguous.
-    fn place(&self, expression: &Expression) -> String {
+    fn place(&mut self, expression: &Expression) -> String {
         match &expression.kind {
+            ExpressionKind::Index { base, index } => {
+                let base_type = self.place_type(base);
+                let Type::Array(id) = base_type else {
+                    unreachable!()
+                };
+                let length = self.types.arrays[id].length;
+                let place = self.place(base);
+                let address = self.temporary(
+                    base_type.borrowed(self.place_mutable(base)).unwrap(),
+                    &format!("&({place})"),
+                );
+                let value = self.value_expression(index);
+                let signed = self.expression_type(index).integer().unwrap().signed();
+                let check = format!(
+                    "crust_rt_index_{}({value}, {length}, {}, {})",
+                    if signed { "signed" } else { "unsigned" },
+                    index.span.line,
+                    index.span.column
+                );
+                let checked_index =
+                    self.temporary(Type::Integer(IntType::named("size_t").unwrap()), &check);
+                return format!("({address})->crust_elements[{checked_index}]");
+            }
             ExpressionKind::Field { base, name } => {
                 return format!("({}).crust_field_{name}", self.place(base));
             }
@@ -739,6 +809,12 @@ impl Emitter<'_> {
 
     fn place_type(&self, expression: &Expression) -> Type {
         match &expression.kind {
+            ExpressionKind::Index { base, .. } => {
+                let Type::Array(id) = self.place_type(base) else {
+                    unreachable!()
+                };
+                return self.types.arrays[id].element;
+            }
             ExpressionKind::Field { base, name } => {
                 return self
                     .types
@@ -759,6 +835,26 @@ impl Emitter<'_> {
                 };
             }
             _ => unreachable!("checker requires a place"),
+        }
+    }
+
+    fn place_mutable(&self, expression: &Expression) -> bool {
+        match &expression.kind {
+            ExpressionKind::Variable(name) => return !self.local(name).ty.is_borrow(),
+            ExpressionKind::Field { base, .. } | ExpressionKind::Index { base, .. } => {
+                return self.place_mutable(base);
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => {
+                return match self.place_type(operand) {
+                    Type::Borrow { mutable, .. } => mutable,
+                    Type::BoxInt => self.place_mutable(operand),
+                    _ => unreachable!(),
+                };
+            }
+            _ => unreachable!(),
         }
     }
 

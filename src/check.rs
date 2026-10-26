@@ -284,7 +284,7 @@ impl FunctionChecker<'_> {
                 self.set_state(name, State::Available);
             }
             StatementKind::CompoundAssign { target, value, .. } => {
-                let place = self.place(target)?;
+                let place = self.checked_place(target)?;
                 if !place.mutable || !matches!(place.ty, Type::Integer(_)) {
                     return Err(Diagnostic::new(
                         target.span,
@@ -313,7 +313,7 @@ impl FunctionChecker<'_> {
                 }
                 self.require_type(value, place.ty)?;
                 // The right side may move the owner of the destination.
-                let place = self.place(target)?;
+                let place = self.checked_place(target)?;
                 self.access(&place.root, true, target.span)?;
             }
             StatementKind::Expression(expression) => {
@@ -595,8 +595,11 @@ impl FunctionChecker<'_> {
             ExpressionKind::StructLiteral { .. } => {
                 return self.struct_literal(expression, None);
             }
-            ExpressionKind::Field { .. } => {
-                let place = self.place(expression)?;
+            ExpressionKind::ArrayLiteral { .. } => {
+                return self.array_literal(expression, None);
+            }
+            ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
+                let place = self.checked_place(expression)?;
                 self.access(&place.root, false, expression.span)?;
                 if self.types.owns(place.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
@@ -661,7 +664,7 @@ impl FunctionChecker<'_> {
                         if !self.types.owns(variable.ty) {
                             return Err(Diagnostic::new(
                                 arguments[0].span,
-                                "move currently requires a BoxInt owner or an owning struct",
+                                "move requires an owning value",
                             ));
                         }
                         self.access(&self.root(owner), true, arguments[0].span)?;
@@ -690,7 +693,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Unary { operator, operand } => {
                 if let UnaryOperator::Borrow { mutable } = operator {
-                    let place = self.place(operand)?;
+                    let place = self.checked_place(operand)?;
                     if *mutable && !place.mutable {
                         return Err(Diagnostic::new(
                             operand.span,
@@ -707,7 +710,7 @@ impl FunctionChecker<'_> {
                     return Ok(ty);
                 }
                 if *operator == UnaryOperator::Dereference {
-                    let place = self.place(expression)?;
+                    let place = self.checked_place(expression)?;
                     self.access(&place.root, false, expression.span)?;
                     if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
@@ -784,7 +787,9 @@ impl FunctionChecker<'_> {
             self.expression_types.insert(expression.span, expected);
             return Ok(());
         }
-        let actual = if matches!(
+        let actual = if matches!(expression.kind, ExpressionKind::ArrayLiteral { .. }) {
+            self.array_literal(expression, Some(expected))?
+        } else if matches!(
             expression.kind,
             ExpressionKind::StructLiteral { id: None, .. }
         ) {
@@ -877,6 +882,42 @@ impl FunctionChecker<'_> {
         }
     }
 
+    fn array_literal(
+        &mut self,
+        expression: &Expression,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        let ExpressionKind::ArrayLiteral { id, elements } = &expression.kind else {
+            unreachable!()
+        };
+        let id = match (*id, expected) {
+            (Some(id), _) | (None, Some(Type::Array(id))) => id,
+            _ => {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "an array initializer needs an array type",
+                ));
+            }
+        };
+        let array = self.types.arrays[id];
+        if elements.len() != array.length {
+            return Err(Diagnostic::new(
+                expression.span,
+                format!(
+                    "array initializer needs {} elements, got {}",
+                    array.length,
+                    elements.len()
+                ),
+            ));
+        }
+        for element in elements {
+            self.require_type(element, array.element)?;
+        }
+        let ty = Type::Array(id);
+        self.expression_types.insert(expression.span, ty);
+        return Ok(ty);
+    }
+
     fn struct_literal(
         &mut self,
         expression: &Expression,
@@ -921,8 +962,50 @@ impl FunctionChecker<'_> {
         return Ok(ty);
     }
 
+    fn checked_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
+        match &expression.kind {
+            ExpressionKind::Index { base, index } => {
+                let base_place = self.checked_place(base)?;
+                let Type::Array(id) = base_place.ty else {
+                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                };
+                let previous_loans = self.loans.len();
+                self.borrow(base_place.root.clone(), false, base.span)?;
+                let index_type = self.expression(index)?;
+                self.integer(index_type, index.span)?;
+                if let Some(value) = constant_integer(index)
+                    && (value < 0 || value >= self.types.arrays[id].length as i128)
+                {
+                    return Err(Diagnostic::new(index.span, "array index is out of bounds"));
+                }
+                self.loans.truncate(previous_loans);
+            }
+            ExpressionKind::Field { base, .. } => {
+                self.checked_place(base)?;
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => {
+                self.checked_place(operand)?;
+            }
+            _ => {}
+        }
+        return self.place(expression);
+    }
+
     fn place(&self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Index { base, .. } => {
+                let place = self.place(base)?;
+                let Type::Array(id) = place.ty else {
+                    return Err(Diagnostic::new(base.span, "indexing requires an array"));
+                };
+                return Ok(Place {
+                    ty: self.types.arrays[id].element,
+                    ..place
+                });
+            }
             ExpressionKind::Field { base, name } => {
                 let place = self.place(base)?;
                 let ty = self.types.field(place.ty, name, expression.span)?;
