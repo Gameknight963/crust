@@ -33,6 +33,7 @@
 - A C-backed generic buffer with checked borrowed access and automatic cleanup
 - Structural interface constraints, static interfaces, and static member requirements
 - Relative source imports, dependency collection, and diagnostics with original file locations
+- File-local static functions and generic helpers, with source-aware lookup and editor completion
 - Multi-file generic containers and LSP analysis of unsaved dependencies
 - Unsafe function and method contracts, including generic instances and interface requirements
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
@@ -85,7 +86,7 @@
 
 ## Compiler work
 
-1. Add module namespaces, visibility, and project dependencies
+1. Add reusable Crust libraries and project dependencies using shared names and file-local static helpers
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
 3. Extend C header importing and ABI coverage to layout attributes and further C declarations
 
@@ -108,6 +109,6 @@ Signature help uses the same resolved call analysis.
 - Borrowed-field lifetimes and field moves in the presence of destructors
 - Temporary owner lifetimes and borrow contracts with multiple borrowed inputs
 - Tagged unions and fallible-operation conventions
-- Module naming and visibility
+- File-local helper types and further visibility controls
 - Constrained `weak`, `expect`, and `replace` typedefs across a build
 - Static-only types and first-use type initialization

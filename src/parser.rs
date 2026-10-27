@@ -4,6 +4,7 @@ use crate::lexer::{SpannedToken, Token};
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 mod calling_conventions;
 mod constants;
+mod file_locals;
 mod generics;
 mod integers;
 mod limits;
@@ -38,7 +39,10 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         enumerator_owners: HashMap::new(),
         evaluating_enums: HashSet::new(),
         nesting: 0,
+        file_locals: HashMap::new(),
+        file_ends: Vec::new(),
     };
+    parser.collect_file_locals()?;
     parser.collect_templates()?;
     parser.collect_type_names()?;
     let mut functions = Vec::new();
@@ -167,6 +171,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    file_locals: HashMap<(usize, String), String>,
+    file_ends: Vec<usize>,
     nesting: usize,
     enum_constants: HashMap<(usize, String), constants::EnumConstant>,
     enum_representations: HashMap<usize, IntType>,
@@ -1138,9 +1144,16 @@ impl Parser {
 
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().span;
+        let file_local = self.consume(&Token::Static);
         let unsafe_prefix = self.consume(&Token::Unsafe);
         let import_prefix = self.dll_import_attribute()?;
         let external = self.consume(&Token::Extern);
+        if file_local && external {
+            return Err(Diagnostic::new(
+                start,
+                "static functions cannot have extern linkage",
+            ));
+        }
         let dll_import = self.dll_import_attribute()? || import_prefix;
         if dll_import && !external {
             return Err(Diagnostic::new(
@@ -1153,6 +1166,9 @@ impl Parser {
         let (return_type, qualifiers) = self.qualified_type_name(external)?;
         let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
+        if file_local {
+            name = self.file_function_name(&name, name_span);
+        }
         if external && !self.at(&Token::LeftParen) && !self.at(&Token::Less) {
             if convention.is_some() || unsafe_prefix || unsafe_suffix {
                 return Err(Diagnostic::new(
@@ -1210,6 +1226,12 @@ impl Parser {
             declaration,
         )?;
         function.requires_unsafe = requires_unsafe;
+        if file_local && function.link_name.is_some() {
+            return Err(Diagnostic::new(
+                start,
+                "static functions cannot export a C symbol",
+            ));
+        }
         function.dll_import = dll_import;
         if dll_import && !function.external {
             return Err(Diagnostic::new(
@@ -2216,6 +2238,16 @@ impl Parser {
             }
             Token::Identifier(name) => {
                 let mut generic_type = None;
+                let name = if self
+                    .value_scopes
+                    .iter()
+                    .rev()
+                    .any(|scope| scope.contains(&name))
+                {
+                    name
+                } else {
+                    self.file_function_name(&name, token.span)
+                };
                 if self.next_generic_function(&name) {
                     let arguments = self.type_arguments()?;
                     if self.generics.structs.contains_key(&name) && self.at(&Token::ColonColon) {

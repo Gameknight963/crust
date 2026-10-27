@@ -7,6 +7,93 @@ use std::path::Path;
 use crust::source::{SourceSet, identity};
 
 #[test]
+fn static_helpers_resolve_in_their_definition_file_and_execute() {
+    let sources = load(&[
+        ("main.cr", "import \"a.cr\"; import \"b.cr\"; int helper() { return 100; } int main() { print(a()); print(b()); print(wrapped<int>(7)); print(helper()); return 0; }"),
+        ("a.cr", "typedef int (*Callback)(int); int a() { Callback call = &helper; unsafe { return call(3); } } static int helper(int x) { if (x == 0) return 10; return helper(x - 1) + 1; } T wrapped<T>(T value) { helper(0); return value; }"),
+        ("b.cr", "int b() { return helper<int>(20); } static T helper<T>(T value) { return value; }"),
+    ]).unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "13\n20\n7\n100\n"
+    );
+}
+
+#[test]
+fn static_helpers_are_hidden_from_direct_and_transitive_importers() {
+    for call in ["helper()", "helper<int>(1)", "&helper"] {
+        let main = format!("import \"middle.cr\"; int main() {{ {call}; return 0; }}");
+        let sources = load(&[
+            ("main.cr", &main),
+            ("middle.cr", "import \"helper.cr\";"),
+            (
+                "helper.cr",
+                if call.contains('<') {
+                    "static T helper<T>(T value) { return value; }"
+                } else {
+                    "static int helper() { return 1; }"
+                },
+            ),
+        ])
+        .unwrap();
+        assert!(sources.check().is_err(), "accepted {call}");
+    }
+}
+
+#[test]
+fn static_functions_reject_incompatible_linkage_and_duplicate_definitions() {
+    for text in [
+        "static int main() { return 0; }",
+        "static extern int helper(); int main() { return 0; }",
+        "static int helper() { return 1; } int helper() { return 2; } int main() { return 0; }",
+        "static int helper() { return 1; } static int helper() { return 2; } int main() { return 0; }",
+    ] {
+        assert!(
+            load(&[("main.cr", text)]).unwrap().check().is_err(),
+            "accepted {text}"
+        );
+    }
+}
+
+#[test]
+fn static_helpers_respect_local_shadowing_and_editor_visibility() {
+    let main = "import \"helper.cr\"; int main() { return visible(); }";
+    let helper =
+        "static int hidden() { return 42; } int visible() { int hidden = 7; return hidden; }";
+    let sources = load(&[("main.cr", main), ("helper.cr", helper)]).unwrap();
+    sources.check().unwrap();
+    let analysis = sources.analyze().unwrap();
+    let main_file = analysis
+        .files
+        .iter()
+        .position(|file| file.text == main)
+        .unwrap();
+    let helper_file = analysis
+        .files
+        .iter()
+        .position(|file| file.text == helper)
+        .unwrap();
+    assert!(
+        !analysis
+            .completions_at(main_file, main.find("return").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "hidden")
+    );
+    assert!(
+        analysis
+            .completions_at(helper_file, helper.find("return").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "hidden")
+    );
+}
+
+#[test]
 fn native_headers_resolve_from_imported_sources_and_are_loaded_once() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/native-header-imports")

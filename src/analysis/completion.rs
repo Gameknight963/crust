@@ -34,6 +34,11 @@ impl Analysis {
             .symbols
             .iter()
             .filter_map(|symbol| {
+                let file_local = symbol.kind == SymbolKind::Function
+                    && symbol.detail.split_whitespace().next() == Some("static");
+                if file_local && symbol.location.file != file {
+                    return None;
+                }
                 let priority = visible.get(&symbol.location).copied().or_else(|| {
                     return matches!(
                         symbol.kind,
@@ -46,7 +51,11 @@ impl Analysis {
                             | SymbolKind::Alias
                             | SymbolKind::Global
                     )
-                    .then_some(usize::MAX);
+                    .then_some(if file_local {
+                        usize::MAX - 1
+                    } else {
+                        usize::MAX
+                    });
                 })?;
                 return Some((priority, symbol));
             })

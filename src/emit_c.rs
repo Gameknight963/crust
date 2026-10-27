@@ -240,8 +240,11 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
 }
 
 fn function_name(name: &str) -> String {
+    if let Some(local) = name.strip_prefix('!') {
+        return format!("crust_local_{local}");
+    }
     if let Some(generic) = name.strip_prefix('$') {
-        return format!("crust_generic_{generic}");
+        return format!("crust_generic_{}", generic.replace('!', "local_"));
     }
     if let Some(method) = name.strip_prefix('#') {
         return format!("crust_static_{method}");

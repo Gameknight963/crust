@@ -11,6 +11,25 @@ once, including dependencies reached through multiple paths or cycles.
 Declarations share the target's global namespace and can refer forward across
 files. Duplicate declarations follow the same rules as declarations in one file.
 
+Prefix a top-level function with `static` to make it visible within its source
+file. Each file can define its own static helper with the same name. Calls,
+function addresses, and generic bodies resolve helpers in their definition file.
+Local variables and parameters can shadow those helpers.
+
+```c
+static int twice(int value) {
+    return value * 2;
+}
+
+int calculate(int value) {
+    return twice(value) + 1;
+}
+```
+
+Importers can call `calculate`. The `twice` helper is file-local. Static
+functions can be generic and can require `unsafe`. The entry point `main`
+requires public visibility. Static functions cannot declare C imports or exports.
+
 Imports are top-level declarations. Each file contains complete declarations,
 and file-based commands report errors with the original filename and location.
 

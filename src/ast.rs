@@ -476,6 +476,9 @@ pub struct Function {
 
 impl Function {
     pub fn description(&self) -> String {
+        if let Some(local) = self.name.strip_prefix('!') {
+            return format!("function '{}'", local.split_once('_').unwrap().1);
+        }
         if let Some(generic) = self.name.strip_prefix('$') {
             return format!("function '{}'", generic.split_once('_').unwrap().1);
         }

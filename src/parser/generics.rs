@@ -39,7 +39,10 @@ struct Interface {
 
 type TypeParameters = Vec<(String, Vec<String>)>;
 
-fn parameters(tokens: &[SpannedToken], mut position: usize) -> Option<(TypeParameters, usize)> {
+pub(super) fn parameters(
+    tokens: &[SpannedToken],
+    mut position: usize,
+) -> Option<(TypeParameters, usize)> {
     if tokens.get(position)?.kind != Token::Less {
         return None;
     }
@@ -333,6 +336,11 @@ impl Parser {
                         .collect(),
                     parameters: names.into_iter().map(|(name, _)| name).collect(),
                     span,
+                };
+                let name = if is_struct {
+                    name
+                } else {
+                    self.file_function_name(&name, span)
                 };
                 let registry = if is_struct {
                     &mut self.generics.structs
