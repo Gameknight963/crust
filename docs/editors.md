@@ -37,6 +37,10 @@ Semantic requests use the current unsaved text and checked compiler analysis.
 Workspace roots supply the importing target's context for shared files outside
 the project directory, even when the entry file is closed. Adding or removing
 a workspace folder rechecks diagnostics and refreshes semantic highlighting.
+Clients supporting dynamic file-watcher registration watch `*.cr` and
+`crust.toml` files. Disk edits, creation, and deletion recheck diagnostics and
+refresh semantic highlighting, using editor text for open files. Direct clients
+can also send `workspace/didChangeWatchedFiles` notifications.
 Static-library targets use library analysis, including entries without `main`.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.

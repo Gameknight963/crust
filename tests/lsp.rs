@@ -342,6 +342,162 @@ fn unsaved_imports_recheck_entries_and_keep_diagnostics_on_the_right_document() 
 }
 
 #[test]
+fn watched_sources_refresh_diagnostics_after_creation_edit_and_deletion() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-watched-sources")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let helper = root.join("helper.cr");
+    let helper_uri = file_uri(&helper);
+    let main_uri = file_uri(&root.join("main.cr"));
+    let mut server = Server::start();
+    let source = "import \"helper.cr\"; int main() { return answer(); }";
+    // Start with a real dependency so repeated test runs need no directory cleanup.
+    std::fs::write(&helper, "int answer(int value) { return value; }").unwrap();
+    assert_ne!(server.open(&main_uri, 1, source)["diagnostics"], json!([]));
+    std::fs::write(&helper, "int answer() { return 42; }").unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": helper_uri, "type": 2 }]
+        }),
+    );
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+
+    std::fs::remove_file(&helper).unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": helper_uri, "type": 3 }]
+        }),
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], main_uri);
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not read")
+    );
+    std::fs::write(&helper, "int answer() { return 42; }").unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": helper_uri, "type": 1 }]
+        }),
+    );
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+
+    assert_eq!(
+        server.open(&helper_uri, 1, "int answer() { return 42; }")["diagnostics"],
+        json!([])
+    );
+    std::fs::write(&helper, "int answer() { return missing_on_disk; }").unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": helper_uri, "type": 2 }]
+        }),
+    );
+    // A request is a barrier: unchanged open text produces no new diagnostics.
+    assert!(
+        server
+            .request(
+                "textDocument/hover",
+                json!({
+                    "textDocument": { "uri": helper_uri }, "position": { "line": 0, "character": 5 }
+                })
+            )
+            .error
+            .is_none()
+    );
+    server.stop();
+}
+
+#[test]
+fn watched_project_configuration_rechecks_target_kind() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-watched-project")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let manifest = root.join("crust.toml");
+    let config =
+        "[project]\nname='example'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n";
+    std::fs::write(&manifest, config).unwrap();
+    std::fs::write(root.join("main.cr"), "extern int answer() { return 42; }").unwrap();
+    let mut server = Server::start();
+    let result = server.open(
+        &file_uri(&root.join("main.cr")),
+        1,
+        "extern int answer() { return 42; }",
+    );
+    assert_ne!(result["diagnostics"], json!([]));
+    std::fs::write(&manifest, config.replace("executable", "static-library")).unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": file_uri(&manifest), "type": 2 }]
+        }),
+    );
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    server.stop();
+}
+
+#[test]
+fn file_watch_registration_and_events_refresh_semantics_and_recover_after_bad_events() {
+    let mut server = Server::start_with_capabilities(json!({ "workspace": {
+        "didChangeWatchedFiles": { "dynamicRegistration": true },
+        "semanticTokens": { "refreshSupport": true }
+    }}));
+    let Message::Request(registration) = server.receive() else {
+        panic!("expected a watcher registration request");
+    };
+    assert_eq!(registration.method, "client/registerCapability");
+    let registration_params = &registration.params["registrations"][0];
+    assert_eq!(
+        registration_params["method"],
+        "workspace/didChangeWatchedFiles"
+    );
+    assert_eq!(
+        registration_params["registerOptions"]["watchers"],
+        json!([
+            { "globPattern": "**/*.cr", "kind": 7 },
+            { "globPattern": "**/crust.toml", "kind": 7 }
+        ])
+    );
+    Message::Response(Response::new_ok(registration.id, Value::Null))
+        .write(&mut server.input)
+        .unwrap();
+    for event in [
+        json!({"uri": "untitled:bad.cr", "type": 2}),
+        json!({"uri": "file:///bad.cr", "type": 4}),
+    ] {
+        server.notify(
+            "workspace/didChangeWatchedFiles",
+            json!({ "changes": [event] }),
+        );
+        let Message::Notification(notification) = server.receive() else {
+            panic!("expected an invalid-event log message");
+        };
+        assert_eq!(notification.method, "window/logMessage");
+    }
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": "file:///created.cr", "type": 1 }]
+        }),
+    );
+    let Message::Request(refresh) = server.receive() else {
+        panic!("expected a semantic-token refresh request");
+    };
+    assert_eq!(refresh.method, "workspace/semanticTokens/refresh");
+    Message::Response(Response::new_ok(refresh.id, Value::Null))
+        .write(&mut server.input)
+        .unwrap();
+    server.stop();
+}
+
+#[test]
 fn opening_only_a_project_dependency_uses_the_entry_and_unsaved_dependency_text() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-project-tests")

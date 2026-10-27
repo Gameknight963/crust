@@ -9,6 +9,7 @@ mod rename;
 mod semantic;
 mod semantic_tokens;
 mod signature;
+mod watch;
 mod workspace;
 
 type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -98,6 +99,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
         }),
     )?;
 
+    watch::register(connection, &params)?;
     let mut documents = HashMap::new();
     let mut published = HashMap::new();
     let mut shutdown = false;
@@ -169,9 +171,14 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/didChange"
                         | "textDocument/didClose"
                         | "workspace/didChangeWorkspaceFolders"
+                        | "workspace/didChangeWatchedFiles"
                 );
                 let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
                     workspace::change(notification.params, &mut workspace_roots).and_then(|()| {
+                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                    })
+                } else if notification.method == "workspace/didChangeWatchedFiles" {
+                    watch::validate(notification.params).and_then(|()| {
                         publish_all(connection, &documents, &mut published, "", &workspace_roots)
                     })
                 } else {
