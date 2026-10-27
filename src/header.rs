@@ -50,7 +50,10 @@ impl Renderer<'_> {
                         "C header generation for structs and unions requires a native opaque tag",
                     ));
                 }
-                let name = info.name.clone();
+                let name = info
+                    .native_name
+                    .clone()
+                    .unwrap_or_else(|| info.name.clone());
                 let kind = if info.is_union { "union" } else { "struct" };
                 let alias = self.alias();
                 self.declarations.push_str(&format!("#pragma push_macro(\"{name}\")\n#undef {name}\ntypedef {kind} {name} {alias};\n#pragma pop_macro(\"{name}\")\n"));

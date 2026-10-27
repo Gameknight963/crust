@@ -274,6 +274,7 @@ pub struct Program {
     pub type_references: Vec<TypeReference>,
     pub type_annotations: Vec<(Span, Type)>,
     pub union_tags: std::collections::HashSet<usize>,
+    pub native_tags: std::collections::HashMap<usize, String>,
     pub interface_checks: Vec<InterfaceCheck>,
     pub function_types: Vec<FunctionType>,
     pub pointers: Vec<PointerType>,

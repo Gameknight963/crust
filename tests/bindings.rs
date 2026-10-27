@@ -25,6 +25,116 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn keyword_named_c_tags_import_as_opaque_aliases_and_keep_owner_cleanup() {
+    let path = header(
+        r#"
+        struct init;
+        union move;
+        typedef struct init NativeHandle;
+        typedef union move* NativeStorage;
+        struct init* make_handle(int);
+        int handle_value(const struct init*);
+        void release_handle(struct init*);
+        union move* make_storage(int);
+        int storage_value(const union move*);
+        void release_storage(union move*);
+    "#,
+    );
+    let mut selected = options(&[
+        "make_handle",
+        "handle_value",
+        "release_handle",
+        "make_storage",
+        "storage_value",
+        "release_storage",
+    ]);
+    selected.typedefs = ["NativeHandle", "NativeStorage"]
+        .map(str::to_owned)
+        .to_vec();
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("struct c_init = \"init\";"));
+    assert!(bindings.contains("union c_move = \"move\";"));
+    let source = format!(
+        r#"
+        {bindings}
+        struct Owner {{
+            private NativeHandle* pointer;
+            static Self create(int value) {{ unsafe {{ Self result = {{ .pointer = make_handle(value) }}; return move(result); }} }}
+            int read() const {{ unsafe {{ return handle_value(this->pointer); }} }}
+            ~Owner() {{ unsafe {{ release_handle(this->pointer); }} }}
+        }};
+        int main() {{
+            {{ Owner value = Owner::create(42); print(value.read()); }}
+            unsafe {{ NativeStorage storage = make_storage(7); print(storage_value(storage)); release_storage(storage); }}
+            return 0;
+        }}
+    "#
+    );
+    let generated = format!(
+        r#"{}
+        struct init {{ int value; }};
+        union move {{ int value; unsigned char bytes[4]; }};
+        struct init* make_handle(int value) {{ struct init* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }}
+        int handle_value(const struct init* value) {{ return value->value; }}
+        void release_handle(struct init* value) {{ free(value); }}
+        union move* make_storage(int value) {{ union move* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }}
+        int storage_value(const union move* value) {{ return value->value; }}
+        void release_storage(union move* value) {{ free(value); }}
+    "#,
+        crust::compile(&source).unwrap()
+    );
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n7\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        "drop:42\ndrop:7\n"
+    );
+}
+
+#[test]
+fn opaque_tag_aliases_reject_invalid_native_names_conflicts_and_field_definitions() {
+    for (declarations, expected) in [
+        ("struct Handle = 7;", "quoted native struct tag"),
+        ("union Storage = \"\";", "ASCII identifiers"),
+        ("struct Handle = \"bad tag\";", "ASCII identifiers"),
+        ("struct Handle = \"int\";", "ASCII identifiers"),
+        ("struct Handle = \"é\";", "ASCII identifiers"),
+        (
+            "struct Handle = \"First\"; struct Handle = \"Second\";",
+            "conflicting native tags",
+        ),
+        (
+            "struct Handle = \"Native\"; union Storage = \"Native\";",
+            "already declared as struct",
+        ),
+        (
+            "extern header \"native.h\"; extern enum Mode = \"Native\" { Value = 1 }; struct Handle = \"Native\";",
+            "already declared as enum",
+        ),
+        (
+            "struct Handle = \"Native\"; struct Handle { int value; };",
+            "must remain opaque",
+        ),
+        (
+            "union Storage = \"Native\"; union Storage { int value; };",
+            "must remain opaque",
+        ),
+    ] {
+        let error =
+            crust::check(&format!("{declarations} int main() {{ return 0; }}")).unwrap_err();
+        assert!(error.message.contains(expected), "{declarations}: {error}");
+    }
+}
+
+#[test]
 fn selected_typedefs_preserve_native_scalars_pointer_qualifiers_and_callback_types() {
     let path = header(
         r#"

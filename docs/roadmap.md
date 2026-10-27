@@ -52,6 +52,7 @@
 - Windows DLL function and data imports, including header generation and import-library linking
 - Header-generated native enum types and values, with explicit tag selection, relative C header references, and layout checks
 - Selected C typedef imports with qualified pointers, callbacks, opaque aggregates, and native layout validation
+- Opaque C tag aliases with keyword-safe imports, preserved export headers, and binding-checked source rename
 - Per-target C preprocessor definitions, including function macros and quoted values
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations

@@ -118,7 +118,9 @@ pub(crate) fn generate_with_sources(
         let tag = if info.complete {
             format!("crust_struct_{id}")
         } else {
-            info.name.clone()
+            info.native_name
+                .clone()
+                .unwrap_or_else(|| info.name.clone())
         };
         let kind = if info.is_union { "union" } else { "struct" };
         if !info.complete {

@@ -316,21 +316,16 @@ pub(crate) fn build(
             } else {
                 SymbolKind::Struct
             };
-            builder.symbol(
-                name.clone(),
-                kind,
-                *span,
-                *span,
-                format!(
-                    "{} {name}",
-                    if kind == SymbolKind::Union {
-                        "union"
-                    } else {
-                        "struct"
-                    }
-                ),
-                None,
-            );
+            let tag = if kind == SymbolKind::Union {
+                "union"
+            } else {
+                "struct"
+            };
+            let mut detail = format!("{tag} {name}");
+            if let Some(native) = &checked.types.structs[id].native_name {
+                detail.push_str(&format!(" = \"{native}\""));
+            }
+            builder.symbol(name.clone(), kind, *span, *span, detail, None);
         }
     }
     for definition in &checked.program.structs {

@@ -12,7 +12,7 @@ pub(super) struct Renderer {
     declarations: Vec<(Option<String>, String)>,
     callbacks: HashSet<String>,
     functions: HashMap<String, Signature>,
-    records: HashSet<String>,
+    records: HashMap<String, String>,
     enums: HashMap<String, String>,
     names: HashSet<String>,
     next_alias: usize,
@@ -33,7 +33,7 @@ impl Renderer {
             declarations: Vec::new(),
             callbacks: HashSet::new(),
             functions: HashMap::new(),
-            records: HashSet::new(),
+            records: HashMap::new(),
             enums: HashMap::new(),
             names,
             next_alias: 0,
@@ -285,15 +285,10 @@ impl Renderer {
                 if !opaque {
                     return Err("C aggregates passed by value require a native wrapper".to_owned());
                 }
-                let name = node["decl"]["name"]
+                let native = node["decl"]["name"]
                     .as_str()
                     .filter(|name| !name.is_empty())
                     .ok_or("anonymous C aggregates require a native wrapper")?;
-                if !crust_identifier(name) {
-                    return Err(format!(
-                        "C tag '{name}' cannot be represented as a Crust identifier"
-                    ));
-                }
                 let tag = if node["type"]["qualType"]
                     .as_str()
                     .is_some_and(|name| name.starts_with("union "))
@@ -302,11 +297,22 @@ impl Renderer {
                 } else {
                     "struct"
                 };
-                let declaration = format!("{tag} {name}");
-                if self.records.insert(declaration.clone()) {
-                    self.declarations.push((None, format!("{declaration};")));
-                }
-                return Ok(declaration);
+                let key = format!("{tag} {native}");
+                let name = if let Some(name) = self.records.get(&key) {
+                    name.clone()
+                } else {
+                    let name = self.binding_name(native);
+                    let alias = if name == native {
+                        String::new()
+                    } else {
+                        format!(" = \"{native}\"")
+                    };
+                    self.declarations
+                        .push((None, format!("{tag} {name}{alias};")));
+                    self.records.insert(key, name.clone());
+                    name
+                };
+                return Ok(format!("{tag} {name}"));
             }
             "FunctionProtoType" => {
                 let alias = self.signature(node)?.alias;

@@ -149,6 +149,9 @@ shared generic source locations.
 It reanalyzes edited snapshot text and compares
 translated reference targets to reject name capture. Native imports gain explicit
 aliases when needed to preserve their C names.
+Opaque struct and union aliases retain a separate native tag name through type
+checking, C emission, export headers, and rename validation. The parser checks
+that aliased tags stay opaque and have consistent C tag kinds.
 
 The LSP loads project targets with unsaved source overlays, merges shared-file
 edits, and rechecks every affected target. LSP clients receive a workspace edit

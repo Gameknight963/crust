@@ -42,6 +42,21 @@ fn run(generated: &str, header: &str, consumer: &str, expected: &str) {
 }
 
 #[test]
+fn headers_preserve_original_tags_of_renamed_opaque_types() {
+    let source = "struct Handle = \"NativeHandle\"; union Storage = \"NativeStorage\"; extern Handle* echo(Handle* value) = \"native_echo\" { return value; } extern Storage* pass(Storage* value) = \"native_pass\" { return value; }";
+    let kind = crust::ProgramKind::Library;
+    let header = crust::emit_header(source, kind).unwrap();
+    assert!(header.contains("typedef struct NativeHandle"));
+    assert!(header.contains("typedef union NativeStorage"));
+    run(
+        &crust::compile_with_kind(source, kind).unwrap(),
+        &header,
+        "extern struct NativeHandle* native_echo(struct NativeHandle*); extern union NativeStorage* native_pass(union NativeStorage*); int main(void) { printf(\"%d\\n\", native_echo(0) == 0); printf(\"%d\\n\", native_pass(0) == 0); return 0; }",
+        "1\n1\n",
+    );
+}
+
+#[test]
 fn headers_preserve_scalar_pointer_const_callback_and_returned_callback_abis() {
     let source = r#"
         typedef int (*Operation)(int);

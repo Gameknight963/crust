@@ -15,6 +15,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         position: 0,
         struct_names: Vec::new(),
         union_tags: HashSet::new(),
+        native_tags: HashMap::new(),
         current_struct: None,
         methods: Vec::new(),
         aliases: HashMap::new(),
@@ -112,13 +113,19 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
             && parser
                 .tokens
                 .get(parser.position + 2)
-                .is_some_and(|token| token.kind == Token::Semicolon)
+                .is_some_and(|token| matches!(token.kind, Token::Semicolon | Token::Equal))
         {
             let is_union = parser.advance().kind == Token::Union;
             let (name, span) = parser.identifier()?;
             let id = parser.tagged_struct_id(name, span, is_union)?;
             parser.reference_type(span, Type::Struct(id));
-            parser.advance();
+            if parser.consume(&Token::Equal) {
+                native_tag_name(parser.advance(), if is_union { "union" } else { "struct" })?;
+            }
+            parser.expect(
+                Token::Semicolon,
+                "expected ';' after opaque tag declaration",
+            )?;
         } else if matches!(parser.current().kind, Token::Struct | Token::Union)
             && parser
                 .tokens
@@ -145,6 +152,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         type_references: parser.type_references,
         type_annotations: parser.type_annotations,
         union_tags: parser.union_tags,
+        native_tags: parser.native_tags,
         interface_checks: parser.generics.interface_checks,
         function_types: parser.function_types,
         pointers: parser.pointers,
@@ -178,6 +186,7 @@ struct Parser {
     position: usize,
     struct_names: Vec<(String, Span)>,
     union_tags: HashSet<usize>,
+    native_tags: HashMap<usize, String>,
     current_struct: Option<usize>,
     methods: Vec<Function>,
     aliases: HashMap<String, Alias>,
@@ -203,6 +212,34 @@ enum FunctionDeclaration {
 enum Declaration {
     Function(Function),
     Global(ExternalVariable),
+}
+
+fn native_tag_name(token: SpannedToken, kind: &str) -> Result<String, Diagnostic> {
+    let Token::StringLiteral(bytes) = token.kind else {
+        return Err(Diagnostic::new(
+            token.span,
+            format!("expected a quoted native {kind} tag"),
+        ));
+    };
+    let name = String::from_utf8(bytes).map_err(|_| {
+        Diagnostic::new(
+            token.span,
+            format!("native {kind} tags require ASCII identifiers"),
+        )
+    })?;
+    let mut bytes = name.bytes();
+    if !bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        || !(valid_c_symbol(&name) || matches!(name.as_str(), "bool" | "true" | "false" | "NULL"))
+    {
+        return Err(Diagnostic::new(
+            token.span,
+            format!("native {kind} tags require ASCII identifiers"),
+        ));
+    }
+    return Ok(name);
 }
 
 fn valid_c_symbol(symbol: &str) -> bool {
@@ -296,10 +333,12 @@ impl Parser {
             }
             if depth == 0
                 && matches!(token.kind, Token::Struct | Token::Union)
-                && self
-                    .tokens
-                    .get(position + 2)
-                    .is_some_and(|token| matches!(token.kind, Token::LeftBrace | Token::Semicolon))
+                && self.tokens.get(position + 2).is_some_and(|token| {
+                    matches!(
+                        token.kind,
+                        Token::LeftBrace | Token::Semicolon | Token::Equal
+                    )
+                })
                 && let Some(SpannedToken {
                     kind: Token::Identifier(name),
                     span,
@@ -308,7 +347,25 @@ impl Parser {
                 if name == "Self" || name == "this" {
                     return Err(Diagnostic::new(span, "Self and this are reserved names"));
                 }
-                self.tagged_struct_id(name, span, token.kind == Token::Union)?;
+                let id = self.tagged_struct_id(name.clone(), span, token.kind == Token::Union)?;
+                if self.tokens[position + 2].kind == Token::Equal {
+                    let native = native_tag_name(
+                        self.tokens[position + 3].clone(),
+                        if token.kind == Token::Union {
+                            "union"
+                        } else {
+                            "struct"
+                        },
+                    )?;
+                    if let Some(previous) = self.native_tags.insert(id, native.clone())
+                        && previous != native
+                    {
+                        return Err(Diagnostic::new(
+                            span,
+                            format!("conflicting native tags for '{name}'"),
+                        ));
+                    }
+                }
             }
             if depth == 0 && token.kind == Token::Typedef {
                 let start = position + 1;
@@ -836,28 +893,7 @@ impl Parser {
         let (name, span) = self.identifier()?;
         let id = self.enum_id(name, span);
         let native_name = if self.consume(&Token::Equal) {
-            let token = self.advance();
-            let Token::StringLiteral(bytes) = token.kind else {
-                return Err(Diagnostic::new(
-                    token.span,
-                    "expected a quoted native enum tag",
-                ));
-            };
-            let name = String::from_utf8(bytes).map_err(|_| {
-                Diagnostic::new(token.span, "native enum tags require ASCII identifiers")
-            })?;
-            let mut bytes = name.bytes();
-            if !bytes
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-                || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            {
-                return Err(Diagnostic::new(
-                    token.span,
-                    "native enum tags require ASCII identifiers",
-                ));
-            }
-            Some(name)
+            Some(native_tag_name(self.advance(), "enum")?)
         } else {
             None
         };

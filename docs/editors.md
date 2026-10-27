@@ -48,11 +48,13 @@ Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.
 Rename rechecks the edited source and preserves existing identifier bindings.
 Project declaration rename includes unopened targets, including interface constraints.
-Native C names and enum tags are preserved through explicit aliases. Every affected target
+Native C names and tags are preserved through explicit aliases. Every affected target
 must check successfully, and unresolved uses in unused generic bodies can prevent a rename.
 Struct rename updates forward declarations and destructor names. `Self` keeps its
 implicit meaning. Field rename follows designated initializers and generic
-instances. Opaque C tags and native enum constants retain their native spelling.
+instances. Opaque tag rename updates the Crust name while retaining the C tag.
+Declare a standalone `struct Handle;` or `union Storage;` before renaming tags
+introduced through function prototypes. Native enum constants keep their C names.
 Clients supporting versioned edits receive the current open-document version.
 
 Completion respects lexical scopes, shadowing, and declaration order. Suggestions

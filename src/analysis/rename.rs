@@ -5,6 +5,7 @@ use crate::lexer::{Token, tokenize};
 pub(super) struct NativeBinding {
     name: String,
     alias: Option<Location>,
+    fixed: bool,
 }
 
 pub(super) fn native_bindings(
@@ -67,6 +68,7 @@ pub(super) fn native_bindings(
             NativeBinding {
                 name: native.clone(),
                 alias,
+                fixed: false,
             },
         );
     }
@@ -96,6 +98,7 @@ pub(super) fn native_bindings(
             NativeBinding {
                 name: name.clone(),
                 alias,
+                fixed: false,
             },
         );
         for variant in &definition.variants {
@@ -104,17 +107,42 @@ pub(super) fn native_bindings(
                 NativeBinding {
                     name: variant.name.clone(),
                     alias: None,
+                    fixed: true,
                 },
             );
         }
     }
     for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
         if !checked.types.structs[id].complete {
+            let location = locate(*span);
+            let file_tokens = &tokens[location.file];
+            let following = file_tokens
+                .get(file_tokens.partition_point(|token| token.span.start < location.span.end));
+            let declaration = following
+                .is_some_and(|token| matches!(token.kind, Token::Semicolon | Token::Equal));
+            let alias = if !declaration || following.is_some_and(|token| token.kind == Token::Equal)
+            {
+                None
+            } else {
+                Some(Location {
+                    file: location.file,
+                    span: Span {
+                        start: location.span.end,
+                        end: location.span.end,
+                        column: location.span.column + location.span.end - location.span.start,
+                        ..location.span
+                    },
+                })
+            };
             bindings.insert(
-                locate(*span),
+                location,
                 NativeBinding {
-                    name: name.clone(),
-                    alias: None,
+                    name: checked.types.structs[id]
+                        .native_name
+                        .clone()
+                        .unwrap_or_else(|| name.clone()),
+                    alias,
+                    fixed: !declaration,
                 },
             );
         }
@@ -147,10 +175,10 @@ impl Analysis {
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
             || (symbol.kind == SymbolKind::Method
                 && (symbol.name.starts_with('~') || symbol.detail.trim_start().starts_with('~')))
-            || (matches!(
-                symbol.kind,
-                SymbolKind::Struct | SymbolKind::Union | SymbolKind::EnumMember
-            ) && self.native_bindings.contains_key(&symbol.declaration))
+            || self
+                .native_bindings
+                .get(&symbol.declaration)
+                .is_some_and(|binding| binding.fixed)
         {
             return None;
         }
@@ -210,7 +238,11 @@ impl Analysis {
         }
         if matches!(
             symbol.kind,
-            SymbolKind::Function | SymbolKind::Global | SymbolKind::Enum
+            SymbolKind::Function
+                | SymbolKind::Global
+                | SymbolKind::Enum
+                | SymbolKind::Struct
+                | SymbolKind::Union
         ) {
             for declaration in self
                 .symbols

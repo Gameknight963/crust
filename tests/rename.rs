@@ -676,15 +676,17 @@ fn union_rename_updates_generic_and_ordinary_type_uses() {
 }
 
 #[test]
-fn aggregate_rename_protects_native_tags_and_rejects_capture_or_unresolved_uses() {
+fn aggregate_rename_preserves_native_tags_and_rejects_capture_or_unresolved_uses() {
     for source in [
         "struct Handle; int main() { return 0; }",
         "union Handle; int main() { return 0; }",
     ] {
         let analysis = crust::analyze(source).unwrap();
         let offset = source.find("Handle").unwrap();
-        assert!(analysis.rename_target(0, offset).is_none());
-        assert!(analysis.rename(0, offset, "Resource").is_err());
+        let edits = analysis.rename(0, offset, "Resource").unwrap();
+        let renamed = apply(&analysis, &edits).remove(0);
+        assert!(renamed.contains("Resource = \"Handle\";"));
+        crust::check(&renamed).unwrap();
     }
     for source in [
         "struct Item { int value; }; struct Resource { int value; }; int main() { Item item = { .value = 1 }; return item.value; }",
@@ -740,6 +742,45 @@ int main() {
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "3\n3\n1\n7\n"
     );
+}
+
+#[test]
+fn opaque_tag_rename_keeps_native_identity_for_repeated_and_explicit_declarations() {
+    let implicit = "extern struct Native* create(); int main() { return 0; }";
+    let analysis = crust::analyze(implicit).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, implicit.find("Native").unwrap())
+            .is_none()
+    );
+    for (kind, declaration) in [("struct", "Native"), ("union", "Local = \"Native\"")] {
+        let local = declaration.split_whitespace().next().unwrap();
+        let source = format!(
+            "{kind} {declaration}; {kind} {local}; typedef {kind} {local} Handle; extern Handle* echo(Handle*) = \"native_echo\"; int main() {{ unsafe {{ Handle* pointer = 0; print(echo(pointer) == 0); }} return 0; }}"
+        );
+        let analysis = crust::analyze(&source).unwrap();
+        let offset = source.find(declaration).unwrap();
+        let edits = analysis.rename(0, offset, "Resource").unwrap();
+        let renamed = apply(&analysis, &edits).remove(0);
+        assert!(
+            renamed.contains(&format!("{kind} Resource = \"Native\"; {kind} Resource;")),
+            "{renamed}"
+        );
+        let generated = format!(
+            "{}\n{kind} Native* native_echo({kind} Native* value) {{ return value; }}",
+            crust::compile(&renamed).unwrap()
+        );
+        let output = common::tracked_generated_c(&generated, false);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "1\n"
+        );
+    }
 }
 
 #[test]

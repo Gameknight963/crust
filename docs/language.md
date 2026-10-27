@@ -442,9 +442,20 @@ extern void destroy_handle(NativeHandle* handle);
 - A forward declaration introduces a type whose layout is supplied by C
 - `typedef struct NativeHandle Handle;` can introduce an alias for an opaque tag
 - Raw pointers and borrows can refer to an incomplete struct
-- A later definition completes the type across the compilation unit
+- A later definition completes an ordinary forward declaration across the compilation unit
 - Values, fields, array elements, size queries, and pointer arithmetic require a complete object type
 - Generated C preserves an opaque tag's C name for native declarations
+
+Native tag aliases give a type a separate Crust name:
+
+```c
+struct Handle = "init";
+union Storage = "move";
+```
+
+These aliases remain opaque. Their quoted names are C identifiers. Repeated
+declarations of an alias must use the same native tag, and native struct, union,
+and enum declarations share C's tag namespace.
 
 The [opaque handle example](../examples/opaque_project/) wraps a C-owned counter
 with private storage, methods, and move-only destruction.

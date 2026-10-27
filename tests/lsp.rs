@@ -736,6 +736,52 @@ fn interface_rename_updates_constraints_in_unopened_target_templates() {
 }
 
 #[test]
+fn opaque_tag_rename_adds_a_native_alias_and_updates_unopened_targets() {
+    let root = rename_project("opaque-tags");
+    let shared = "struct Native; extern Native* echo(Native*) = \"native_echo\";";
+    let first = "import \"shared.cr\"; int main() { Native* pointer = 0; return 0; }";
+    let second = "import \"shared.cr\"; int main() { Native* pointer = 0; return 0; }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let uri = file_uri(&root.join("shared.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&uri, 1, shared)["diagnostics"], json!([]));
+    let mut params =
+        json!({ "textDocument": { "uri": uri }, "position": point(shared, "Native;") });
+    assert_eq!(
+        server
+            .request("textDocument/prepareRename", params.clone())
+            .result
+            .unwrap()["placeholder"],
+        "Native"
+    );
+    params["newName"] = json!("Resource");
+    let response = server.request("textDocument/rename", params);
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    assert_eq!(changes[&uri].as_array().unwrap().len(), 4);
+    assert!(
+        changes[&uri]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edit| edit["newText"] == " = \"Native\"")
+    );
+    for file in ["first.cr", "second.cr"] {
+        let caller = file_uri(&root.join(file));
+        assert_eq!(changes[&caller].as_array().unwrap().len(), 1);
+        assert_eq!(changes[&caller][0]["newText"], "Resource");
+    }
+    server.stop();
+}
+
+#[test]
 fn member_rename_updates_initializers_and_enum_uses_in_unopened_targets() {
     let root = rename_project("members");
     let shared = "enum Flags { Enabled = 1, Disabled = 0 }; struct Item<T> { T value; };";

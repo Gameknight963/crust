@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     ArrayType, CallingConvention, EnumDefinition, EnumVariant, Field, FunctionType, IntType,
@@ -10,6 +10,7 @@ pub struct StructInfo {
     pub is_union: bool,
     pub complete: bool,
     pub name: String,
+    pub native_name: Option<String>,
     pub fields: Vec<Field>,
     pub owns: bool,
     pub has_destructor: bool,
@@ -83,11 +84,32 @@ impl Types {
         }
 
         let mut structs = Vec::new();
-        for (id, (name, _)) in program.struct_names.iter().enumerate() {
+        let mut native_kinds = HashMap::new();
+        for definition in &program.enums {
+            if let Some(name) = &definition.native_name {
+                native_kinds.insert(name.clone(), "enum");
+            }
+        }
+        for (id, (name, span)) in program.struct_names.iter().enumerate() {
             let Some(definition) = definitions[id] else {
+                let native = program.native_tags.get(&id).unwrap_or(name);
+                let kind = if program.union_tags.contains(&id) {
+                    "union"
+                } else {
+                    "struct"
+                };
+                if let Some(previous) = native_kinds.insert(native.clone(), kind)
+                    && previous != kind
+                {
+                    return Err(Diagnostic::new(
+                        *span,
+                        format!("native tag '{native}' is already declared as {previous}"),
+                    ));
+                }
                 structs.push(StructInfo {
                     is_union: program.union_tags.contains(&id),
                     name: name.clone(),
+                    native_name: program.native_tags.get(&id).cloned(),
                     complete: false,
                     fields: Vec::new(),
                     owns: false,
@@ -95,6 +117,12 @@ impl Types {
                 });
                 continue;
             };
+            if program.native_tags.contains_key(&id) {
+                return Err(Diagnostic::new(
+                    definition.span,
+                    "a native tag alias must remain opaque",
+                ));
+            }
             if definition.fields.is_empty() {
                 return Err(Diagnostic::new(
                     definition.span,
@@ -127,6 +155,7 @@ impl Types {
                 is_union: program.union_tags.contains(&id),
                 complete: true,
                 name: name.clone(),
+                native_name: None,
                 fields: definition.fields.clone(),
                 owns: false,
                 has_destructor: definition.has_destructor,

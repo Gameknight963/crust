@@ -51,6 +51,8 @@ Clang preprocesses includes and macros before Crust reads the function types.
 Typedefs resolve to their native types. Structs and unions are exposed through
 opaque pointers. Names reserved by Crust receive a `c_` prefix and retain their
 native symbol through a renamed import.
+Keyword-named C tags use opaque aliases such as `struct c_init = "init";` and
+`union c_move = "move";`. Exported C headers retain their original tag names.
 Selection names the native declaration. A later macro with the same
 name does not redirect the binding.
 
