@@ -79,7 +79,12 @@ fn site(text: &str, cursor: usize) -> Option<Site> {
     });
 }
 
-fn context(uri: &str, site: &Site, documents: &HashMap<String, Document>) -> Option<Context> {
+fn context(
+    uri: &str,
+    site: &Site,
+    documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
+) -> Option<Context> {
     // Repair just the word being completed, keeping byte offsets stable when
     // it has enough space. This snapshot is used only for editor analysis.
     let replacements: &[&str] = if site.member.is_some() {
@@ -94,7 +99,7 @@ fn context(uri: &str, site: &Site, documents: &HashMap<String, Document>) -> Opt
         document
             .text
             .replace_range(site.start..site.end, &format!("{replacement}{padding}"));
-        if let Some(context) = Context::load_completion(uri, &documents) {
+        if let Some(context) = Context::load_completion(uri, &documents, roots) {
             return Some(context);
         }
     }
@@ -105,12 +110,13 @@ pub(super) fn context_at(
     uri: &str,
     cursor: usize,
     documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
 ) -> Option<Context> {
-    if let Some(context) = Context::load_completion(uri, documents) {
+    if let Some(context) = Context::load_completion(uri, documents, roots) {
         return Some(context);
     }
     let site = site(&documents.get(uri)?.text, cursor)?;
-    return context(uri, &site, documents);
+    return context(uri, &site, documents, roots);
 }
 
 fn kind(kind: SymbolKind) -> u8 {
@@ -130,12 +136,17 @@ fn kind(kind: SymbolKind) -> u8 {
 pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
 ) -> Result<Value, super::semantic::RequestError> {
     let params: CompletionParams = serde_json::from_value(params)?;
-    return Ok(complete(params, documents));
+    return Ok(complete(params, documents, roots));
 }
 
-fn complete(params: CompletionParams, documents: &HashMap<String, Document>) -> Value {
+fn complete(
+    params: CompletionParams,
+    documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
+) -> Value {
     let trigger = params.context;
     let params = params.position;
     let Some(document) = documents.get(&params.text_document.uri) else {
@@ -155,7 +166,7 @@ fn complete(params: CompletionParams, documents: &HashMap<String, Document>) -> 
     let prefix = &document.text[site.start..site.cursor];
     let range = json!({ "start": position(&document.text, site.start), "end": position(&document.text, site.end) });
     let mut items = std::collections::BTreeMap::new();
-    if let Some(context) = context_at(&params.text_document.uri, site.cursor, documents) {
+    if let Some(context) = context_at(&params.text_document.uri, site.cursor, documents, roots) {
         let symbols = if let Some((offset, access)) = site.member {
             context
                 .analysis

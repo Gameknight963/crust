@@ -165,12 +165,23 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 }
                 let refresh = matches!(
                     notification.method.as_str(),
-                    "textDocument/didOpen" | "textDocument/didChange" | "textDocument/didClose"
+                    "textDocument/didOpen"
+                        | "textDocument/didChange"
+                        | "textDocument/didClose"
+                        | "workspace/didChangeWorkspaceFolders"
                 );
                 let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
-                    workspace::change(notification.params, &mut workspace_roots)
+                    workspace::change(notification.params, &mut workspace_roots).and_then(|()| {
+                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                    })
                 } else {
-                    document_notification(connection, &mut documents, &mut published, notification)
+                    document_notification(
+                        connection,
+                        &mut documents,
+                        &mut published,
+                        notification,
+                        &workspace_roots,
+                    )
                 };
                 if let Err(error) = result {
                     connection.sender.send(
@@ -205,6 +216,7 @@ fn document_notification(
     documents: &mut HashMap<String, Document>,
     published: &mut HashMap<String, Value>,
     notification: Notification,
+    roots: &[PathBuf],
 ) -> ServerResult<()> {
     match notification.method.as_str() {
         "textDocument/didOpen" => {
@@ -218,7 +230,7 @@ fn document_notification(
                 text: item.text,
             };
             documents.insert(item.uri.clone(), document);
-            publish_all(connection, documents, published, &item.uri)?;
+            publish_all(connection, documents, published, &item.uri, roots)?;
         }
         "textDocument/didChange" => {
             let params: ChangeParams = serde_json::from_value(notification.params)?;
@@ -242,7 +254,13 @@ fn document_notification(
                 document.text = change.text;
             }
             document.version = params.text_document.version;
-            publish_all(connection, documents, published, &params.text_document.uri)?;
+            publish_all(
+                connection,
+                documents,
+                published,
+                &params.text_document.uri,
+                roots,
+            )?;
         }
         "textDocument/didClose" => {
             let params: CloseParams = serde_json::from_value(notification.params)?;
@@ -257,7 +275,13 @@ fn document_notification(
                 )
                 .into(),
             )?;
-            publish_all(connection, documents, published, &params.text_document.uri)?;
+            publish_all(
+                connection,
+                documents,
+                published,
+                &params.text_document.uri,
+                roots,
+            )?;
         }
         _ => {}
     }
@@ -294,7 +318,7 @@ fn source_text(
     return std::fs::read_to_string(path);
 }
 
-fn load_sources(documents: &HashMap<String, Document>) -> Sources {
+fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sources {
     let paths: HashMap<_, _> = documents
         .keys()
         .filter_map(|uri| uri_path(uri).map(|path| (path, uri.clone())))
@@ -312,7 +336,7 @@ fn load_sources(documents: &HashMap<String, Document>) -> Sources {
             }
         }
     }
-    let manifests: HashSet<_> = paths
+    let mut manifests: HashSet<_> = paths
         .keys()
         .filter_map(|path| {
             path.parent()?
@@ -321,6 +345,11 @@ fn load_sources(documents: &HashMap<String, Document>) -> Sources {
                 .find(|manifest| manifest.is_file())
         })
         .collect();
+    manifests.extend(
+        roots
+            .iter()
+            .filter_map(|root| crate::project::Project::discover(root).ok()),
+    );
     for manifest in manifests {
         let Ok(project) = crate::project::Project::load(&manifest) else {
             continue;
@@ -362,13 +391,14 @@ fn publish_all(
     documents: &HashMap<String, Document>,
     published: &mut HashMap<String, Value>,
     active: &str,
+    roots: &[PathBuf],
 ) -> ServerResult<()> {
     let Sources {
         paths,
         graphs,
         errors,
         ..
-    } = load_sources(documents);
+    } = load_sources(documents, roots);
     let mut diagnostics: HashMap<String, Vec<Value>> = documents
         .keys()
         .map(|uri| (uri.clone(), Vec::new()))

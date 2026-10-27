@@ -383,6 +383,98 @@ fn opening_only_a_project_dependency_uses_the_entry_and_unsaved_dependency_text(
     server.stop();
 }
 
+fn external_dependency_project(name: &str) -> (std::path::PathBuf, String, String, String) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-external-dependencies")
+        .join(std::process::id().to_string())
+        .join(name);
+    let project = root.join("app");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("crust.toml"),
+        "[project]\nname='external'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n",
+    )
+    .unwrap();
+    let main = "import \"../shared.cr\"; int supply(int value) { return value + 1; } int main() { return answer(41); }";
+    std::fs::write(project.join("main.cr"), main).unwrap();
+    std::fs::write(
+        root.join("shared.cr"),
+        "int answer(int value) { return missing_on_disk; }",
+    )
+    .unwrap();
+    return (
+        project.clone(),
+        file_uri(&root.join("shared.cr")),
+        file_uri(&project.join("main.cr")),
+        main.to_owned(),
+    );
+}
+
+#[test]
+fn workspace_roots_supply_target_context_for_external_unsaved_dependencies() {
+    let (project, uri, main_uri, main) = external_dependency_project("semantic");
+    let source = "int answer(int value) { return supply(value); }";
+    let mut server = Server::start_with_params(
+        json!({"capabilities": {}, "workspaceFolders": [{"uri": file_uri(&project), "name": "app"}]}),
+    );
+    assert_eq!(server.open(&uri, 4, source)["diagnostics"], json!([]));
+    let params = json!({"textDocument": {"uri": uri}, "position": point(source, "supply(value)")});
+    let definition = server
+        .request("textDocument/definition", params.clone())
+        .result
+        .unwrap();
+    assert_eq!(definition[0]["uri"], main_uri);
+    assert_eq!(definition[0]["range"]["start"], point(&main, "supply(int"));
+    let hover = server.request("textDocument/hover", params).result.unwrap();
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("int supply(int value)")
+    );
+    assert!(
+        complete(&mut server, &uri, point(source, "supply(value)"))
+            .iter()
+            .any(|item| item["label"] == "supply")
+    );
+    let signature = server.request("textDocument/signatureHelp", json!({"textDocument": {"uri": uri}, "position": at(source, source.find("supply(").unwrap() + "supply(".len())})).result.unwrap();
+    assert_eq!(signature["signatures"][0]["label"], "int supply(int value)");
+    assert!(!semantic_tokens(&mut server, &uri).is_empty());
+    let renamed = server.request("textDocument/rename", json!({"textDocument": {"uri": uri}, "position": point(source, "answer(int"), "newName": "calculate"}));
+    assert!(renamed.error.is_none(), "{:?}", renamed.error);
+    let changes = renamed.result.unwrap()["changes"].clone();
+    assert_eq!(changes[&uri][0]["newText"], "calculate");
+    assert_eq!(changes[&main_uri][0]["newText"], "calculate");
+    assert_eq!(changes.as_object().unwrap().len(), 2);
+    server.stop();
+}
+
+#[test]
+fn workspace_folder_changes_recheck_external_dependency_context() {
+    let (project, uri, _, _) = external_dependency_project("folder-changes");
+    let source = "int answer(int value) { return supply(value); }";
+    let mut server =
+        Server::start_with_params(json!({"capabilities": {}, "rootUri": file_uri(&project)}));
+    assert_eq!(server.open(&uri, 1, source)["diagnostics"], json!([]));
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({"event": {"removed": [{"uri": file_uri(&project), "name": "app"}], "added": []}}),
+    );
+    let diagnostics = server.diagnostics();
+    assert_eq!(diagnostics["uri"], uri);
+    assert!(!diagnostics["diagnostics"].as_array().unwrap().is_empty());
+    assert!(semantic_tokens(&mut server, &uri).is_empty());
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({"event": {"removed": [], "added": [{"uri": file_uri(&project), "name": "app"}]}}),
+    );
+    let diagnostics = server.diagnostics();
+    assert_eq!(diagnostics["uri"], uri);
+    assert_eq!(diagnostics["diagnostics"], json!([]));
+    assert!(!semantic_tokens(&mut server, &uri).is_empty());
+    server.stop();
+}
+
 #[test]
 fn diagnostics_for_closed_dependencies_clear_when_the_import_is_removed() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

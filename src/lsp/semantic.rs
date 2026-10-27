@@ -73,20 +73,26 @@ pub(super) struct Context {
 }
 
 impl Context {
-    pub(super) fn load(uri: &str, documents: &HashMap<String, Document>) -> Option<Self> {
-        return Self::load_inner(uri, documents, false);
+    pub(super) fn load(
+        uri: &str,
+        documents: &HashMap<String, Document>,
+        roots: &[PathBuf],
+    ) -> Option<Self> {
+        return Self::load_inner(uri, documents, roots, false);
     }
 
     pub(super) fn load_completion(
         uri: &str,
         documents: &HashMap<String, Document>,
+        roots: &[PathBuf],
     ) -> Option<Self> {
-        return Self::load_inner(uri, documents, true);
+        return Self::load_inner(uri, documents, roots, true);
     }
 
     fn load_inner(
         uri: &str,
         documents: &HashMap<String, Document>,
+        roots: &[PathBuf],
         completion: bool,
     ) -> Option<Self> {
         let document = documents.get(uri)?;
@@ -103,7 +109,7 @@ impl Context {
                 uri: uri.to_owned(),
             });
         };
-        let sources = load_sources(documents);
+        let sources = load_sources(documents, roots);
         for graph in sources.graphs {
             let analyze = || {
                 if completion {
@@ -271,22 +277,24 @@ pub(super) fn request(
     workspace_roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
     if method == "textDocument/semanticTokens/full" {
-        return super::semantic_tokens::request(params, documents);
+        return super::semantic_tokens::request(params, documents, workspace_roots);
     }
     if method == "textDocument/signatureHelp" {
-        return super::signature::request(params, documents);
+        return super::signature::request(params, documents, workspace_roots);
     }
     if method == "workspace/symbol" {
         return super::workspace::symbols(params, documents, workspace_roots);
     }
     if method == "textDocument/completion" {
-        return super::completion::request(params, documents);
+        return super::completion::request(params, documents, workspace_roots);
     }
     if method == "textDocument/documentSymbol" {
         let params: DocumentParams = serde_json::from_value(params)?;
-        return Ok(Context::load(&params.text_document.uri, documents)
-            .map(|context| context.document_symbols())
-            .unwrap_or(Value::Null));
+        return Ok(
+            Context::load(&params.text_document.uri, documents, workspace_roots)
+                .map(|context| context.document_symbols())
+                .unwrap_or(Value::Null),
+        );
     }
     let (params, include_declarations, new_name) = if method == "textDocument/references" {
         let params: ReferenceParams = serde_json::from_value(params)?;
@@ -302,7 +310,7 @@ pub(super) fn request(
         let params: PositionParams = serde_json::from_value(params)?;
         (params, None, None)
     };
-    let Some(context) = Context::load(&params.text_document.uri, documents) else {
+    let Some(context) = Context::load(&params.text_document.uri, documents, workspace_roots) else {
         if new_name.is_some() {
             return Err(RequestError::failed(
                 "rename requires a successfully checked program",

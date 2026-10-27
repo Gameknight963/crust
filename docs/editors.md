@@ -34,6 +34,9 @@ The server also provides:
 - Semantic highlighting for resolved names, declarations, and built-in types and functions
 
 Semantic requests use the current unsaved text and checked compiler analysis.
+Workspace roots supply the importing target's context for shared files outside
+the project directory, even when the entry file is closed. Adding or removing
+a workspace folder rechecks diagnostics and refreshes semantic highlighting.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.
 Rename rechecks the edited source and preserves existing identifier bindings.

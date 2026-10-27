@@ -137,7 +137,7 @@ pub(super) fn source_graphs(
     roots: &[PathBuf],
     strict: bool,
 ) -> Result<Sources, String> {
-    let mut sources = load_sources(documents);
+    let mut sources = load_sources(documents, roots);
     let mut entries: HashSet<_> = sources
         .graphs
         .iter()

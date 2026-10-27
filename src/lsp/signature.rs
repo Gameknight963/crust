@@ -4,6 +4,7 @@ use super::*;
 pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
     let params: PositionParams = serde_json::from_value(params)?;
     let Some(document) = documents.get(&params.text_document.uri) else {
@@ -12,7 +13,8 @@ pub(super) fn request(
     let Some(offset) = offset(&document.text, &params.position) else {
         return Ok(Value::Null);
     };
-    let Some(context) = super::completion::context_at(&params.text_document.uri, offset, documents)
+    let Some(context) =
+        super::completion::context_at(&params.text_document.uri, offset, documents, roots)
     else {
         return Ok(Value::Null);
     };

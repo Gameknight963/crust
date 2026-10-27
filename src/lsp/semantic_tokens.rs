@@ -57,9 +57,10 @@ fn builtin(token: &Token) -> Option<usize> {
 pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
 ) -> Result<Value, RequestError> {
     let params: DocumentParams = serde_json::from_value(params)?;
-    let Some(context) = Context::load(&params.text_document.uri, documents) else {
+    let Some(context) = Context::load(&params.text_document.uri, documents, roots) else {
         return Ok(json!({"data": []}));
     };
     let analysis = &context.analysis;

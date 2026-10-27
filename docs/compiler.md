@@ -77,6 +77,11 @@ The LSP loads project targets with unsaved source overlays, merges shared-file
 edits, and rechecks every affected target. LSP clients receive a workspace edit
 for review and application.
 
+Source discovery combines projects above open files with explicit workspace roots.
+Diagnostics and semantic requests select importing targets that contain an open
+file, including dependencies outside the project directory. Workspace-folder
+changes recheck open files and request semantic-token refresh when supported.
+
 `Analysis::completions_at` returns visible declarations at a source position.
 Block scopes retain local declaration boundaries, parameters belong to their
 functions, and generic parameters stay within their source declaration.
