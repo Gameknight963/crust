@@ -80,7 +80,7 @@ fn external_access_requires_unsafe_and_const_objects_keep_address_permissions() 
         "value = 1;",
         "value += 1;",
         "int* pointer = &value;",
-        "int^ borrow = ^value;",
+        "int& borrow = &value;",
     ] {
         let source =
             format!("extern const int value; int main() {{ unsafe {{ {body} }} return 0; }}");
@@ -91,7 +91,7 @@ fn external_access_requires_unsafe_and_const_objects_keep_address_permissions() 
 
 #[test]
 fn aliases_of_a_native_object_share_the_borrow_root() {
-    let source = "extern int first = \"native\"; extern int second = \"native\"; int main() { unsafe { const int^ view = ^const first; second = 2; print(*view); } return 0; }";
+    let source = "extern int first = \"native\"; extern int second = \"native\"; int main() { unsafe { const int& view = &const first; second = 2; print(view); } return 0; }";
     assert!(
         crust::check(source)
             .unwrap_err()
@@ -104,7 +104,7 @@ fn aliases_of_a_native_object_share_the_borrow_root() {
 fn external_declarations_validate_types_names_and_native_symbol_consistency() {
     for source in [
         "extern BoxInt owner; int main() { return 0; }",
-        "extern int^ borrow; int main() { return 0; }",
+        "extern int& borrow; int main() { return 0; }",
         "extern void value; int main() { return 0; }",
         "extern int values[2]; int main() { return 0; }",
         "extern int value; extern const int value; int main() { return 0; }",

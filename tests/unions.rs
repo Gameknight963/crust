@@ -30,7 +30,7 @@ fn generic_unions_aliases_arrays_and_methods_use_concrete_layouts() {
         union Number<T> {
             T value; uint64_t bits;
             static Self create(T value) { unsafe { return (Self){ .value = value }; } }
-            unsafe T read() const { return this->value; }
+            unsafe T read() const { return this.value; }
         };
         int main() {
             Small first = Small::create(42);
@@ -49,9 +49,9 @@ fn union_fields_and_nested_reborrows_always_overlap_in_the_borrow_checker() {
     let definitions =
         "struct A { int x; int y; }; struct B { int y; int x; }; union U { A a; B b; };";
     for body in [
-        "const int^ first = ^const value.a.x; int^ second = ^value.b.y;",
-        "const int^ first = ^const value.a.x; value.b.y = 7;",
-        "const A^ first = ^const value.a; const int^ inner = ^const first->x; B^ second = ^value.b;",
+        "const int& first = &const value.a.x; int& second = &value.b.y;",
+        "const int& first = &const value.a.x; value.b.y = 7;",
+        "const A& first = &const value.a; const int& inner = &const first.x; B& second = &value.b;",
     ] {
         let source = format!(
             "{definitions} int main() {{ unsafe {{ U value = {{ .a = {{ .x = 1, .y = 2 }} }}; {body} }} return 0; }}"
@@ -65,8 +65,8 @@ fn union_fields_and_nested_reborrows_always_overlap_in_the_borrow_checker() {
         struct Outer {{ U value; int other; }};
         int main() {{ unsafe {{
             Outer value = {{ .value = {{ .a = {{ .x = 1, .y = 2 }} }}, .other = 3 }};
-            int^ first = ^value.value.a.x; int^ second = ^value.other;
-            *first = 42; *second = 7; print(*first); print(*second);
+            int& first = &value.value.a.x; int& second = &value.other;
+            first = 42; second = 7; print(first); print(second);
         }} return 0; }}
     "#
         ),
@@ -80,7 +80,7 @@ fn union_destructors_make_the_whole_value_move_only() {
         r#"
         union Resource {
             int value; uint64_t bits;
-            ~Resource() { unsafe { print(this->value); } }
+            ~Resource() { unsafe { print(this.value); } }
         };
         int main() { unsafe { Resource first = { .value = 42 }; Resource second = move(first); } return 0; }
     "#,
@@ -94,7 +94,7 @@ fn union_initializers_select_one_field_and_field_operations_require_unsafe() {
         "U value = { .first = 1 };",
         "U value = make(); print(value.first);",
         "U value = make(); value.first = 1;",
-        "U value = make(); const int^ field = ^const value.first;",
+        "U value = make(); const int& field = &const value.first;",
         "unsafe { U value = {}; }",
         "unsafe { U value = { .first = 1, .second = 2 }; }",
         "unsafe { U value = { .missing = 1 }; }",

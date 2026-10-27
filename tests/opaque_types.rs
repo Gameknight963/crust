@@ -6,14 +6,14 @@ fn forward_tags_typedefs_and_pointer_values_need_no_layout() {
         struct Handle;
         struct Handle;
         typedef struct Other Other;
-        const Handle^ relay(const Handle^ value) { return value; }
+        const Handle& relay(const Handle& value) { return value; }
         int main() {
             Handle* handle = 0;
             Other* other = 0;
             struct Implicit* implicit = 0;
             print(!handle); print(!other); print(!implicit);
             print(sizeof(Handle*) == sizeof(void*));
-            print(sizeof(const Handle^) == sizeof(void*));
+            print(sizeof(const Handle&) == sizeof(void*));
             return 0;
         }
     "#;

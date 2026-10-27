@@ -12,12 +12,12 @@ struct Box<T> {
         }
     }
 
-    const T^ get() const {
-        unsafe { return ^const *this->data; }
+    const T& get() const {
+        unsafe { return &*this.data; }
     }
 
-    T^ get_mut() {
-        unsafe { return ^*this->data; }
+    T& get_mut() {
+        unsafe { return &*this.data; }
     }
 
     T take(Self this) {
@@ -31,8 +31,8 @@ struct Box<T> {
 
     ~Box() {
         unsafe {
-            if (this->data != 0) { destroy(this->data); }
-            free(this->data);
+            if (this.data != 0) { destroy(this.data); }
+            free(this.data);
         }
     }
 };

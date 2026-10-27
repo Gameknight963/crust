@@ -87,7 +87,7 @@ fn updates_through_borrows_and_volatile_views_preserve_owner_cleanup() {
         int main() {
             BoxInt owner = box_int(40);
             print((*owner)++);
-            { int^ view = ^*owner; print(++*view); }
+            { int& view = &*owner; print(++view); }
             print(*owner);
             int value = 10;
             unsafe {
@@ -113,9 +113,9 @@ fn updates_reject_readonly_noninteger_and_incomplete_destinations_and_conflictin
         "int main() { BoxInt owner = box_int(1); owner++; return 0; }",
         "int main() { bool flag = true; flag++; return 0; }",
         "enum Color { Red }; int main() { Color color = Red; ++color; return 0; }",
-        "int main() { int value = 1; const int^ shared = ^const value; (*shared)++; return 0; }",
-        "int main() { int value = 1; const int^ shared = ^const value; value++; print(*shared); return 0; }",
-        "int use(int^ first, int second) { return *first + second; } int main() { int value = 1; return use(^value, value++); }",
+        "int main() { int value = 1; const int& shared = &const value; (shared)++; return 0; }",
+        "int main() { int value = 1; const int& shared = &const value; value++; print(shared); return 0; }",
+        "int use(int& first, int second) { return first + second; } int main() { int value = 1; return use(&value, value++); }",
         "int main() { int* pointer = 0; pointer++; return 0; }",
         "int main() { void* pointer = 0; unsafe { pointer++; } return 0; }",
         "struct Handle; int main() { Handle* pointer = 0; unsafe { ++pointer; } return 0; }",

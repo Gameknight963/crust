@@ -59,12 +59,12 @@ fn signed_shifts_preserve_sign_and_check_multiplication_while_unsigned_left_wrap
 fn compound_shifts_capture_destinations_once_and_check_narrowing() {
     run(
         r#"
-        int index(int^ calls) { *calls += 1; print(*calls); return 0; }
-        int amount(int^ calls) { *calls += 1; print(*calls); return 2; }
+        int index(int& calls) { calls += 1; print(calls); return 0; }
+        int amount(int& calls) { calls += 1; print(calls); return 2; }
         int main() {
             int calls = 0;
             int values[1] = { 3 };
-            values[index(^calls)] <<= amount(^calls);
+            values[index(&calls)] <<= amount(&calls);
             print(values[0]); print(calls);
             uint8_t byte = 128; byte >>= (uint64_t)1; print(byte);
             int64_t wide = -3; wide >>= 1; print(wide);
@@ -134,7 +134,7 @@ fn right_shifts_coexist_with_nested_generic_closing_angles_and_unevaluated_queri
 fn shift_operands_require_integers_and_mutable_compound_destinations() {
     for source in [
         "int main() { int* pointer = 0; unsafe { print(pointer << 1); } return 0; }",
-        "int main() { int value = 1; const int^ shared = ^const value; *shared <<= 1; return 0; }",
+        "int main() { int value = 1; const int& shared = &const value; shared <<= 1; return 0; }",
         "int main() { BoxInt value = box_int(1); print(value >> 1); return 0; }",
         "int main() { int* pointer = 0; unsafe { pointer >>= 1; } return 0; }",
     ] {

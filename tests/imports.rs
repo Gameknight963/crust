@@ -91,7 +91,7 @@ fn imports_are_relative_transitive_and_loaded_once_through_diamonds_and_cycles()
 fn imported_generic_types_functions_interfaces_and_global_aliases_resolve_forward() {
     load(&[
         ("main.cr", "import \"container.cr\"; import \"factory.cr\"; typedef Holder<int> Value; int main() { Value item = make<Value>(42); return item.read(); }"),
-        ("container.cr", "struct Holder<T> { T value; static Self create(T value) { return (Self){ .value = value }; } int read() const { return this->value; } };"),
+        ("container.cr", "struct Holder<T> { T value; static Self create(T value) { return (Self){ .value = value }; } int read() const { return this.value; } };"),
         ("factory.cr", "static interface Factory { Self create(int value); }; T make<T: Factory>(int value) { return T::create(value); }"),
     ]).unwrap().check().unwrap();
 }

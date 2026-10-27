@@ -194,7 +194,7 @@ mod tests {
             "int main(void) { int x; return 0; }",
             "int main(void) { return 1 +; }",
             "int main(void) { if (1) return 0; }",
-            "int main(void) { int^ x = 1; return 0; }",
+            "int main(void) { int& x = 1; return 0; }",
         ] {
             assert!(compile(source).is_err(), "should reject {source}");
         }

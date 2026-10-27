@@ -3,18 +3,18 @@ struct Pair {
     int right;
 };
 
-void add(int^ target, const int^ source) {
-    *target += *source;
+void add(int& target, const int& source) {
+    target += source;
 }
 
 int main() {
     Pair pair = { .left = 10, .right = 20 };
-    add(^pair.left, ^const pair.right);
+    add(&pair.left, &pair.right);
     {
-        int^ left = ^pair.left;
-        int^ right = ^pair.right;
-        *left += 1;
-        *right += 2;
+        int& left = &pair.left;
+        int& right = &pair.right;
+        left += 1;
+        right += 2;
     }
     print(pair.left);
     print(pair.right);

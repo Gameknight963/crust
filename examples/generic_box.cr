@@ -14,12 +14,12 @@ struct Box<T> {
         }
     }
 
-    const T^ get() const {
-        unsafe { return ^const *this->data; }
+    const T& get() const {
+        unsafe { return &*this.data; }
     }
 
-    T^ get_mut() {
-        unsafe { return ^*this->data; }
+    T& get_mut() {
+        unsafe { return &*this.data; }
     }
 
     T take(Self this) {
@@ -33,17 +33,17 @@ struct Box<T> {
 
     ~Box() {
         unsafe {
-            if (this->data != 0) { destroy(this->data); }
-            free(this->data);
+            if (this.data != 0) { destroy(this.data); }
+            free(this.data);
         }
     }
 };
 
 int main() {
     Box<int> number = Box<int>::create(42);
-    print(*number.get());
+    print(number.get());
     Box<BoxInt> inner = Box<BoxInt>::create(box_int(7));
     Box<Box<BoxInt>> outer = Box<Box<BoxInt>>::create(move(inner));
-    print(**outer.get()->get());
+    print(*outer.get().get());
     return 0;
 }

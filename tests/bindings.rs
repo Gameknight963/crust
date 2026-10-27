@@ -60,8 +60,8 @@ fn keyword_named_c_tags_import_as_opaque_aliases_and_keep_owner_cleanup() {
         struct Owner {{
             private NativeHandle* pointer;
             static Self create(int value) {{ unsafe {{ Self result = {{ .pointer = make_handle(value) }}; return move(result); }} }}
-            int read() const {{ unsafe {{ return handle_value(this->pointer); }} }}
-            ~Owner() {{ unsafe {{ release_handle(this->pointer); }} }}
+            int read() const {{ unsafe {{ return handle_value(this.pointer); }} }}
+            ~Owner() {{ unsafe {{ release_handle(this.pointer); }} }}
         }};
         int main() {{
             {{ Owner value = Owner::create(42); print(value.read()); }}
@@ -351,12 +351,12 @@ fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types()
     let source = format!(
         r#"
         {bindings}
-        int read(const volatile int^ value) {{ return *value; }}
+        int read(const volatile int& value) {{ return value; }}
         int main() {{
             unsafe {{
                 update(&counter, 42);
                 print(sample(&counter));
-                print(read(^const counter));
+                print(read(&const counter));
                 print(limit);
                 int* pointer = slot;
                 *pointer = 7;
@@ -1150,7 +1150,7 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
         r#"
         {bindings}
         {vector}
-        struct Resource {{ BoxInt value; ~Resource() {{ print(*this->value); }} }};
+        struct Resource {{ BoxInt value; ~Resource() {{ print(*this.value); }} }};
         unsafe int compare(const void* left, const void* right) {{
             int first = *((const Resource*)left)->value;
             int second = *((const Resource*)right)->value;
@@ -1162,8 +1162,8 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
             values.push((Resource){{ .value = box_int(1) }});
             values.push((Resource){{ .value = box_int(2) }});
             size_t count = values.count();
-            unsafe {{ qsort(&*values.at_mut(0), count, sizeof(Resource), compare); }}
-            for (size_t i = 0; i < count; i += 1) {{ print(*values.at(i)->value); }}
+            unsafe {{ qsort(&values.at_mut(0), count, sizeof(Resource), compare); }}
+            for (size_t i = 0; i < count; i += 1) {{ print(*values.at(i).value); }}
             return 0;
         }}
     "#
@@ -1188,11 +1188,11 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
     for conflicting in [
         source.replace(
             "size_t count = values.count();",
-            "size_t count = values.count(); const Resource^ view = values.at(0);",
+            "size_t count = values.count(); const Resource& view = values.at(0);",
         ),
         source.replace(
-            "qsort(&*values.at_mut(0), count,",
-            "qsort(&*values.at_mut(0), values.count(),",
+            "qsort(&values.at_mut(0), count,",
+            "qsort(&values.at_mut(0), values.count(),",
         ),
     ] {
         let error = crust::check(&conflicting).unwrap_err();

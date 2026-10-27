@@ -37,14 +37,14 @@ fn copyable_nested_structs_support_forward_layouts_value_parameters_and_returns(
             point.x = point.x + 1;
             return point;
         }
-        struct Point snapshot(const struct Point^ point) { return *point; }
+        struct Point snapshot(const struct Point& point) { return point; }
         struct Point { int x; int y; };
         int main() {
             struct Outer first = { .id = 7, .position = { .y = 2, .x = 1 } };
             struct Outer second = first;
             second.position.x = 20;
             struct Point third = adjust(second.position);
-            struct Point fourth = snapshot(^const third);
+            struct Point fourth = snapshot(&const third);
             print(first.position.x);
             print(second.position.x);
             print(fourth.x);
@@ -109,18 +109,18 @@ fn borrows_fields_and_replaces_owned_fields_without_moving_the_parent() {
     assert_run(
         r#"
         struct Item { int id; BoxInt value; };
-        void increment(int^ value) { *value = *value + 1; }
-        void update(struct Item^ item) {
-            increment(^item->id);
-            increment(^*item->value);
+        void increment(int& value) { value = value + 1; }
+        void update(struct Item& item) {
+            increment(&item.id);
+            increment(&*item.value);
         }
-        int read(const struct Item^ item) { return item->id + *item->value; }
-        void replace(BoxInt^ slot) { *slot = box_int(9); }
+        int read(const struct Item& item) { return item.id + *item.value; }
+        void replace(BoxInt& slot) { slot = box_int(9); }
         int main() {
             struct Item owner = { .id = 1, .value = box_int(2) };
-            update(^owner);
-            print(read(^const owner));
-            replace(^owner.value);
+            update(&owner);
+            print(read(&const owner));
+            replace(&owner.value);
             print(*owner.value);
             return 0;
         }
@@ -202,7 +202,7 @@ fn rejects_invalid_layouts_and_initializers_before_generating_c() {
             "void and borrowed fields",
         ),
         (
-            "struct S { int^ x; }; int main() { return 0; }",
+            "struct S { int& x; }; int main() { return 0; }",
             "void and borrowed fields",
         ),
         (
@@ -283,33 +283,33 @@ fn rejects_struct_copies_partial_moves_and_access_after_whole_value_moves() {
 fn rejects_conflicting_field_loans_and_mutation_through_shared_struct_borrows() {
     let prefix = r#"
         struct Item { int id; BoxInt value; };
-        void take(const int^ id, struct Item item) {}
-        void set(int^ value, int next) { *value = next; }
+        void take(const int& id, struct Item item) {}
+        void set(int& value, int next) { value = next; }
     "#;
     for (definition, body, message) in [
         (
             "",
-            "take(^const first.id, move(first));",
+            "take(&const first.id, move(first));",
             "conflicting access",
         ),
-        ("", "set(^first.id, first.id);", "conflicting access"),
+        ("", "set(&first.id, first.id);", "conflicting access"),
         (
-            "void bad(const struct Item^ item) { item->id = 1; }",
+            "void bad(const struct Item& item) { item.id = 1; }",
             "",
             "shared borrow",
         ),
         (
-            "void bad(const struct Item^ item) { *item->value = 1; }",
+            "void bad(const struct Item& item) { *item.value = 1; }",
             "",
             "shared borrow",
         ),
         (
-            "void bad(const struct Item^ item) { item->value = box_int(1); }",
+            "void bad(const struct Item& item) { item.value = box_int(1); }",
             "",
             "shared borrow",
         ),
         (
-            "void bad(const struct Item^ item) { set(^item->id, 2); }",
+            "void bad(const struct Item& item) { set(&item.id, 2); }",
             "",
             "mutable borrow through a shared borrow",
         ),

@@ -5,16 +5,16 @@ fn optimized_borrowed_and_projected_accesses_keep_volatile_loads_and_stores() {
     let source = r#"
         struct Pair { int values[2]; };
         typedef char Text[4];
-        int sample(const volatile int^ value) { return *value + *value; }
-        extern int read_twice(const volatile int* source) { return sample(^const *source); }
+        int sample(const volatile int& value) { return value + value; }
+        extern int read_twice(const volatile int* source) { return sample(&const *source); }
         extern void bump(volatile int* target, int increment) {
-            volatile int^ value = ^*target;
-            *value += increment;
+            volatile int& value = &*target;
+            value += increment;
         }
         extern void bump_field(volatile Pair* target, int increment) {
             target->values[0] += increment;
         }
-        extern void show(volatile Text* target) { print(^const *target); }
+        extern void show(volatile Text* target) { print(&const *target); }
         extern int update(volatile int* target) {
             int previous = (*target)++;
             return previous + ++*target;

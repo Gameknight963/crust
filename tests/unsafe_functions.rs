@@ -7,7 +7,7 @@ fn unsafe_functions_methods_and_generic_instances_require_an_unsafe_caller() {
         unsafe T read_generic<T>(T* value) { return *value; }
         struct View {
             int* data;
-            unsafe int get() const { return *this->data; }
+            unsafe int get() const { return *this.data; }
             static unsafe Self create(int* data) { return (Self){ .data = data }; }
         };
     "#;
@@ -44,7 +44,7 @@ fn unsafe_bodies_retain_ownership_checks_and_main_requires_a_safe_signature() {
     for source in [
         "unsafe int main() { return 0; }",
         "unsafe void consume() { BoxInt a = box_int(1); BoxInt b = move(a); print(*a); } int main() { return 0; }",
-        "unsafe void mutate(const int^ value) { *value = 1; } int main() { return 0; }",
+        "unsafe void mutate(const int& value) { value = 1; } int main() { return 0; }",
         "struct S { unsafe int value; }; int main() { return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
@@ -54,14 +54,14 @@ fn unsafe_bodies_retain_ownership_checks_and_main_requires_a_safe_signature() {
 
 #[test]
 fn interfaces_require_safe_implementations_for_safe_requirements() {
-    let source = "interface Readable { int get() const; }; struct V { int x; unsafe int get() const { return this->x; } }; int ignore<T: Readable>() { return 0; } int main() { return ignore<V>(); }";
+    let source = "interface Readable { int get() const; }; struct V { int x; unsafe int get() const { return this.x; } }; int ignore<T: Readable>() { return 0; } int main() { return ignore<V>(); }";
     assert!(
         crust::check(source)
             .unwrap_err()
             .message
             .contains("does not satisfy")
     );
-    crust::check("interface Readable { unsafe int get() const; }; struct V { int x; int get() const { return this->x; } }; int ignore<T: Readable>() { return 0; } int main() { return ignore<V>(); }").unwrap();
+    crust::check("interface Readable { unsafe int get() const; }; struct V { int x; int get() const { return this.x; } }; int ignore<T: Readable>() { return 0; } int main() { return ignore<V>(); }").unwrap();
     crust::check("static interface Factory { unsafe Self create(); }; struct V { int x; static unsafe Self create() { return (Self){ .x = 1 }; } }; T make<T: Factory>() { unsafe { return T::create(); } } int main() { V value = make<V>(); return value.x; }").unwrap();
 }
 

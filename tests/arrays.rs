@@ -154,13 +154,13 @@ fn array_borrows_support_element_access_and_nested_reborrowing() {
     run(
         r#"
         typedef int Row[2];
-        void increment(int^ value) { *value += 1; }
-        int read(const int^ value) { return *value; }
-        void update(Row^ row) { increment(^(*row)[1]); }
-        int sum(const Row^ row) { return read(^const (*row)[0]) + (*row)[1]; }
+        void increment(int& value) { value += 1; }
+        int read(const int& value) { return value; }
+        void update(Row& row) { increment(&(row)[1]); }
+        int sum(const Row& row) { return read(&const (row)[0]) + (row)[1]; }
         int main() {
             Row row = { 3, 4 };
-            update(^row); print(sum(^const row));
+            update(&row); print(sum(&const row));
             return 0;
         }
     "#,
@@ -198,7 +198,7 @@ fn array_cleanup_respects_destructors_nested_fields_and_loop_control() {
         struct Item {
             int id;
             BoxInt owners[2];
-            ~Item() { print(this->id); }
+            ~Item() { print(this.id); }
         };
         Item create(int id) { return (Item){ .id = id, .owners = { box_int(id), box_int(id + 1) } }; }
         int main() {
@@ -258,7 +258,7 @@ fn rejects_invalid_lengths_initializers_and_incompatible_array_types() {
         "int main() { int values[0] = {}; return 0; }",
         "int main() { int n = 2; int values[n] = {1, 2}; return 0; }",
         "int main() { void values[2] = {1, 2}; return 0; }",
-        "int main() { int^ values[2] = {1, 2}; return 0; }",
+        "int main() { int& values[2] = {1, 2}; return 0; }",
         "int main() { int values[2] = {1}; return 0; }",
         "int main() { int values[2] = {1, 2, 3}; return 0; }",
         "int main() { int values[2] = {1, 2}; print(values[2]); return 0; }",
@@ -281,11 +281,11 @@ fn arrays_preserve_parent_ownership_and_borrow_permissions() {
         "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b = move(a[0]); return 0; }",
         "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b[1] = a; return 0; }",
         "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b[1] = move(a); print(*a[0]); return 0; }",
-        "typedef int Row[2]; void f(const Row^ a) { (*a)[0] = 3; } int main() { return 0; }",
-        "typedef int Row[2]; void f(const Row^ a) { (*a)[0] += 3; } int main() { return 0; }",
-        "typedef int Row[2]; void f(int^ a, int^ b) {} int main() { Row a = {1, 2}; f(^a[0], ^a[1]); return 0; }",
+        "typedef int Row[2]; void f(const Row& a) { (a)[0] = 3; } int main() { return 0; }",
+        "typedef int Row[2]; void f(const Row& a) { (a)[0] += 3; } int main() { return 0; }",
+        "typedef int Row[2]; void f(int& a, int& b) {} int main() { Row a = {1, 2}; f(&a[0], &a[1]); return 0; }",
         "typedef BoxInt Owners[1]; int consume(Owners owners) { return 0; } int main() { Owners a = {box_int(1)}; print(*a[consume(move(a))]); return 0; }",
-        "typedef int Row[2]; int change(Row^ a) { (*a)[0] = 2; return 0; } int main() { Row a = {1, 2}; print(a[change(^a)]); return 0; }",
+        "typedef int Row[2]; int change(Row& a) { (a)[0] = 2; return 0; } int main() { Row a = {1, 2}; print(a[change(&a)]); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }

@@ -32,25 +32,25 @@ fn supports_forward_method_calls_recursion_self_types_and_shared_reborrows() {
         r#"
         struct Counter {
             int value;
-            void increment() { this->add(1); }
+            void increment() { this.add(1); }
             void add(int n) {
                 if (n > 0) {
-                    this->value = this->value + 1;
-                    this->add(n - 1);
+                    this.value = this.value + 1;
+                    this.add(n - 1);
                 }
             }
-            int get() const { return this->value; }
-            int sum(const Self^ other) const { return this->get() + other->get(); }
-            Self snapshot() const { return *this; }
+            int get() const { return this.value; }
+            int sum(const Self& other) const { return this.get() + other.get(); }
+            Self snapshot() const { return this; }
             int finish(Self this) { return this.value; }
         };
-        int inspect(const struct Counter^ c) { return c->sum(^const *c); }
-        void update(struct Counter^ c) { c->increment(); }
+        int inspect(const struct Counter& c) { return c.sum(&const c); }
+        void update(struct Counter& c) { c.increment(); }
         int main() {
             struct Counter c = { .value = 40 };
-            update(^c);
+            update(&c);
             c.increment();
-            print(inspect(^const c));
+            print(inspect(&const c));
             struct Counter copy = c.snapshot();
             print(copy.finish());
             print(copy.get());
@@ -120,8 +120,8 @@ fn methods_borrow_fields_and_replace_owned_fields_without_dropping_the_receiver(
         r#"
         struct Owner {
             BoxInt value;
-            void replace(int n) { this->value = box_int(n); }
-            int get() const { return *this->value; }
+            void replace(int n) { this.value = box_int(n); }
+            int get() const { return *this.value; }
         };
         struct Outer { struct Owner inner; };
         int main() {
@@ -140,7 +140,7 @@ fn methods_borrow_fields_and_replace_owned_fields_without_dropping_the_receiver(
 fn method_names_are_separate_from_functions_builtins_and_other_structs() {
     run(
         r#"
-        struct A { int n; int main() const { return this->n; } int print() const { return 2; } };
+        struct A { int n; int main() const { return this.n; } int print() const { return 2; } };
         struct B { int n; int main() const { return 3; } };
         int main() {
             struct A a = { .n = 1 };
@@ -157,16 +157,16 @@ fn method_names_are_separate_from_functions_builtins_and_other_structs() {
 #[test]
 fn rejects_mutation_replacement_and_mutable_reborrows_through_const_this() {
     for method in [
-        "void bad() const { this->n = 1; }",
-        "void bad() const { this->set(1); }",
-        "void bad() const { set_value(^this->n); }",
-        "void bad() const { this->owner = box_int(1); }",
-        "void bad() const { *this->owner = 1; }",
+        "void bad() const { this.n = 1; }",
+        "void bad() const { this.set(1); }",
+        "void bad() const { set_value(&this.n); }",
+        "void bad() const { this.owner = box_int(1); }",
+        "void bad() const { *this.owner = 1; }",
     ] {
         let source = format!(
             r#"
-            void set_value(int^ n) {{ *n = 1; }}
-            struct A {{ int n; BoxInt owner; void set(int n) {{ this->n = n; }} {method} }};
+            void set_value(int& n) {{ n = 1; }}
+            struct A {{ int n; BoxInt owner; void set(int n) {{ this.n = n; }} {method} }};
             int main() {{ return 0; }}
         "#
         );
@@ -180,18 +180,17 @@ fn receiver_loans_cover_later_arguments_and_enclosing_calls() {
     let prelude = r#"
         struct A {
             int n;
-            int get() const { return this->n; }
-            int set(int n) { this->n = n; return n; }
-            int sum(const Self^ other) const { return this->n + other->n; }
+            int get() const { return this.n; }
+            int set(int n) { this.n = n; return n; }
+            int sum(const Self& other) const { return this.n + other.n; }
         };
         int both(int a, int b) { return a + b; }
-        int inspect(const struct A^ a, int b) { return a->n + b; }
+        int inspect(const struct A& a, int b) { return a.n + b; }
     "#;
     for body in [
         "a.set(a.get());",
         "a.set(a.n);",
-        "a.sum(^a);",
-        "inspect(^const a, a.set(2));",
+        "inspect(&const a, a.set(2));",
     ] {
         let error = crust::check(&format!(
             "{prelude} int main() {{ struct A a = {{ .n = 1 }}; {body} return 0; }}"
@@ -202,7 +201,7 @@ fn receiver_loans_cover_later_arguments_and_enclosing_calls() {
             "{body}: {error}"
         );
     }
-    crust::check(&format!("{prelude} int main() {{ struct A a = {{ .n = 1 }}; a.sum(^const a); both(a.set(2), a.get()); a.set(3); return 0; }}")).unwrap();
+    crust::check(&format!("{prelude} int main() {{ struct A a = {{ .n = 1 }}; a.sum(&a); a.sum(&const a); both(a.set(2), a.get()); a.set(3); return 0; }}")).unwrap();
 }
 
 #[test]

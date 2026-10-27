@@ -183,14 +183,14 @@ fn enum_borrows_and_local_references_preserve_type_and_permissions() {
     run(
         r#"
         enum State : uint8_t { Off, On };
-        void turn_on(State^ state) { *state = On; }
-        int read(const State^ state) { return (int)*state; }
+        void turn_on(State& state) { state = On; }
+        int read(const State& state) { return (int)state; }
         int main() {
             State state = Off;
             {
-                State^ reference = ^state;
+                State& reference = &state;
                 turn_on(reference);
-                print(read(^const *reference));
+                print(read(&const reference));
             }
             print((int)state); print(sizeof(State));
             return 0;
@@ -256,7 +256,7 @@ fn rejects_invalid_definitions_values_and_name_collisions() {
 
 #[test]
 fn enum_arithmetic_and_integer_conversions_require_explicit_casts() {
-    let prelude = "enum E { A }; enum F { B }; void set(E^ value) {}";
+    let prelude = "enum E { A }; enum F { B }; void set(E& value) {}";
     for body in [
         "E value = 0;",
         "int value = A;",
@@ -269,7 +269,7 @@ fn enum_arithmetic_and_integer_conversions_require_explicit_casts() {
         "print(A);",
         "if (A) {}",
         "E value = (E)box_int(1);",
-        "int n = 0; set(^n);",
+        "int n = 0; set(&n);",
     ] {
         let source = format!("{prelude} int main() {{ {body} return 0; }}");
         assert!(crust::check(&source).is_err(), "should reject {source}");

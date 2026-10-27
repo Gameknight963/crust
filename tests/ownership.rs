@@ -199,12 +199,12 @@ fn frees_resources_each_iteration_and_only_on_paths_that_own_them() {
 fn replacing_through_an_exclusive_borrow_drops_the_old_owner_and_preserves_the_new_one() {
     let output = tracked_run(
         r#"
-        void replace(BoxInt^ owner) { *owner = box_int(2); }
-        int read(const BoxInt^ owner) { return **owner; }
+        void replace(BoxInt& owner) { owner = box_int(2); }
+        int read(const BoxInt& owner) { return *owner; }
         int main(void) {
             BoxInt owner = box_int(1);
-            replace(^owner);
-            print(read(^const owner));
+            replace(&owner);
+            print(read(&const owner));
             return 0;
         }
     "#,

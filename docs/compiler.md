@@ -276,6 +276,12 @@ compatibility.
 
 ## Ownership and cleanup
 
+Reference expressions use their referents in value and place contexts. Reference
+destinations retain the reference representation and create tracked reborrows.
+Address expressions use their destination type to select checked references or raw
+pointers. Code generation preserves pointer storage for references and inserts
+referent reads and places where needed.
+
 - A borrow records its pointee type and access permission in a shared type representation
 - Local reference bindings retain a loan ID and source root until their block ends
 - Places and loans retain struct field paths, with overlapping prefixes identifying conflicts between a field and its parents

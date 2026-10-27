@@ -2,7 +2,7 @@ struct Resource {
     int handle;
 
     ~Resource() {
-        print(this->handle);
+        print(this.handle);
     }
 };
 

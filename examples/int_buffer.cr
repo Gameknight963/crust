@@ -22,31 +22,31 @@ struct IntBuffer {
     }
 
     size_t count() const {
-        return this->length;
+        return this.length;
     }
 
-    const int^ at(size_t index) const {
-        if (index >= this->length) { unsafe { abort(); } }
-        unsafe { return ^const this->data[index]; }
+    const int& at(size_t index) const {
+        if (index >= this.length) { unsafe { abort(); } }
+        unsafe { return &this.data[index]; }
     }
 
-    int^ at_mut(size_t index) {
-        if (index >= this->length) { unsafe { abort(); } }
-        unsafe { return ^this->data[index]; }
+    int& at_mut(size_t index) {
+        if (index >= this.length) { unsafe { abort(); } }
+        unsafe { return &this.data[index]; }
     }
 
     ~IntBuffer() {
-        unsafe { free(this->data); }
+        unsafe { free(this.data); }
     }
 };
 
 int main() {
     IntBuffer values = IntBuffer::create(3);
-    *values.at_mut(0) = 10;
-    *values.at_mut(1) = 20;
-    *values.at_mut(2) = 30;
+    values.at_mut(0) = 10;
+    values.at_mut(1) = 20;
+    values.at_mut(2) = 30;
     for (size_t i = 0; i < values.count(); i += 1) {
-        print(*values.at(i));
+        print(values.at(i));
     }
     return 0;
 }

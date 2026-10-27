@@ -29,14 +29,14 @@ fn multiple_constraints_and_generic_structs_resolve_self_and_forward_interfaces(
         struct Wrapper<T: Readable + Factory> {
             T value;
             static Self create(int value) { return (Self){ .value = T::create(value) }; }
-            int read() const { return this->value.read(); }
+            int read() const { return this.value.read(); }
         };
         int result<T: Readable + Factory>(int value) {
             T item = T::create(value); return item.read();
         }
         struct Number { int value;
             static Self create(int value) { return (Self){ .value = value }; }
-            int read() const { return this->value; }
+            int read() const { return this.value; }
         };
         interface Readable { int read() const; };
         static interface Factory { Self create(int value); };
@@ -55,19 +55,19 @@ fn interfaces_preserve_value_receivers_borrowed_returns_and_owner_cleanup() {
     run(
         r#"
         interface Resource {
-            const int^ get() const;
+            const int& get() const;
             BoxInt take(Self this);
             static Self create(int value);
         };
         struct Owner {
             BoxInt value;
-            const int^ get() const { return ^const *this->value; }
+            const int& get() const { return &const *this.value; }
             BoxInt take(Self this) { BoxInt value = box_int(*this.value); return move(value); }
             static Self create(int value) { return (Self){ .value = box_int(value) }; }
         };
         BoxInt copy_out<T: Resource>(int value) {
             T owner = T::create(value);
-            print(*owner.get()); return move(owner).take();
+            print(owner.get()); return move(owner).take();
         }
         int main() { BoxInt value = copy_out<Owner>(42); print(*value); return 0; }
     "#,

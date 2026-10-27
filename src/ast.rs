@@ -235,6 +235,13 @@ impl Pointee {
 }
 
 impl Type {
+    pub fn referent(self) -> Type {
+        return match self {
+            Type::Borrow { pointee, .. } => pointee.ty(),
+            _ => self,
+        };
+    }
+
     pub fn is_borrow(self) -> bool {
         return matches!(self, Type::Borrow { .. });
     }

@@ -603,10 +603,10 @@ fn method_rename_updates_unopened_target_callers_and_keeps_other_receiver_bindin
         .join(std::process::id().to_string());
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("crust.toml"), "[project]\nname='example'\n[[targets]]\nname='first'\nkind='executable'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='executable'\nentry='second.cr'\n").unwrap();
-    let shared = "struct Item { int value; int read() const { return this->value; } };";
+    let shared = "struct Item { int value; int read() const { return this.value; } };";
     let first =
         "import \"shared.cr\"; int main() { Item item = { .value = 1 }; return item.read(); }";
-    let second = "import \"shared.cr\"; struct Other { int value; int read() const { return this->value; } }; int main() { Item item = { .value = 2 }; Other other = { .value = 3 }; return item.read() + other.read(); }";
+    let second = "import \"shared.cr\"; struct Other { int value; int read() const { return this.value; } }; int main() { Item item = { .value = 2 }; Other other = { .value = 3 }; return item.read() + other.read(); }";
     std::fs::write(root.join("shared.cr"), shared).unwrap();
     std::fs::write(root.join("first.cr"), first).unwrap();
     std::fs::write(root.join("second.cr"), second).unwrap();
@@ -695,9 +695,9 @@ fn typedef_rename_updates_unopened_project_types_and_supports_prepare_rename() {
 #[test]
 fn interface_rename_updates_constraints_in_unopened_target_templates() {
     let root = rename_project("interfaces");
-    let shared = "interface Readable { int read() const; }; struct Item { int value; int read() const { return this->value; } };";
-    let first = "import \"shared.cr\"; int sample<T: Readable>(const T^ value) { return value->read(); } int main() { Item item = { .value = 42 }; return sample<Item>(^const item); }";
-    let second = "import \"shared.cr\"; int future<T: Readable>(const T^ value) { return value->read(); } int main() { return 0; }";
+    let shared = "interface Readable { int read() const; }; struct Item { int value; int read() const { return this.value; } };";
+    let first = "import \"shared.cr\"; int sample<T: Readable>(const T& value) { return value.read(); } int main() { Item item = { .value = 42 }; return sample<Item>(&const item); }";
+    let second = "import \"shared.cr\"; int future<T: Readable>(const T& value) { return value.read(); } int main() { return 0; }";
     for (name, source) in [
         ("shared.cr", shared),
         ("first.cr", first),
@@ -1195,13 +1195,13 @@ fn workspace_roots_supply_target_context_for_external_unsaved_dependencies() {
 #[test]
 fn signature_help_preserves_volatile_qualifiers_on_pointer_slot_borrows() {
     let uri = "untitled:volatile-slots.cr";
-    let source = "extern int* volatile native_slot; int* read_slot(int* volatile const^ slot) { return *slot; } int main() { unsafe { int* pointer = read_slot(^const native_slot); } return 0; }";
+    let source = "extern int* volatile native_slot; int* read_slot(int* volatile const& slot) { return slot; } int main() { unsafe { int* pointer = read_slot(&const native_slot); } return 0; }";
     let mut server = Server::start();
     assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
-    let help = server.request("textDocument/signatureHelp", json!({"textDocument": {"uri": uri}, "position": at(source, source.find("read_slot(^").unwrap() + "read_slot(".len())})).result.unwrap();
+    let help = server.request("textDocument/signatureHelp", json!({"textDocument": {"uri": uri}, "position": at(source, source.find("read_slot(&").unwrap() + "read_slot(".len())})).result.unwrap();
     assert_eq!(
         help["signatures"][0]["label"],
-        "int* read_slot(int* const volatile^ slot)"
+        "int* read_slot(int* const volatile& slot)"
     );
     server.stop();
 }
@@ -1523,7 +1523,7 @@ fn member_completion_handles_incomplete_fields_methods_enum_values_and_native_po
             private int hidden;
             int value;
             static Self create() { return (Self){ .hidden = 1, .value = 2 }; }
-            int get() const { return this->hidden; }
+            int get() const { return this.hidden; }
         };
         struct Holder { Item item; };
     "#;
@@ -1535,7 +1535,7 @@ fn member_completion_handles_incomplete_fields_methods_enum_values_and_native_po
         ("Item::; return 0;", "Item::", vec!["create"]),
         ("Status::; return 0;", "Status::", vec!["Failed", "Ready"]),
         ("State::; return 0;", "State::", vec!["Failed", "Ready"]),
-        ("Item item = Item::create(); const Item^ reference = ^const item; reference->; return 0;", "reference->", vec!["get", "value"]),
+        ("Item item = Item::create(); const Item& reference = &const item; reference.; return 0;", "reference.", vec!["get", "value"]),
         ("Item item = Item::create(); unsafe { Item* raw = &item; raw->; } return 0;", "raw->", vec!["get", "value"]),
         ("Holder holder = { .item = Item::create() }; holder.item.; return 0;", "holder.item.", vec!["get", "value"]),
         ("Item::create().; return 0;", "Item::create().", vec!["get", "value"]),
@@ -1560,9 +1560,9 @@ fn member_completion_handles_incomplete_fields_methods_enum_values_and_native_po
 fn member_completion_preserves_private_method_context_and_generic_instantiations() {
     let mut server = Server::start();
     let uri = "untitled:private-generic-completion.cr";
-    let source = "struct Item { private int hidden; int get() const { return this->; } }; int main() { return 0; }";
+    let source = "struct Item { private int hidden; int get() const { return this.; } }; int main() { return 0; }";
     server.open(uri, 1, source);
-    let cursor = source.find("this->").unwrap() + "this->".len();
+    let cursor = source.find("this.").unwrap() + "this.".len();
     let items = complete(&mut server, uri, at(source, cursor));
     assert_eq!(
         items
@@ -1571,7 +1571,7 @@ fn member_completion_preserves_private_method_context_and_generic_instantiations
             .collect::<Vec<_>>(),
         ["get", "hidden"]
     );
-    let source = "struct Cell<T> { T value; static Self create(T value) { return (Self){ .value = value }; } T get() const { return this->value; } }; int main() { Cell<int>::; return 0; }";
+    let source = "struct Cell<T> { T value; static Self create(T value) { return (Self){ .value = value }; } T get() const { return this.value; } }; int main() { Cell<int>::; return 0; }";
     server.change(uri, 2, source);
     server.diagnostics();
     let cursor = source.find("Cell<int>::").unwrap() + "Cell<int>::".len();
@@ -1588,12 +1588,12 @@ fn member_completion_preserves_private_method_context_and_generic_instantiations
 
 #[test]
 fn completion_triggers_distinguish_member_operators_from_comparisons_and_single_colons() {
-    let source = "enum Status { Ready }; struct Item { int value; }; int main() { Item item = { .value = 1 }; const Item^ reference = ^const item; print(reference->value); print(item.value); print((int)Status::Ready); if (1 > 0) { print(1); } return 0; }";
+    let source = "enum Status { Ready }; struct Item { int value; }; int main() { Item item = { .value = 1 }; const Item& reference = &const item; print(reference.value); print(item.value); print((int)Status::Ready); if (1 > 0) { print(1); } return 0; }";
     let uri = "untitled:trigger-completion.cr";
     let mut server = Server::start();
     assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
     for (needle, trigger, expected) in [
-        ("reference->", ">", vec!["value"]),
+        ("reference.", ".", vec!["value"]),
         ("item.", ".", vec!["value"]),
         ("Status::", ":", vec!["Ready"]),
         ("Status:", ":", vec![]),
@@ -1759,7 +1759,7 @@ fn workspace_folder_changes_update_symbol_search_without_opening_documents() {
 
 #[test]
 fn signature_help_tracks_nested_calls_partial_arguments_methods_callbacks_and_variadics() {
-    let definitions = "int sum(int left, int right) { return left + right; } int lone(int value) { return value; } typedef int (*Callback)(int, int); extern int native(int tag, ...); struct Item { int value; int get(int amount) const { return this->value + amount; } };";
+    let definitions = "int sum(int left, int right) { return left + right; } int lone(int value) { return value; } typedef int (*Callback)(int, int); extern int native(int tag, ...); struct Item { int value; int get(int amount) const { return this.value + amount; } };";
     let uri = "untitled:signatures.cr";
     let mut server = Server::start();
     for (version, (body, needle, expected, argument)) in [
@@ -1906,7 +1906,7 @@ fn semantic_tokens(server: &mut Server, uri: &str) -> Vec<[u64; 5]> {
 
 #[test]
 fn semantic_tokens_classify_bound_names_and_builtins_with_utf16_positions() {
-    let source = "typedef int Count;\r\nenum Status { Ready };\r\nstruct Item { int field; int get(int amount) const { return this->field + amount; } };\r\nT identity<T>(T value) { return value; }\r\nint main() { /* 🦀 */ Count count = 1; Item item = { .field = count }; int int64_t = 5; print(item.get(identity<int>(count))); print(Status::Ready == Ready); print(int64_t); return 0; }";
+    let source = "typedef int Count;\r\nenum Status { Ready };\r\nstruct Item { int field; int get(int amount) const { return this.field + amount; } };\r\nT identity<T>(T value) { return value; }\r\nint main() { /* 🦀 */ Count count = 1; Item item = { .field = count }; int int64_t = 5; print(item.get(identity<int>(count))); print(Status::Ready == Ready); print(int64_t); return 0; }";
     let uri = "untitled:semantic-tokens.cr";
     let mut server = Server::start();
     assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
@@ -1920,8 +1920,8 @@ fn semantic_tokens_classify_bound_names_and_builtins_with_utf16_positions() {
         ("field;", 0, 7, 1),
         ("get(int", 0, 6, 1),
         ("amount)", 0, 9, 1),
-        ("this->field", 0, 9, 2),
-        ("this->field", 6, 7, 0),
+        ("this.field", 0, 9, 2),
+        ("this.field", 5, 7, 0),
         ("identity<T>", 0, 5, 1),
         ("identity<T>", 9, 4, 1),
         ("T value", 0, 4, 0),
@@ -2015,15 +2015,15 @@ fn semantic_tokens_follow_imported_type_and_function_declarations() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
         root.join("helper.cr"),
-        "struct Shared { int value; }; int read(const Shared^ item) { return item->value; }",
+        "struct Shared { int value; }; int read(const Shared& item) { return item.value; }",
     )
     .unwrap();
-    let source = "import \"helper.cr\"; int main() { Shared item = { .value = 1 }; return read(^const item); }";
+    let source = "import \"helper.cr\"; int main() { Shared item = { .value = 1 }; return read(&const item); }";
     let uri = file_uri(&root.join("main.cr"));
     let mut server = Server::start();
     assert_eq!(server.open(&uri, 1, source)["diagnostics"], json!([]));
     let tokens = semantic_tokens(&mut server, &uri);
-    for (needle, kind) in [("Shared item", 1), ("read(^const", 5), ("value = 1", 7)] {
+    for (needle, kind) in [("Shared item", 1), ("read(&const", 5), ("value = 1", 7)] {
         let location = point(source, needle);
         let token = tokens
             .iter()

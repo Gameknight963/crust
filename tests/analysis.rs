@@ -9,7 +9,7 @@ fn signature_help_resolves_functions_methods_generics_callbacks_and_parameter_ra
         struct Item {
             int value;
             static Self create(int value) { return (Self){ .value = value }; }
-            int get(int amount) const { return this->value + amount; }
+            int get(int amount) const { return this.value + amount; }
             int take(Self this, int extra) { return this.value + extra; }
         };
         int main() {
@@ -95,14 +95,14 @@ fn member_completion_resolves_types_aliases_static_members_borrows_and_private_a
             private int hidden;
             int value;
             static Self create() { return (Self){ .hidden = 1, .value = 2 }; }
-            int get() const { return this->hidden; }
+            int get() const { return this.hidden; }
         };
         typedef Item Named;
         int main() {
             Item item = Named::create();
             print(item.get());
-            const Item^ reference = ^const item;
-            print(reference->get());
+            const Item& reference = &const item;
+            print(reference.get());
             print(State::Ready == Status::Ready);
             return 0;
         }
@@ -118,11 +118,11 @@ fn member_completion_resolves_types_aliases_static_members_borrows_and_private_a
     assert_eq!(names("Named::", 5, MemberAccess::Type), ["create"]);
     assert_eq!(names("item.get", 4, MemberAccess::Value), ["get", "value"]);
     assert_eq!(
-        names("reference->", 9, MemberAccess::Dereference),
+        names("reference.", 9, MemberAccess::Value),
         ["get", "value"]
     );
     assert_eq!(
-        names("this->hidden", 4, MemberAccess::Dereference),
+        names("this.hidden", 4, MemberAccess::Value),
         ["get", "hidden", "value"]
     );
     assert_eq!(names("State::", 5, MemberAccess::Type), ["Failed", "Ready"]);
@@ -135,7 +135,7 @@ fn member_completion_keeps_concrete_generic_types_and_chained_receivers() {
         struct Cell<T> {
             T value;
             static Self create(T value) { return (Self){ .value = value }; }
-            T get() const { return this->value; }
+            T get() const { return this.value; }
         };
         struct Holder { Cell<int> cell; };
         int main() {
@@ -156,12 +156,7 @@ fn member_completion_keeps_concrete_generic_types_and_chained_receivers() {
             vec!["get", "value"],
         ),
         ("letter.get", 6, MemberAccess::Value, vec!["get", "value"]),
-        (
-            "this->value",
-            4,
-            MemberAccess::Dereference,
-            vec!["get", "value"],
-        ),
+        ("this.value", 4, MemberAccess::Value, vec!["get", "value"]),
     ] {
         let symbols =
             analysis.member_completions_at(0, source.find(needle).unwrap() + length - 1, access);
@@ -319,8 +314,8 @@ fn reference_search_groups_redeclarations_and_preserves_lexical_bindings() {
 #[test]
 fn reference_search_deduplicates_generic_replays_and_distinguishes_member_owners() {
     let source = r#"
-        struct First { int value; int get() const { return this->value; } };
-        struct Second { int value; int get() const { return this->value; } };
+        struct First { int value; int get() const { return this.value; } };
+        struct Second { int value; int get() const { return this.value; } };
         T identity<T>(T value) { return value; }
         int main() {
             First first = { .value = 1 };
@@ -410,7 +405,7 @@ fn fields_methods_static_factories_enums_and_callbacks_keep_their_resolved_decla
         struct Counter {
             int value;
             static Self create(int value) { return (Self){ .value = value }; }
-            int get() const { return this->value; }
+            int get() const { return this.value; }
         };
         int identity(int value) { return value; }
         int main() {
@@ -657,7 +652,7 @@ fn reference_ranges_preserve_identifier_tokens_and_implicit_receivers_are_not_me
     let source = r#"
         typedef int (*Callback)(int);
         int identity(int value) { return value; }
-        struct Counter { int value; int get() const { return (this)->value; } };
+        struct Counter { int value; int get() const { return (this).value; } };
         int main() {
             int number = 7; print((number));
             Callback call = &(identity); unsafe { print(call(1)); }
@@ -698,6 +693,6 @@ fn reference_ranges_preserve_identifier_tokens_and_implicit_receivers_are_not_me
     assert!(analysis.definitions_at(0, offset).is_empty());
     assert_eq!(
         analysis.type_at(0, offset).unwrap().description,
-        "const struct Counter^"
+        "struct Counter"
     );
 }

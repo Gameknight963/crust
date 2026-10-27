@@ -32,9 +32,9 @@ fn printing_volatile_byte_array_views_reads_bounded_text_and_utf8() {
                 volatile Text* view = &text;
                 volatile uint8_t[3]* full = &bytes;
                 volatile uint8_t[3]* short_text = &terminated;
-                print(^const *view);
-                print(^const *full);
-                print(^const *short_text);
+                print(&const *view);
+                print(&const *full);
+                print(&const *short_text);
             }
             return 0;
         }
@@ -87,16 +87,16 @@ fn volatile_globals_aliases_addresses_and_borrowed_views_keep_their_qualifiers()
         extern const volatile int limit = "native_limit";
         extern int* volatile slot = "native_slot";
         extern void native_tick();
-        void increment(volatile int^ value) { *value += 1; }
-        const volatile int^ relay(const volatile int^ value) { return value; }
+        void increment(volatile int& value) { value += 1; }
+        const volatile int& relay(const volatile int& value) { return value; }
         int main() {
             unsafe {
                 print(counter);
                 counter += 1;
                 int volatile* pointer = &counter;
                 *pointer += 3;
-                increment(^counter);
-                { const volatile int^ view = relay(^const alias); print(*view); }
+                increment(&counter);
+                { const volatile int& view = relay(&const alias); print(view); }
                 native_tick();
                 print(alias);
                 print(limit);
@@ -123,12 +123,12 @@ fn volatile_field_array_reborrows_and_copyable_storage_operations_preserve_acces
             Pair pair = { .left = 1, .values = { 2, 3 } };
             unsafe {
                 volatile Pair* raw = &pair;
-                volatile Pair^ view = ^*raw;
-                view->left += 1;
-                view->values[0] += 2;
-                { volatile int^ field = ^view->left; *field += 3; }
-                print(view->left);
-                print(view->values[0]);
+                volatile Pair& view = &*raw;
+                view.left += 1;
+                view.values[0] += 2;
+                { volatile int& field = &view.left; field += 3; }
+                print(view.left);
+                print(view.values[0]);
             }
             int values[2] = { 1, 2 };
             unsafe {
@@ -152,9 +152,9 @@ fn volatile_qualifiers_preserve_alias_loans_and_prevent_implicit_qualification_l
     for source in [
         "extern volatile int value; int main() { unsafe { int* pointer = &value; } return 0; }",
         "extern const volatile int value; int main() { unsafe { const int* pointer = &value; } return 0; }",
-        "extern volatile int value; int main() { unsafe { int^ view = ^value; } return 0; }",
+        "extern volatile int value; int main() { unsafe { int& view = &value; } return 0; }",
         "extern volatile int value; extern int alias = \"value\"; int main() { return 0; }",
-        "extern volatile int value; extern volatile int alias = \"value\"; int main() { unsafe { const volatile int^ view = ^const value; alias += 1; print(*view); } return 0; }",
+        "extern volatile int value; extern volatile int alias = \"value\"; int main() { unsafe { const volatile int& view = &const value; alias += 1; print(view); } return 0; }",
         "extern const volatile int value; int main() { unsafe { value = 1; } return 0; }",
         "int main() { volatile int value = 1; return 0; }",
         "int main() { unsafe { volatile BoxInt* slot = 0; init(slot, box_int(1)); } return 0; }",

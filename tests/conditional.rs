@@ -23,7 +23,7 @@ fn conditional_example_selects_an_owner_and_text() {
 fn conditional_precedence_associativity_and_selected_side_effects_follow_c() {
     run(
         r#"
-        int bump(int^ counter, int result) { *counter += 1; return result; }
+        int bump(int& counter, int result) { counter += 1; return result; }
         void show(int value) { print(value); }
         int main() {
             int counter = 0;
@@ -32,7 +32,7 @@ fn conditional_precedence_associativity_and_selected_side_effects_follow_c() {
             print(0 ? 1 : 1 ? 2 : 3);
             print(1 ? 0 ? 4 : 5 : 6);
             print((0 ? 2 : 3) + 4);
-            print(bump(^counter, 1) ? bump(^counter, 8) : bump(^counter, 9));
+            print(bump(&counter, 1) ? bump(&counter, 8) : bump(&counter, 9));
             print(counter);
             print(0 ? 1 / 0 : 10);
             print(1 ? 11 : 1 / 0);
@@ -149,11 +149,11 @@ fn conditional_expressions_reject_invalid_types_partial_moves_and_borrow_results
         "int main() { int value = 1 ? 2; return value; }",
         "int main() { BoxInt value = box_int(1); print(value ? 1 : 2); return 0; }",
         "int main() { BoxInt first = box_int(1); BoxInt second = box_int(2); BoxInt selected = true ? move(first) : move(second); print(*first); return 0; }",
-        "int main() { int first = 1; int second = 2; const int^ selected = true ? ^const first : ^const second; return 0; }",
+        "int main() { int first = 1; int second = 2; const int& selected = true ? &const first : &const second; return 0; }",
         "int main() { print(true ? box_int(1) : 2); return 0; }",
         "extern void show(); int main() { unsafe { true ? show() : 1; } return 0; }",
         "int main() { int number = 1; unsafe { int* pointer = true ? &number : 3; } return 0; }",
-        "int use(const BoxInt^ first, BoxInt second) { return **first + *second; } int main() { BoxInt owner = box_int(1); return use(^const owner, true ? move(owner) : box_int(2)); }",
+        "int use(const BoxInt& first, BoxInt second) { return *first + *second; } int main() { BoxInt owner = box_int(1); return use(&const owner, true ? move(owner) : box_int(2)); }",
     ] {
         assert!(crust::check(source).is_err(), "{source}");
     }

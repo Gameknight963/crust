@@ -30,18 +30,18 @@ fn borrowed_method_returns_keep_the_receiver_alive() {
 fn short_circuit_sequence_points_release_left_operand_returned_loans() {
     run(
         r#"
-        int^ touch(int^ value) { *value += 1; return value; }
+        int& touch(int& value) { value += 1; return value; }
         int main() {
             int counter = 0;
-            print(*touch(^counter) && *touch(^counter));
+            print(touch(&counter) && touch(&counter));
             print(counter);
-            print(*touch(^counter) || *touch(^counter));
+            print(touch(&counter) || touch(&counter));
             print(counter);
-            print(*touch(^counter) ? *touch(^counter) : *touch(^counter));
+            print(touch(&counter) ? touch(&counter) : touch(&counter));
             print(counter);
             {
-                int^ slot = ^counter;
-                print(*touch(^*slot) && *touch(^*slot));
+                int& slot = &counter;
+                print(touch(&slot) && touch(&slot));
             }
             print(counter);
             return 0;
@@ -54,13 +54,13 @@ fn short_circuit_sequence_points_release_left_operand_returned_loans() {
 
 #[test]
 fn short_circuit_sequence_points_preserve_enclosing_argument_and_local_loans() {
-    let prelude = "int^ identity(int^ value) { return value; } int use(int^ first, int second) { return *first + second; }";
+    let prelude = "int& identity(int& value) { return value; } int use(int& first, int second) { return first + second; }";
     for body in [
-        "int value = 1; return use(identity(^value), 1 && *identity(^value));",
-        "int value = 1; return use(identity(^value), 0 || *identity(^value));",
-        "int value = 1; return use(identity(^value), 1 ? *identity(^value) : 0);",
-        "int value = 1; int other = 2; return use(identity(^value), *identity(^other) && *identity(^value));",
-        "int value = 1; int^ local = ^value; print(1 && *identity(^value)); return *local;",
+        "int value = 1; return use(identity(&value), 1 && identity(&value));",
+        "int value = 1; return use(identity(&value), 0 || identity(&value));",
+        "int value = 1; return use(identity(&value), 1 ? identity(&value) : 0);",
+        "int value = 1; int other = 2; return use(identity(&value), identity(&other) && identity(&value));",
+        "int value = 1; int& local = &value; print(1 && identity(&value)); return local;",
     ] {
         let error = crust::check(&format!("{prelude} int main() {{ {body} }}")).unwrap_err();
         assert!(
@@ -74,22 +74,22 @@ fn short_circuit_sequence_points_preserve_enclosing_argument_and_local_loans() {
 fn forwards_returns_through_nested_calls_local_aliases_and_reborrows() {
     run(
         r#"
-        int^ identity(int^ value) { return value; }
-        const int^ view(int^ value) { return ^const *value; }
-        int^ relay(int^ value) {
-            int^ local = identity(value);
+        int& identity(int& value) { return value; }
+        const int& view(int& value) { return &const value; }
+        int& relay(int& value) {
+            int& local = identity(value);
             return identity(local);
         }
         int main() {
             int n = 1;
             {
-                int^ root = ^n;
+                int& root = &n;
                 {
-                    int^ value = identity(^*relay(root));
-                    *value += 1;
+                    int& value = identity(&relay(root));
+                    value += 1;
                 }
-                *identity(root) += 1;
-                print(*view(root));
+                identity(root) += 1;
+                print(view(root));
             }
             print(n);
             return 0;
@@ -107,24 +107,24 @@ fn borrowed_arrays_fields_and_method_chains_preserve_origins() {
         typedef int Row[2];
         struct Counter {
             int value;
-            int read() const { return this->value; }
-            Self^ self_mut() { return this; }
+            int read() const { return this.value; }
+            Self& self_mut() { return this; }
         };
         struct Pair {
             Counter counter;
             Row values;
-            Counter^ counter_mut() { return ^this->counter; }
-            const Row^ row() const { return ^const this->values; }
+            Counter& counter_mut() { return &this.counter; }
+            const Row& row() const { return &const this.values; }
         };
-        int^ element(Row^ row, int index) { return ^(*row)[index]; }
+        int& element(Row& row, int index) { return &(row)[index]; }
         int main() {
             Pair pair = { .counter = { .value = 3 }, .values = { 4, 5 } };
-            pair.counter_mut()->self_mut()->value += 1;
-            print(pair.counter_mut()->read());
-            print((*pair.row())[1]);
+            pair.counter_mut().self_mut().value += 1;
+            print(pair.counter_mut().read());
+            print((pair.row())[1]);
             {
-                int^ value = element(^pair.values, 0);
-                *value += 2;
+                int& value = element(&pair.values, 0);
+                value += 2;
             }
             print(pair.values[0]);
             return 0;
@@ -139,20 +139,20 @@ fn borrowed_arrays_fields_and_method_chains_preserve_origins() {
 fn temporary_returned_loans_end_after_statements_conditions_and_calls() {
     run(
         r#"
-        int^ identity(int^ value) { return value; }
-        const int^ view(const int^ value) { return value; }
-        int read(const int^ value) { return *value; }
+        int& identity(int& value) { return value; }
+        const int& view(const int& value) { return value; }
+        int read(const int& value) { return value; }
         int main() {
             int n = 1;
-            int copy = *identity(^n);
+            int copy = identity(&n);
             n += 1;
-            if (*identity(^n)) { n += 1; }
-            while (*identity(^n) < 4) { n += 1; }
-            print(read(view(^const n)));
+            if (identity(&n)) { n += 1; }
+            while (identity(&n) < 4) { n += 1; }
+            print(read(view(&const n)));
             n += 1;
             print(n); print(copy);
-            print(sizeof(*identity(^n)));
-            (void)identity(^n);
+            print(sizeof(identity(&n)));
+            (void)identity(&n);
             n += 1; print(n);
             return 0;
         }
@@ -166,15 +166,15 @@ fn temporary_returned_loans_end_after_statements_conditions_and_calls() {
 fn returning_borrows_does_not_transfer_heap_ownership() {
     run(
         r#"
-        BoxInt^ slot(BoxInt^ owner) { return owner; }
-        const int^ contents(const BoxInt^ owner) { return ^const **owner; }
+        BoxInt& slot(BoxInt& owner) { return owner; }
+        const int& contents(const BoxInt& owner) { return &const *owner; }
         int main() {
             BoxInt owner = box_int(1);
-            *slot(^owner) = box_int(2);
-            print(*contents(^const owner));
+            slot(&owner) = box_int(2);
+            print(contents(&const owner));
             {
-                const int^ value = contents(^const owner);
-                print(*value);
+                const int& value = contents(&const owner);
+                print(value);
             }
             BoxInt transferred = move(owner);
             print(*transferred);
@@ -188,16 +188,16 @@ fn returning_borrows_does_not_transfer_heap_ownership() {
 
 #[test]
 fn returned_references_cannot_outlive_or_conflict_with_their_sources() {
-    let prelude = "int^ identity(int^ value) { return value; } const int^ view(const int^ value) { return value; }";
+    let prelude = "int& identity(int& value) { return value; } const int& view(const int& value) { return value; }";
     for body in [
-        "int n = 1; int^ r = identity(^n); print(n);",
-        "int n = 1; const int^ r = view(^const n); n = 2;",
-        "int n = 1; int^ r = identity(^n); int^ next = identity(^n);",
-        "BoxInt owner = box_int(1); const int^ r = view(^const *owner); BoxInt next = move(owner);",
-        "BoxInt owner = box_int(1); const int^ r = view(^const *owner); owner = box_int(2);",
-        "int n = 1; int^ root = ^n; int^ child = identity(root); print(*root);",
-        "int n = 1; int^ root = ^n; int^ child = ^*identity(root); print(*root);",
-        "int n = 1; int^ r = identity(^n); r = identity(^n);",
+        "int n = 1; int& r = identity(&n); print(n);",
+        "int n = 1; const int& r = view(&const n); n = 2;",
+        "int n = 1; int& r = identity(&n); int& next = identity(&n);",
+        "BoxInt owner = box_int(1); const int& r = view(&const *owner); BoxInt next = move(owner);",
+        "BoxInt owner = box_int(1); const int& r = view(&const *owner); owner = box_int(2);",
+        "int n = 1; int& root = &n; int& child = identity(root); print(root);",
+        "int n = 1; int& root = &n; int& child = &identity(root); print(root);",
+        "int n = 1; int& r = identity(&n); r = identity(&n);",
     ] {
         let source = format!("{prelude} int main() {{ {body} return 0; }}");
         assert!(crust::check(&source).is_err(), "should reject {source}");
@@ -207,13 +207,13 @@ fn returned_references_cannot_outlive_or_conflict_with_their_sources() {
 #[test]
 fn rejects_dangling_and_ambiguous_return_contracts() {
     for source in [
-        "const int^ bad() { int n = 1; return ^const n; }",
-        "const int^ bad(const int^ input) { int n = 1; return ^const n; }",
-        "const int^ bad(const int^ input, BoxInt owner) { return ^const *owner; }",
-        "const int^ bad(const int^ a, const int^ b) { return a; }",
-        "int^ bad(const int^ input) { return ^*input; }",
-        "struct Item { int n; const int^ bad(Self this) { return ^const this.n; } };",
-        "const int^ bad(const int^ input) { { int n = 1; const int^ r = ^const n; return r; } }",
+        "const int& bad() { int n = 1; return &const n; }",
+        "const int& bad(const int& input) { int n = 1; return &const n; }",
+        "const int& bad(const int& input, BoxInt owner) { return &const *owner; }",
+        "const int& bad(const int& a, const int& b) { return a; }",
+        "int& bad(const int& input) { return &input; }",
+        "struct Item { int n; const int& bad(Self this) { return &const this.n; } };",
+        "const int& bad(const int& input) { { int n = 1; const int& r = &const n; return r; } }",
     ] {
         assert!(
             crust::check(&format!("{source} int main() {{ return 0; }}")).is_err(),

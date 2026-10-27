@@ -49,8 +49,8 @@ fn boolean_struct_fields_typedefs_methods_and_value_copies_work() {
         struct Switch {
             Flag enabled;
             static Self create(Flag value) { return (Self){ .enabled = value }; }
-            Flag get() const { return this->enabled; }
-            void toggle() { this->enabled = !this->enabled; }
+            Flag get() const { return this.enabled; }
+            void toggle() { this.enabled = !this.enabled; }
         };
         int main() {
             Switch first = Switch::create(true);
@@ -69,18 +69,18 @@ fn boolean_struct_fields_typedefs_methods_and_value_copies_work() {
 fn shared_and_mutable_boolean_borrows_support_reborrowing_and_mutation() {
     run(
         r#"
-        void set(bool^ value, bool next) { *value = next; }
-        bool read(const bool^ value) { return *value; }
-        void relay(bool^ value) {
-            bool next = !read(^const *value);
-            set(^*value, next);
+        void set(bool& value, bool next) { value = next; }
+        bool read(const bool& value) { return value; }
+        void relay(bool& value) {
+            bool next = !read(&const value);
+            set(&value, next);
         }
         int main() {
             bool value = false;
-            set(^value, 42);
-            print(read(^const value));
-            relay(^value);
-            print(read(^const value));
+            set(&value, 42);
+            print(read(&const value));
+            relay(&value);
+            print(read(&const value));
             return 0;
         }
     "#,
@@ -114,9 +114,9 @@ fn boolean_control_flow_preserves_owner_cleanup_and_short_circuiting() {
 #[test]
 fn scalar_conversions_do_not_convert_borrow_types_or_permit_shared_writes() {
     for source in [
-        "int read(const int^ n) { return *n; } int main() { bool b = true; return read(^const b); }",
-        "bool read(const bool^ n) { return *n; } int main() { int n = 1; return read(^const n); }",
-        "void bad(const bool^ b) { *b = true; } int main() { return 0; }",
+        "int read(const int& n) { return n; } int main() { bool b = true; return read(&const b); }",
+        "bool read(const bool& n) { return n; } int main() { int n = 1; return read(&const n); }",
+        "void bad(const bool& b) { b = true; } int main() { return 0; }",
         "int main() { bool b = true; b += 1; return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

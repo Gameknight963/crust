@@ -47,8 +47,8 @@ fn method_rename_follows_receivers_recursion_and_static_callback_addresses() {
         struct Counter {
             int value;
             int read(int depth) const {
-                if (depth == 0) { return this->value; }
-                return this->read(depth - 1);
+                if (depth == 0) { return this.value; }
+                return this.read(depth - 1);
             }
             static int double_value(int value) { return value * 2; }
         };
@@ -56,10 +56,10 @@ fn method_rename_follows_receivers_recursion_and_static_callback_addresses() {
         int read(int value) { return value; }
         int main() {
             Counter counter = { .value = 21 };
-            const Counter^ view = ^const counter;
+            const Counter& view = &const counter;
             Other other = { .value = 0 };
             print(counter.read(1));
-            print(view->read(0));
+            print(view.read(0));
             print(other.read(7));
             print(read(8));
             Callback* callback = Counter::double_value;
@@ -73,9 +73,9 @@ fn method_rename_follows_receivers_recursion_and_static_callback_addresses() {
         .rename(0, source.find("read(int depth)").unwrap(), "sample")
         .unwrap();
     let renamed = apply(&analysis, &edits).remove(0);
-    assert!(renamed.contains("this->sample(depth - 1)"));
+    assert!(renamed.contains("this.sample(depth - 1)"));
     assert!(renamed.contains("counter.sample(1)"));
-    assert!(renamed.contains("view->sample(0)"));
+    assert!(renamed.contains("view.sample(0)"));
     assert!(renamed.contains("other.read(7)"));
     assert!(renamed.contains("print(read(8))"));
     let analysis = crust::analyze(&renamed).unwrap();
@@ -99,7 +99,7 @@ fn method_rename_follows_receivers_recursion_and_static_callback_addresses() {
 
 #[test]
 fn method_rename_covers_generic_instances_and_rejects_collisions_and_unresolved_calls() {
-    let source = "struct Item<T> { T value; T get() const { return this->value; } }; int main() { Item<int> first = { .value = 42 }; Item<char> second = { .value = 'a' }; print(first.get()); print(second.get()); return 0; }";
+    let source = "struct Item<T> { T value; T get() const { return this.value; } }; int main() { Item<int> first = { .value = 42 }; Item<char> second = { .value = 'a' }; print(first.get()); print(second.get()); return 0; }";
     let analysis = crust::analyze(source).unwrap();
     let edits = analysis
         .rename(0, source.find("get()").unwrap(), "read")
@@ -112,8 +112,8 @@ fn method_rename_covers_generic_instances_and_rejects_collisions_and_unresolved_
 
     for source in [
         "struct Item { int value; int get() const { return 1; } int read() const { return 2; } }; int main() { Item item = { .value = 0 }; return item.get(); }",
-        "struct Item { int value; int get() const { return 1; } }; int later<T>(const T^ value) { return value->get(); } int main() { Item item = { .value = 0 }; return item.get(); }",
-        "interface Readable { int get() const; }; struct Item { int value; int get() const { return 1; } }; int sample<T: Readable>(const T^ value) { return value->get(); } int main() { Item item = { .value = 0 }; return sample<Item>(^const item); }",
+        "struct Item { int value; int get() const { return 1; } }; int later<T>(const T& value) { return value.get(); } int main() { Item item = { .value = 0 }; return item.get(); }",
+        "interface Readable { int get() const; }; struct Item { int value; int get() const { return 1; } }; int sample<T: Readable>(const T& value) { return value.get(); } int main() { Item item = { .value = 0 }; return sample<Item>(&const item); }",
     ] {
         let analysis = crust::analyze(source).unwrap();
         let start = source.find("struct Item").unwrap();
@@ -243,18 +243,18 @@ fn interface_rename_updates_composed_constraints_and_keeps_implementing_methods(
         static interface Factory { Self create(int value); };
         struct Item {
             int value;
-            int read() const { return this->value; }
+            int read() const { return this.value; }
             static Self create(int value) { return (Self){ .value = value }; }
         };
         struct Wrapper<T: Readable> { T item; };
-        int sample<T: Readable>(const T^ value) { return value->read(); }
+        int sample<T: Readable>(const T& value) { return value.read(); }
         int produce<T: Factory + Readable>(int value) {
             T result = T::create(value);
-            return sample<T>(^const result);
+            return sample<T>(&const result);
         }
         int main() {
             Wrapper<Item> wrapped = { .item = Item::create(7) };
-            print(sample<Item>(^const wrapped.item));
+            print(sample<Item>(&const wrapped.item));
             print(produce<Item>(42));
             return 0;
         }
@@ -271,7 +271,7 @@ fn interface_rename_updates_composed_constraints_and_keeps_implementing_methods(
     let renamed = apply(&analysis, &edits).remove(0);
     assert!(!renamed.contains("Readable"));
     assert!(renamed.contains("int read() const"));
-    assert!(renamed.contains("value->read()"));
+    assert!(renamed.contains("value.read()"));
     let analysis = crust::analyze(&renamed).unwrap();
     let edits = analysis
         .rename(0, renamed.find("Factory {").unwrap(), "Creator")
@@ -293,14 +293,14 @@ fn interface_rename_updates_composed_constraints_and_keeps_implementing_methods(
 
 #[test]
 fn interface_rename_rejects_existing_type_names_and_keeps_unused_constraint_references() {
-    let source = "interface Readable { int read() const; }; interface Other { int get() const; }; int future<T: Readable>(const T^ value) { return value->read(); } int main() { return 0; }";
+    let source = "interface Readable { int read() const; }; interface Other { int get() const; }; int future<T: Readable>(const T& value) { return value.read(); } int main() { return 0; }";
     let analysis = crust::analyze(source).unwrap();
     let offset = source.find("Readable {").unwrap();
     assert!(analysis.rename(0, offset, "Other").is_err());
     let edits = analysis.rename(0, offset, "Inspectable").unwrap();
     let renamed = apply(&analysis, &edits).remove(0);
     assert!(renamed.contains("future<T: Inspectable>"));
-    assert!(renamed.contains("value->read()"));
+    assert!(renamed.contains("value.read()"));
     crust::check(&renamed).unwrap();
 }
 
@@ -398,14 +398,14 @@ fn renames_generic_parameters_as_value_bindings_without_touching_type_parameters
 #[test]
 fn field_rename_follows_generic_initializers_borrows_and_members_without_touching_other_types() {
     let source = r#"
-struct Item<T> { T value; T read() const { return this->value; } };
+struct Item<T> { T value; T read() const { return this.value; } };
 struct Other { int value; };
 int main() {
     Item<int> items[2] = { { .value = 41 }, { .value = 42 } };
     Item<char> letter = { .value = 'a' };
     Other other = { .value = 7 };
     int value = 8;
-    { int^ view = ^items[1].value; *view += 1; }
+    { int& view = &items[1].value; view += 1; }
     print(items[1].read());
     print(letter.read());
     print(other.value);
@@ -419,8 +419,8 @@ int main() {
         .unwrap();
     let renamed = apply(&analysis, &edits).remove(0);
     assert!(renamed.contains("T data;"));
-    assert!(renamed.contains("this->data"));
-    assert!(renamed.contains("^items[1].data"));
+    assert!(renamed.contains("this.data"));
+    assert!(renamed.contains("&items[1].data"));
     assert!(renamed.contains("Other other = { .value = 7 }"));
     assert!(renamed.contains("print(other.value)"));
     assert!(renamed.contains("int value = 8;"));
@@ -439,7 +439,7 @@ int main() {
 #[test]
 fn field_rename_preserves_destructor_cleanup_and_union_layout() {
     let source = r#"
-struct Owner { BoxInt value; ~Owner() { print(*this->value); } };
+struct Owner { BoxInt value; ~Owner() { print(*this.value); } };
 union Bits { int value; unsigned char bytes[4]; };
 int main() {
     Owner owner = { .value = box_int(42) };
@@ -452,7 +452,7 @@ int main() {
         .rename(0, source.find("BoxInt value").unwrap() + 7, "storage")
         .unwrap();
     let renamed = apply(&analysis, &edits).remove(0);
-    assert!(renamed.contains("~Owner() { print(*this->storage); }"));
+    assert!(renamed.contains("~Owner() { print(*this.storage); }"));
     assert!(renamed.contains(".storage = box_int(42)"));
     let analysis = crust::analyze(&renamed).unwrap();
     let edits = analysis
@@ -561,9 +561,9 @@ struct Item;
 typedef Item Alias;
 struct Item {
     BoxInt value;
-    ~Item() { print(*this->value); }
+    ~Item() { print(*this.value); }
     static Self create(int value) { Self result = { .value = box_int(value) }; return move(result); }
-    int read() const { return *this->value; }
+    int read() const { return *this.value; }
 };
 int main() {
     Item first = Item::create(41);
@@ -610,7 +610,7 @@ struct Item<T> {
     T value;
     ~Item() { print(1); }
     static Self create(T value) { Self result = { .value = move(value) }; return move(result); }
-    T read() const { return this->value; }
+    T read() const { return this.value; }
 };
 int main() {
     Item<int> first = Item<int>::create(42);
@@ -852,7 +852,7 @@ fn type_parameter_rename_covers_struct_members_and_separate_instantiations() {
 struct Pair<T, U> {
     T first;
     U second;
-    T read() const { return this->first; }
+    T read() const { return this.first; }
     static Self create(T first, U second) { Self result = { .first = first, .second = second }; return result; }
 };
 T echo<T>(T value) { return value; }
@@ -1105,7 +1105,7 @@ fn function_rename_updates_imports_using_snapshot_text() {
 
 #[test]
 fn function_rename_keeps_independent_qualified_members_in_unused_templates() {
-    let source = "int helper() { return 1; } interface Uses { int helper() const; }; int later<T: Uses>(const T^ input) { return input->helper(); } int main() { return helper(); }";
+    let source = "int helper() { return 1; } interface Uses { int helper() const; }; int later<T: Uses>(const T& input) { return input.helper(); } int main() { return helper(); }";
     let analysis = crust::analyze(source).unwrap();
     let edits = analysis
         .rename(0, source.find("helper()").unwrap(), "compute")
@@ -1113,5 +1113,5 @@ fn function_rename_keeps_independent_qualified_members_in_unused_templates() {
     let result = apply(&analysis, &edits).remove(0);
     assert!(result.contains("int compute()"));
     assert!(result.contains("return compute();"));
-    assert!(result.contains("return input->helper();"));
+    assert!(result.contains("return input.helper();"));
 }

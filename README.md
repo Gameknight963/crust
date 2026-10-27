@@ -24,7 +24,8 @@ int main() {
 ```
 
 Crust supports structs, typedefs, static and instance methods, shared and exclusive borrows, and
-`~Type()` destructors. See [examples/](examples/) for runnable programs.
+`~Type()` destructors. Safe `T&` references act as aliases and use `&value` to borrow.
+See [examples/](examples/) for runnable programs.
 
 Fixed-size arrays support checked indexing and resource cleanup. String literals
 use UTF-8 byte arrays.

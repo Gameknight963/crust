@@ -51,18 +51,18 @@ fn stable_sorting_preserves_equal_key_order_and_handles_inconsistent_comparisons
             BoxInt key;
             BoxInt id;
             static Self create(int key, int id) {{ return (Self){{ .key = box_int(key), .id = box_int(id) }}; }}
-            int compare(const Self^ other) const {{
-                int first = *this->key; int second = *other->key;
+            int compare(const Self& other) const {{
+                int first = *this.key; int second = *other.key;
                 return (first > second) - (first < second);
             }}
-            ~Resource() {{ print(*this->id); }}
+            ~Resource() {{ print(*this.id); }}
         }};
         int main() {{
             Vector<Resource> values = Vector<Resource>::create(); values.reserve(4);
             values.push(Resource::create(3, 0)); values.push(Resource::create(1, 1));
             values.push(Resource::create(2, 2)); values.push(Resource::create(1, 3));
-            sort<Resource>(^values);
-            for (size_t i = 0; i < values.count(); i += 1) {{ print(*values.at(i)->id); }}
+            sort<Resource>(&values);
+            for (size_t i = 0; i < values.count(); i += 1) {{ print(*values.at(i).id); }}
             return 0;
         }}
     "#,
@@ -102,10 +102,10 @@ fn sorting_empty_and_single_element_vectors_uses_checked_interface_methods() {
     let source = format!(
         r#"
         {}
-        struct Item {{ int value; int compare(const Self^ other) const {{ return this->value - other->value; }} }};
+        struct Item {{ int value; int compare(const Self& other) const {{ return this.value - other.value; }} }};
         int main() {{
-            Vector<Item> values = Vector<Item>::create(); sort<Item>(^values); print(values.count());
-            values.push((Item){{ .value = 42 }}); sort<Item>(^values); print(values.at(0)->value);
+            Vector<Item> values = Vector<Item>::create(); sort<Item>(&values); print(values.count());
+            values.push((Item){{ .value = 42 }}); sort<Item>(&values); print(values.at(0).value);
             return 0;
         }}
     "#,
@@ -113,8 +113,8 @@ fn sorting_empty_and_single_element_vectors_uses_checked_interface_methods() {
     );
     run(&source, "0\n42\n", "drop:bytes:8\n");
     let borrowed = source.replace(
-        "sort<Item>(^values); print(values.at(0)->value);",
-        "const Item^ view = values.at(0); sort<Item>(^values); print(view->value);",
+        "sort<Item>(&values); print(values.at(0).value);",
+        "const Item& view = values.at(0); sort<Item>(&values); print(view.value);",
     );
     assert!(
         crust::check(&borrowed)
@@ -124,11 +124,11 @@ fn sorting_empty_and_single_element_vectors_uses_checked_interface_methods() {
     );
     for compare in [
         "",
-        "int compare(const Self^ other) { return 0; }",
-        "unsafe int compare(const Self^ other) const { return 0; }",
+        "int compare(const Self& other) { return 0; }",
+        "unsafe int compare(const Self& other) const { return 0; }",
     ] {
         let source = format!(
-            "{} struct Item {{ int value; {compare} }}; int main() {{ Vector<Item> values = Vector<Item>::create(); sort<Item>(^values); return 0; }}",
+            "{} struct Item {{ int value; {compare} }}; int main() {{ Vector<Item> values = Vector<Item>::create(); sort<Item>(&values); return 0; }}",
             library()
         );
         let error = crust::check(&source).unwrap_err();

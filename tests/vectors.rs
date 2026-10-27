@@ -29,9 +29,9 @@ fn vectors_grow_preserve_values_pop_and_reuse_vacated_slots() {
         int main() {
             Vector<int> values = Vector<int>::create();
             for (int i = 0; i < 5; i += 1) { values.push(i); }
-            print(values.count()); print(*values.at(0)); print(values.pop());
-            values.push(42); print(*values.at(4));
-            *values.at_mut(1) = 7; print(*values.at(1));
+            print(values.count()); print(values.at(0)); print(values.pop());
+            values.push(42); print(values.at(4));
+            values.at_mut(1) = 7; print(values.at(1));
             values.reserve(3); return 0;
         }
     "#,
@@ -47,7 +47,7 @@ fn reallocation_moves_owners_without_destroying_them_and_drops_only_live_element
         r#"
         struct Resource {
             BoxInt value;
-            ~Resource() { print(*this->value); }
+            ~Resource() { print(*this.value); }
         };
         int main() {
             Vector<Resource> values = Vector<Resource>::create();
@@ -84,7 +84,7 @@ fn live_element_borrows_prevent_mutation_and_whole_vector_moves() {
         "Vector<int> other = move(values);",
     ] {
         let source = format!(
-            "{definitions} int main() {{ Vector<int> values = Vector<int>::create(); values.push(1); const int^ view = values.at(0); {action} return 0; }}"
+            "{definitions} int main() {{ Vector<int> values = Vector<int>::create(); values.push(1); const int& view = values.at(0); {action} return 0; }}"
         );
         assert!(crust::check(&source).is_err(), "should reject {action}");
     }
@@ -115,7 +115,7 @@ fn vector_instances_preserve_different_element_widths_and_signed_boundaries() {
             Vector<int64_t> wide = Vector<int64_t>::create();
             wide.push(9223372036854775807); wide.push(-9223372036854775808); wide.push(0);
             Vector<char> bytes = Vector<char>::create(); bytes.push('a'); bytes.push('b'); bytes.push('c');
-            print(*wide.at(0)); print(*wide.at(1)); print(*bytes.at(2)); print(wide.pop()); return 0;
+            print(wide.at(0)); print(wide.at(1)); print(bytes.at(2)); print(wide.pop()); return 0;
         }
     "#,
         "9223372036854775807\n-9223372036854775808\n99\n0\n",
@@ -130,10 +130,10 @@ fn insertion_and_removal_preserve_order_and_clear_reuses_the_allocation() {
         int main() {
             Vector<int> values = Vector<int>::create();
             values.insert(0, 10); values.insert(1, 30); values.insert(1, 20); values.insert(0, 5);
-            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i)); }
-            print(values.remove(1)); print(values.remove(2)); print(values.remove(0)); print(*values.at(0));
+            for (size_t i = 0; i < values.count(); i += 1) { print(values.at(i)); }
+            print(values.remove(1)); print(values.remove(2)); print(values.remove(0)); print(values.at(0));
             values.clear(); print(values.count());
-            values.push(42); print(*values.at(0));
+            values.push(42); print(values.at(0));
             return 0;
         }
     "#,
@@ -149,7 +149,7 @@ fn shifting_owning_elements_transfers_values_and_clears_each_live_element_once()
         r#"
         struct Resource {
             BoxInt value;
-            ~Resource() { print(*this->value); }
+            ~Resource() { print(*this.value); }
         };
         int main() {
             Vector<Resource> values = Vector<Resource>::create(); values.reserve(4);
@@ -158,7 +158,7 @@ fn shifting_owning_elements_transfers_values_and_clears_each_live_element_once()
             values.insert(1, (Resource){ .value = box_int(2) });
             values.insert(0, (Resource){ .value = box_int(0) });
             Resource removed = values.remove(1); print(*removed.value);
-            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i)->value); }
+            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i).value); }
             values.clear(); print(values.count());
             values.insert(0, (Resource){ .value = box_int(4) });
             Vector<Resource> next = move(values);
@@ -178,7 +178,7 @@ fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() 
     let width = std::mem::size_of::<usize>();
     run(
         r#"
-        struct Resource { BoxInt value; ~Resource() { print(*this->value); } };
+        struct Resource { BoxInt value; ~Resource() { print(*this.value); } };
         typedef Resource Pair[2];
         int main() {
             Vector<Pair> values = Vector<Pair>::create(); values.reserve(3);

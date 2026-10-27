@@ -8,7 +8,7 @@ struct Job {
     Status status;
 
     void finish() {
-        this->status = Status::Ready;
+        this.status = Status::Ready;
     }
 };
 

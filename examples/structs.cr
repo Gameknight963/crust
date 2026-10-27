@@ -3,15 +3,15 @@ struct Item {
     BoxInt value;
 };
 
-void increment(int^ value)
+void increment(int& value)
 {
-    *value = *value + 1;
+    value = value + 1;
 }
 
-void update(struct Item^ item)
+void update(struct Item& item)
 {
-    increment(^item->id);
-    increment(^*item->value);
+    increment(&item.id);
+    increment(&*item.value);
 }
 
 int main()
@@ -25,7 +25,7 @@ int main()
     print(second.id);
     print(*second.value);
 
-    update(^second);
+    update(&second);
     print(second.id);
     print(*second.value);
 

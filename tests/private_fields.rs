@@ -7,15 +7,15 @@ fn methods_factories_and_destructors_can_access_private_fields() {
             private BoxInt owner;
             int id;
             static Self create(int id) { return (Self){ .owner = box_int(id), .id = id }; }
-            int read() const { return *this->owner; }
-            int sum(const Self^ other) const { return *this->owner + *other->owner; }
-            ~Item() { print(this->read()); }
+            int read() const { return *this.owner; }
+            int sum(const Self& other) const { return *this.owner + *other.owner; }
+            ~Item() { print(this.read()); }
         };
         int main() {
             Item first = Item::create(1);
             Item second = Item::create(2);
             first.id = 3;
-            print(first.sum(^const second));
+            print(first.sum(&const second));
             return 0;
         }
     "#;
@@ -44,7 +44,7 @@ fn private_fields_cannot_be_forged_read_written_or_borrowed_from_outside() {
         "Item item = Item::create(); print(item.value);",
         "Item item = Item::create(); item.value = 2;",
         "Item item = Item::create(); item.value += 1;",
-        "Item item = Item::create(); int^ r = ^item.value;",
+        "Item item = Item::create(); int& r = &item.value;",
         "Item item = Item::create(); print(sizeof(item.value));",
         "Item item = Item::create(); unsafe { int* p = &item.value; }",
     ] {
@@ -53,7 +53,7 @@ fn private_fields_cannot_be_forged_read_written_or_borrowed_from_outside() {
         assert!(error.message.contains("private"), "{source}: {error}");
     }
     let source = format!(
-        "{prefix} struct Other {{ int n; int read(const Item^ item) const {{ return item->value; }} }}; int main() {{ return 0; }}"
+        "{prefix} struct Other {{ int n; int read(const Item& item) const {{ return item.value; }} }}; int main() {{ return 0; }}"
     );
     assert!(
         crust::check(&source)
@@ -67,8 +67,8 @@ fn private_fields_cannot_be_forged_read_written_or_borrowed_from_outside() {
 fn c_owner_private_pointer_preserves_safe_construction_and_getter_invariants() {
     for definition in [
         "void forge() { HeapInt owner = { .pointer = 0 }; }",
-        "void corrupt(HeapInt^ owner) { owner->pointer = 0; }",
-        "void expose(const HeapInt^ owner) { print(sizeof(owner->pointer)); }",
+        "void corrupt(HeapInt& owner) { owner.pointer = 0; }",
+        "void expose(const HeapInt& owner) { print(sizeof(owner.pointer)); }",
     ] {
         let source = format!("{}\n{definition}", include_str!("../examples/c_owner.cr"));
         assert!(

@@ -120,7 +120,7 @@ arguments, including calls to generic functions.
 struct Pair<T, U> {
     T first;
     U second;
-    T get_first() const { return this->first; }
+    T get_first() const { return this.first; }
 };
 
 T identity<T>(T value) { return value; }
@@ -166,8 +166,8 @@ T make<T: Factory>(int value) {
     return T::create(value);
 }
 
-int read_value<T: Readable>(const T^ value) {
-    return value->read();
+int read_value<T: Readable>(const T& value) {
+    return value.read();
 }
 ```
 
@@ -266,14 +266,14 @@ host ABI. Specifiers can use C ordering, such as `unsigned long int` or
 ```c
 typedef int Row[3];
 
-int sum(const Row^ values) {
-    return (*values)[0] + (*values)[1] + (*values)[2];
+int sum(const Row& values) {
+    return (values)[0] + (values)[1] + (values)[2];
 }
 
 int main() {
     int values[3] = { 10, 20, 30 };
     values[1] += 2;
-    print(sum(^const values));
+    print(sum(&const values));
     return 0;
 }
 ```
@@ -307,7 +307,7 @@ typedef uint8_t Message[16];
 int main() {
     Message text = "Hello, Crust!";
     text[0] = 'h';
-    print(^const text);
+    print(&const text);
     print("Adjacent " "literals");
     return 0;
 }
@@ -483,7 +483,7 @@ with private storage, methods, and move-only destruction.
 ```c
 typedef int Count;
 typedef Resource Handle;
-typedef const Count^ ReadCount;
+typedef const Count& ReadCount;
 ```
 
 - Typedefs introduce names for existing types and preserve their ownership rules
@@ -497,32 +497,32 @@ typedef const Count^ ReadCount;
 ## Borrows
 
 ```c
-void increment(int^ value) {
-    *value = *value + 1;
+void increment(int& value) {
+    value = value + 1;
 }
 
-int read(const int^ value) {
-    return *value;
+int read(const int& value) {
+    return value;
 }
 
 int main() {
     int number = 41;
-    increment(^number);
-    print(read(^const number));
+    increment(&number);
+    print(read(&number));
     return 0;
 }
 ```
 
 | Type | Creation | Access |
 | --- | --- | --- |
-| `int^` | `^number` | Exclusive, mutable |
-| `const int^` | `^const number` | Shared, read-only |
-| `BoxInt^` | `^owner` | Exclusive access to the owner slot |
-| `const BoxInt^` | `^const owner` | Shared access through the owner |
-| `struct Name^` | `^value` | Exclusive struct access |
-| `const struct Name^` | `^const value` | Shared struct access |
+| `int&` | `&number` | Exclusive, mutable |
+| `const int&` | `&number` | Shared, read-only |
+| `BoxInt&` | `&owner` | Exclusive access to the owner slot |
+| `const BoxInt&` | `&owner` | Shared access through the owner |
+| `struct Name&` | `&value` | Exclusive struct access |
+| `const struct Name&` | `&value` | Shared struct access |
 
-- `^*owner` borrows a boxed integer's contents
+- `&*owner` borrows a boxed integer's contents
 - Multiple shared borrows may coexist
 - Exclusive borrows prevent conflicting reads, writes, moves, and borrows
 - Borrow permissions apply through fields and owning pointees
@@ -530,7 +530,7 @@ int main() {
 - Separate struct fields can be borrowed independently
 - Borrowing a field prevents conflicting access to that field or any containing value
 - Borrow parameters can be forwarded or reborrowed for nested calls
-- Parameters require matching borrow types. Use `^const *reference` to explicitly create a shared reborrow
+- The destination reference type determines shared or exclusive borrowing. `&const place` explicitly requests a shared borrow
 - Borrow parameters and local references keep their binding and permit writes through mutable pointees
 - Borrows live in function parameters, local references, and temporary call arguments
 
@@ -539,13 +539,13 @@ int main() {
 ```c
 int number = 40;
 {
-    int^ value = ^number;
-    *value += 1;
+    int& value = &number;
+    value += 1;
     {
-        const int^ view = ^const *value;
-        print(*view);
+        const int& view = &value;
+        print(view);
     }
-    *value += 1;
+    value += 1;
 }
 print(number);
 ```
@@ -558,7 +558,11 @@ print(number);
 - Leaving an inner block restores access through the parent reference
 - Calls temporarily reborrow a local reference and release that call's borrow on return
 - A live reference prevents moves and replacement of its source owner
+- References act as aliases. Assignment changes the referent, and `&reference` takes its address
 - Reference bindings cannot be rebound
+- Values, fields, indexing, and method calls through references use ordinary value syntax
+- `sizeof(reference)` measures the referent, while `sizeof(T&)` measures the reference representation
+- Owning values accessed through references cannot be copied or moved out
 
 Borrows distinguish separate struct fields. Array element borrows lock the whole
 array. Local references remain active to the end of the block, including after
@@ -570,8 +574,8 @@ their last use. Borrowed fields require further lifetime rules.
 struct Item {
     BoxInt owner;
 
-    const int^ value() const {
-        return ^const *this->owner;
+    const int& value() const {
+        return &*this.owner;
     }
 };
 ```
@@ -583,7 +587,7 @@ struct Item {
 - Return statements can forward the input through calls and local reborrows
 - The caller's returned reference keeps the source borrowed
 - A returned loan covers the full input region passed by the caller, even when the function returns one of its subfields
-- Returned references support local bindings, call arguments, dereferencing, field access, and method chaining
+- Returned references support local bindings, call arguments, assignment, indexing, field access, and method chaining
 - A local binding retains the returned loan until its block ends
 - Unbound returned loans last through the expression statement or initializer
 - Condition temporaries end before entering an `if` or loop body
@@ -601,21 +605,21 @@ struct Counter {
     int value;
 
     int get() const {
-        return this->value;
+        return this.value;
     }
 
     void increment() {
-        this->value = this->value + 1;
+        this.value = this.value + 1;
     }
 };
 ```
 
 - `Self` names the enclosing struct inside its definition
-- A trailing `const` gives the method a shared `const Self^ this` receiver
-- An ordinary method receives an exclusive `Self^ this`
+- A trailing `const` gives the method a shared `const Self& this` receiver
+- An ordinary method receives an exclusive `Self& this`
 - `counter.get()` automatically borrows the receiver
-- Through a borrow, use `reference->get()`
-- Within borrowed methods, use `this->field` and `this->method()`
+- Through a reference, use `reference.get()`
+- Within borrowed methods, use `this.field` and `this.method()`
 - Receiver evaluation precedes argument evaluation
 - Forward calls and recursion are supported
 - Method names are scoped to their struct, with one method per name
@@ -685,14 +689,17 @@ int main() {
 - `T*` is a mutable raw pointer, and `const T*` points to a read-only value
 - Raw pointers support copying, fields, arrays, parameters, returns, null tests, and equality comparisons
 - Integer literal zero converts to a null pointer
-- `&place` creates a raw pointer inside an `unsafe` block
+- `&place` creates a raw pointer when a declaration, argument, return, or cast expects a pointer type. Taking an address requires no `unsafe` block
+- In a reference destination, `&place` creates a checked borrow. Without a destination type, it creates a borrow using the place's access permission
+- Changing the surrounding `unsafe` block does not change address-taking behavior
+- Address arguments passed through C varargs produce raw pointers
 - Raw pointer dereferencing, casts, and external C calls require `unsafe`
 - Raw pointer indexing, addition, subtraction, `+=`, and `-=` require `unsafe`
 - Pointer offsets count elements and must fit `ptrdiff_t`
 - Pointer subtraction requires matching object types and returns `ptrdiff_t`
 - Raw pointer indexing relies on the unsafe caller to keep access within the allocation
 - Pointers can be cast to other raw pointer types, booleans, or pointer-sized integers
-- Borrows can be explicitly cast to raw pointers inside `unsafe`
+- Use `&reference` to take the address of a reference's referent. Raw pointer casts require `unsafe`
 - An implicit pointer conversion can add read-only permission or convert to a compatible `void*`
 - `void*` requires a typed cast before dereferencing
 - Raw pointers use ordinary value semantics and explicit resource management
@@ -702,8 +709,8 @@ int main() {
 Unsafe code is responsible for pointer validity, alignment, aliasing, and resource
 lifetimes. External declarations must match the linked C function's ABI.
 
-Pointer-slot borrows use the full pointer type, such as `Item*^ slot = ^pointer;`
-or `Item* const^ view = ^const pointer;`. The first can replace the pointer value.
+Pointer-slot borrows use the full pointer type, such as `Item*& slot = &pointer;`
+or `Item* const& view = &const pointer;`. The first can replace the pointer value.
 The second shares access to it. Dereferencing the stored raw pointer requires
 `unsafe`.
 
@@ -748,8 +755,8 @@ byte-array views one byte at a time, stopping at a zero byte or the array bound.
 ```c
 extern volatile int status;
 
-int read_status(const volatile int^ value) {
-    return *value;
+int read_status(const volatile int& value) {
+    return value;
 }
 ```
 
@@ -833,7 +840,7 @@ heap owners.
 
 The [sorting example](../examples/sorting.cr) uses a generic stable insertion sort
 from [sort.cr](../examples/container_project/src/sort.cr). Its `Ordered` interface
-requires `int compare(const Self^ other) const`. The sort borrows vector elements
+requires `int compare(const Self& other) const`. The sort borrows vector elements
 for comparison and uses `swap` to exchange owners. It uses constant extra storage,
 takes quadratic time in the worst case, and runs in linear time on sorted input.
 
@@ -847,7 +854,7 @@ The [integer buffer example](../examples/int_buffer.cr) adds checked allocation
 sizes, initialized elements, bounds-checked getters, and move-only cleanup.
 
 For a shared borrow of a raw pointer binding, use a typedef such as
-`typedef int* IntPointer;` followed by `const IntPointer^`.
+`typedef int* IntPointer;` followed by `const IntPointer&`.
 
 ## External variables
 
@@ -942,12 +949,12 @@ struct Resource {
     int handle;
 
     ~Resource() {
-        print(this->handle);
+        print(this.handle);
     }
 };
 ```
 
-- A destructor matches its enclosing struct's name and has an exclusive `Self^ this` receiver
+- A destructor matches its enclosing struct's name and has an exclusive `Self& this` receiver
 - Each struct permits one destructor with an empty parameter list
 - Destructors use the `~Type()` declaration syntax
 - Normal cleanup invokes the destructor before destroying owning fields

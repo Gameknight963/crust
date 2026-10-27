@@ -69,11 +69,11 @@ fn bounded_printing_handles_arrays_without_a_terminating_zero() {
     run(
         r#"
         typedef uint8_t Bytes[3];
-        void show(Bytes^ text) { print(text); (*text)[0] = 'X'; }
+        void show(Bytes& text) { print(text); (text)[0] = 'X'; }
         int main() {
             Bytes bytes = { 'a', 'b', 'c' };
-            print(bytes); print(^const bytes);
-            show(^bytes); print(bytes);
+            print(bytes); print(&const bytes);
+            show(&bytes); print(bytes);
             return 0;
         }
     "#,
@@ -93,14 +93,14 @@ fn native_char_scalars_and_arrays_preserve_c_signedness_and_utf8_bytes() {
             print(utf8); print(utf8[0]);
             print(sizeof(char));
             Text text = create();
-            print(^const text); text[0] = 'b'; print(text);
+            print(&const text); text[0] = 'b'; print(text);
             return 0;
         }
     "#,
         &format!("65\n66\né\n{}\n1\ncat\nbat\n", 195u8 as std::ffi::c_char),
     );
     assert!(
-        crust::check("void set(int8_t^ value) {} int main() { char c = 'A'; set(^c); return 0; }")
+        crust::check("void set(int8_t& value) {} int main() { char c = 'A'; set(&c); return 0; }")
             .is_err()
     );
 }
@@ -136,8 +136,8 @@ fn malformed_strings_and_incompatible_destinations_report_frontend_errors() {
         r#"int main() { int text[3] = "hi"; return 0; }"#,
         r#"int main() { int8_t text[3] = "hi"; return 0; }"#,
         r#"int main() { bool text[3] = "hi"; return 0; }"#,
-        r#"int main() { uint8_t text[3] = { 1, 2, 3 }; print(^text[0]); return 0; }"#,
-        r#"int main() { print(^const "hi"); return 0; }"#,
+        r#"int main() { uint8_t text[3] = { 1, 2, 3 }; print(&text[0]); return 0; }"#,
+        r#"int main() { print(&const "hi"); return 0; }"#,
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }

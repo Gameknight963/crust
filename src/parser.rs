@@ -805,7 +805,7 @@ impl Parser {
             while self.tokens.get(position).is_some_and(|token| {
                 matches!(
                     token.kind,
-                    Token::Star | Token::Const | Token::Volatile | Token::Caret
+                    Token::Star | Token::Const | Token::Volatile | Token::Ampersand
                 )
             }) {
                 position += 1;
@@ -818,9 +818,9 @@ impl Parser {
                 .get(position + 1)
                 .is_some_and(|token| matches!(token.kind, Token::Equal | Token::LeftBracket));
         }
-        // A type name may also be a value name. Keep `Count ^ other` available
-        // as an XOR expression, while recognizing initialized borrow locals.
-        return self.next_at(&Token::Caret)
+        // A type name may also be a value name. Keep `Count & other` available
+        // as a bitwise expression, while recognizing initialized borrow locals.
+        return self.next_at(&Token::Ampersand)
             && matches!(
                 self.tokens.get(self.position + 2).map(|token| &token.kind),
                 Some(Token::Identifier(_))
@@ -1489,7 +1489,7 @@ impl Parser {
             qualifiers = self.qualifiers();
         }
         let base = self.array_suffix(base)?;
-        let ty = if self.consume(&Token::Caret) {
+        let ty = if self.consume(&Token::Ampersand) {
             let ty = base
                 .borrowed_qualified(!qualifiers.readonly, qualifiers.volatile)
                 .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?;
@@ -1967,12 +1967,11 @@ impl Parser {
             Token::Bang => Some(UnaryOperator::Not),
             Token::Tilde => Some(UnaryOperator::BitNot),
             Token::Star => Some(UnaryOperator::Dereference),
-            Token::Caret => Some(UnaryOperator::Borrow { mutable: true }),
             _ => None,
         };
         if let Some(mut operator) = operator {
             let start = self.advance().span;
-            if matches!(operator, UnaryOperator::Borrow { .. }) && self.consume(&Token::Const) {
+            if operator == UnaryOperator::Address && self.consume(&Token::Const) {
                 operator = UnaryOperator::Borrow { mutable: false };
             }
             let operand = self.unary()?;

@@ -446,7 +446,7 @@ impl Types {
                 mutable,
                 volatile,
             } => format!(
-                "{}^",
+                "{}&",
                 Qualifiers {
                     readonly: !mutable,
                     volatile

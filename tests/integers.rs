@@ -96,15 +96,15 @@ fn checked_conversions_work_in_arguments_returns_fields_and_assignments() {
         typedef uint8_t Byte;
         struct Packet { Byte tag; int64_t count; };
         Byte narrow(int64_t n) { return n; }
-        void increment(uint64_t^ n) { *n += 1; }
-        uint64_t read(const uint64_t^ n) { return *n; }
+        void increment(uint64_t& n) { n += 1; }
+        uint64_t read(const uint64_t& n) { return n; }
         int main() {
             int64_t n = 42;
             Packet p = { .tag = narrow(n), .count = n };
             print(p.tag); print(p.count);
             uint64_t wide = n;
-            increment(^wide);
-            print(read(^const wide));
+            increment(&wide);
+            print(read(&const wide));
             bool flag = wide; print(flag);
             int8_t small = flag; print(small);
             return 0;
@@ -129,10 +129,10 @@ fn pointer_sized_aliases_are_consistent_with_fixed_width_types() {
     run(
         &format!(
             r#"
-        void increment({unsigned}^ n) {{ *n += 1; }}
+        void increment({unsigned}& n) {{ n += 1; }}
         int main() {{
             size_t length = 41;
-            increment(^length);
+            increment(&length);
             uintptr_t address = length;
             ptrdiff_t difference = -1;
             {signed} copy = difference;
@@ -260,7 +260,7 @@ fn c_style_casts_check_ranges_and_support_bitwise_complement() {
             BoxInt owner = box_int(7);
             (void)move(owner);
             int n = 1;
-            (void)^n;
+            (void)&n;
             n = 2;
             print(n);
             return 0;
@@ -291,7 +291,7 @@ fn sizeof_and_alignof_query_types_without_running_expressions_or_moves() {
             print(*owner);
             BoxInt other = move(owner);
             print(sizeof(owner) == sizeof(other));
-            print(sizeof(const int^) == sizeof(BoxInt));
+            print(sizeof(const int&) == sizeof(BoxInt));
             return 0;
         }
     "#,
@@ -341,7 +341,7 @@ fn explicit_casts_retain_checked_conversion_behavior() {
         "int main() { print(sizeof(missing)); return 0; }",
         "int main() { BoxInt a = box_int(1); (void)a; return 0; }",
         "struct A { int n; }; int main() { A a = { .n = 1 }; (A)a; return 0; }",
-        "int main() { int n = 1; (int^)n; return 0; }",
+        "int main() { int n = 1; (int&)n; return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }
@@ -356,7 +356,7 @@ fn contextual_literals_and_borrows_keep_exact_ranges_and_types() {
         "int main() { uint64_t n = -1; return 0; }",
         "int main() { int64_t n = 9223372036854775808; return 0; }",
         "int main() { print(-18446744073709551615); return 0; }",
-        "void f(int64_t^ p) {} int main() { int n = 1; f(^n); return 0; }",
+        "void f(int64_t& p) {} int main() { int n = 1; f(&n); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }

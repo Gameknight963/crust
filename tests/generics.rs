@@ -49,7 +49,7 @@ fn generic_structs_support_aliases_methods_and_nested_closing_angles() {
             T first;
             U second;
             static Self create(T first, U second) { return (Self){ .first = first, .second = second }; }
-            T get_first() const { return this->first; }
+            T get_first() const { return this.first; }
         };
         int main() {
             IntPair inner = IntPair::create(1, 2);
@@ -97,13 +97,13 @@ fn generics_preserve_ownership_borrowed_getters_and_automatic_field_cleanup() {
         struct Holder<T> {
             private T value;
             static Self create(T value) { return (Self){ .value = move(value) }; }
-            const T^ get() const { return ^const this->value; }
+            const T& get() const { return &const this.value; }
         };
         T transfer<T>(T value) { return move(value); }
         int main() {
             Holder<BoxInt> first = Holder<BoxInt>::create(box_int(42));
             Holder<BoxInt> second = transfer<Holder<BoxInt>>(move(first));
-            print(**second.get());
+            print(*second.get());
             BoxInt third = transfer<BoxInt>(box_int(7)); print(*third);
             return 0;
         }
@@ -180,7 +180,7 @@ fn c_backed_generic_buffers_initialize_borrow_move_and_free_each_element_width()
         .unwrap();
     run(
         &format!(
-            "{definitions} int main() {{ Buffer<int64_t> first = Buffer<int64_t>::create(2, 9223372036854775807); Buffer<int64_t> second = move(first); print(*second.at(1)); Buffer<char> empty = Buffer<char>::create(0, 'a'); print(empty.count()); return 0; }}"
+            "{definitions} int main() {{ Buffer<int64_t> first = Buffer<int64_t>::create(2, 9223372036854775807); Buffer<int64_t> second = move(first); print(second.at(1)); Buffer<char> empty = Buffer<char>::create(0, 'a'); print(empty.count()); return 0; }}"
         ),
         "9223372036854775807\n0\n",
         "drop:bytes:16\n",
@@ -191,7 +191,7 @@ fn c_backed_generic_buffers_initialize_borrow_move_and_free_each_element_width()
         "drop:bytes:4\n",
     );
     for body in [
-        "Buffer<int> value = Buffer<int>::create(2, 0); const int^ view = value.at(0); Buffer<int> next = move(value);",
+        "Buffer<int> value = Buffer<int>::create(2, 0); const int& view = value.at(0); Buffer<int> next = move(value);",
         "Buffer<int> value = { .data = 0, .length = 2 };",
         "Buffer<BoxInt> value = Buffer<BoxInt>::create(2, box_int(1));",
     ] {

@@ -2,7 +2,7 @@ struct Iteration {
     int number;
 
     ~Iteration() {
-        print(this->number);
+        print(this.number);
     }
 };
 

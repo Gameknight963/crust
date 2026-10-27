@@ -21,7 +21,7 @@ fn run(source: &str, stdout: &str, drops: &str) {
 fn do_while_runs_once_and_continue_evaluates_the_condition() {
     run(
         r#"
-        int condition(int^ calls, int count) { *calls += 1; return count < 3; }
+        int condition(int& calls, int count) { calls += 1; return count < 3; }
         int main() {
             int once = 0;
             do { once += 1; } while (false);
@@ -32,7 +32,7 @@ fn do_while_runs_once_and_continue_evaluates_the_condition() {
                 int calls = 99;
                 count += 1;
                 if (count < 3) { continue; }
-            } while (condition(^calls, count));
+            } while (condition(&calls, count));
             print(count);
             print(calls);
             int total = 0;
@@ -146,7 +146,7 @@ fn single_statement_bodies_reject_declarations_without_braces_and_bound_nesting(
 fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break() {
     run(
         r#"
-        struct R { BoxInt value; ~R() { print(*this->value); } };
+        struct R { BoxInt value; ~R() { print(*this.value); } };
         int condition(int count) { print(100 + count); return count < 5; }
         int main() {
             R outer = { .value = box_int(99) };
@@ -173,7 +173,7 @@ fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break()
 fn do_while_releases_body_borrows_before_the_condition_and_tracks_guaranteed_exits() {
     run(
         r#"
-        int bump(int^ value) { *value += 1; return *value < 2; }
+        int bump(int& value) { value += 1; return value < 2; }
         int result() {
             BoxInt owner = box_int(8);
             do { return *owner; } while (false);
@@ -181,10 +181,10 @@ fn do_while_releases_body_borrows_before_the_condition_and_tracks_guaranteed_exi
         int main() {
             int count = 0;
             do {
-                const int^ view = ^const count;
-                print(*view);
+                const int& view = &const count;
+                print(view);
                 continue;
-            } while (bump(^count));
+            } while (bump(&count));
             BoxInt owner = box_int(7);
             do { move(owner); break; } while (false);
             owner = box_int(9);
@@ -251,7 +251,7 @@ fn for_and_while_support_break_continue_and_empty_clauses() {
 fn for_header_and_body_owners_drop_in_scope_order_on_continue_and_break() {
     run(
         r#"
-        struct R { BoxInt value; ~R() { print(*this->value); } };
+        struct R { BoxInt value; ~R() { print(*this.value); } };
         int main() {
             R outer = { .value = box_int(99) };
             int i = 0;
@@ -299,7 +299,7 @@ fn nested_loop_control_targets_the_innermost_loop() {
 fn early_return_cleans_up_for_body_header_and_enclosing_owners() {
     run(
         r#"
-        struct R { int id; ~R() { print(this->id); } };
+        struct R { int id; ~R() { print(this.id); } };
         int f() {
             R outer = { .id = 0 };
             for (R header = { .id = 1 }; 1;) {
@@ -411,8 +411,8 @@ fn rejects_conflicting_owner_states_at_breaks_and_backedges() {
 fn compound_assignments_work_on_locals_fields_and_borrowed_pointees() {
     run(
         r#"
-        struct A { int n; void add(int n) { this->n += n; } };
-        void add(int^ n) { *n += 1; }
+        struct A { int n; void add(int n) { this.n += n; } };
+        void add(int& n) { n += 1; }
         int main() {
             int n = 10;
             n += 5; n -= 2; n *= 3; n /= 3; n %= 5;
@@ -420,7 +420,7 @@ fn compound_assignments_work_on_locals_fields_and_borrowed_pointees() {
             print(n);
             BoxInt owner = box_int(5);
             *owner += 2;
-            add(^*owner);
+            add(&*owner);
             print(*owner);
             A a = { .n = 10 };
             a.add(4);
@@ -441,11 +441,11 @@ fn compound_rhs_evaluates_once_and_permits_shared_reads_of_the_destination() {
     run(
         r#"
         int mark(int n) { print(n); return n; }
-        int read(const int^ n) { return *n; }
+        int read(const int& n) { return n; }
         int main() {
             int n = 4;
             n += mark(1);
-            n += read(^const n);
+            n += read(&const n);
             print(n);
             return 0;
         }
@@ -480,10 +480,10 @@ fn compound_assignments_keep_runtime_arithmetic_checks() {
 #[test]
 fn compound_rhs_cannot_mutate_move_or_replace_the_captured_destination() {
     for source in [
-        "void bad(const int^ n) { *n += 1; } int main() { return 0; }",
+        "void bad(const int& n) { n += 1; } int main() { return 0; }",
         "int main() { BoxInt a = box_int(1); a += 1; return 0; }",
         "int main() { 1 += 2; return 0; }",
-        "int replace(BoxInt^ a) { *a = box_int(2); return 1; } int main() { BoxInt a = box_int(1); *a += replace(^a); return 0; }",
+        "int replace(BoxInt& a) { a = box_int(2); return 1; } int main() { BoxInt a = box_int(1); *a += replace(&a); return 0; }",
         "int take(BoxInt a) { return *a; } int main() { BoxInt a = box_int(1); *a += take(move(a)); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

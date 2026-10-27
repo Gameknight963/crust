@@ -32,6 +32,9 @@ pub(crate) struct AnalyzedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    // Reference-producing calls and bindings retain pointer storage in C.
+    // Value contexts read their referents without consuming an owner.
+    pub reference_reads: HashMap<Span, Type>,
     pub place_volatile: HashMap<Span, bool>,
     pub calls: HashMap<Span, CallSite>,
     pub receiver_types: HashMap<Span, Type>,
@@ -502,6 +505,7 @@ fn analyze(
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            reference_reads: &mut analysis.reference_reads,
             place_volatile: &mut analysis.place_volatile,
             calls: &mut analysis.calls,
             completion,
@@ -589,6 +593,7 @@ fn analyze(
 }
 
 struct FunctionChecker<'program> {
+    reference_reads: &'program mut HashMap<Span, Type>,
     place_volatile: &'program mut HashMap<Span, bool>,
     calls: &'program mut HashMap<Span, CallSite>,
     completion: bool,
@@ -719,10 +724,23 @@ impl FunctionChecker<'_> {
                 }
                 self.record_binding_symbol(*name_span, target);
                 if target.ty.is_borrow() {
-                    return Err(Diagnostic::new(
-                        statement.span,
-                        "borrow bindings cannot be rebound; assign through the pointee instead",
-                    ));
+                    let target = Expression {
+                        span: *name_span,
+                        kind: ExpressionKind::Variable {
+                            name: name.clone(),
+                            name_span: *name_span,
+                        },
+                    };
+                    let place = self.checked_place(&target)?;
+                    if !place.mutable {
+                        return Err(Diagnostic::new(
+                            *name_span,
+                            "cannot assign through a shared borrow",
+                        ));
+                    }
+                    self.require_type(value, place.ty)?;
+                    self.access(&place.root, &place.fields, true, place.via, *name_span)?;
+                    return Ok(false);
                 }
                 self.require_type(value, target.ty)?;
                 self.access(&self.root(name), &[], true, None, statement.span)?;
@@ -986,8 +1004,71 @@ impl FunctionChecker<'_> {
 
     fn expression(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         let ty = self.expression_inner(expression)?;
+        if let Type::Borrow { pointee, .. } = ty
+            && !matches!(
+                expression.kind,
+                ExpressionKind::Unary {
+                    operator: UnaryOperator::Address | UnaryOperator::Borrow { .. },
+                    ..
+                }
+            )
+        {
+            let place = self.reference_place(expression, ty)?;
+            self.access(
+                &place.root,
+                &place.fields,
+                false,
+                place.via,
+                expression.span,
+            )?;
+            if self.types.owns(pointee.ty()) && !self.unevaluated {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "a borrowed owner cannot be copied or moved out",
+                ));
+            }
+            self.reference_reads.insert(expression.span, ty);
+            self.expression_types.insert(expression.span, pointee.ty());
+            return Ok(pointee.ty());
+        }
         self.expression_types.insert(expression.span, ty);
         return Ok(ty);
+    }
+
+    fn reference_expression(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
+        let ty = self.expression_inner(expression)?;
+        self.expression_types.insert(expression.span, ty);
+        return Ok(ty);
+    }
+
+    fn reference_place(&self, expression: &Expression, ty: Type) -> Result<Place, Diagnostic> {
+        if let ExpressionKind::Variable { .. } = expression.kind {
+            return self.place(expression);
+        }
+        let Type::Borrow {
+            pointee,
+            mutable,
+            volatile,
+        } = ty
+        else {
+            unreachable!()
+        };
+        let id = self.references.get(&expression.span).copied();
+        let loan = id.and_then(|id| self.loans.iter().find(|loan| loan.id == id));
+        assert!(
+            self.unevaluated || loan.is_some(),
+            "reference has a live loan"
+        );
+        return Ok(Place {
+            ty: pointee.ty(),
+            mutable,
+            volatile,
+            root: loan
+                .map(|loan| loan.root.clone())
+                .unwrap_or((self.scopes.len(), format!("@{}", expression.span.start))),
+            fields: loan.map(|loan| loan.fields.clone()).unwrap_or_default(),
+            via: id,
+        });
     }
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
@@ -1035,23 +1116,7 @@ impl FunctionChecker<'_> {
                 then_value,
                 else_value,
             } => {
-                let condition_loans = self.loans.len();
-                let condition_type = self.expression(condition)?;
-                self.scalar_condition(condition_type, condition.span)?;
-                self.loans.truncate(condition_loans);
-                let before = self.scopes.clone();
-                let loan_count = self.loans.len();
-                let then_type = self.expression(then_value)?;
-                let then_scopes = self.scopes.clone();
-                let then_loans = self.loans.split_off(loan_count);
-                self.scopes = before;
-                let else_type = self.expression(else_value)?;
-                self.scopes = merge(&then_scopes, &self.scopes);
-                self.loans.extend(then_loans);
-                let ty = self.conditional_type(then_value, then_type, else_value, else_type)?;
-                self.convert(then_value, then_type, ty)?;
-                self.convert(else_value, else_type, ty)?;
-                return Ok(ty);
+                return self.conditional(condition, then_value, else_value, None);
             }
             ExpressionKind::Storage { pointer, value } => {
                 self.require_unsafe(expression.span, "initializing or destroying raw storage")?;
@@ -1154,6 +1219,17 @@ impl FunctionChecker<'_> {
                 }
                 if matches!(ty, Type::Pointer(_)) {
                     self.require_unsafe(expression.span, "raw pointer casts")?;
+                    if let ExpressionKind::Unary {
+                        operator: UnaryOperator::Address,
+                        operand: place,
+                    } = &operand.kind
+                        && !self.function_address(place)
+                    {
+                        let actual = self.raw_address(operand, place)?;
+                        self.expression_types.insert(operand.span, actual);
+                        self.conversions.insert(operand.span, *ty);
+                        return Ok(*ty);
+                    }
                     let actual = self.expression(operand)?;
                     if !matches!(actual, Type::Pointer(_) | Type::Borrow { .. })
                         && !matches!(actual, Type::Integer(kind) if kind.bits() as u32 == usize::BITS)
@@ -1273,7 +1349,7 @@ impl FunctionChecker<'_> {
                         arguments: arguments.clone(),
                     },
                 };
-                let ty = self.expression(&call)?;
+                let ty = self.reference_expression(&call)?;
                 self.method_calls.insert(expression.span, call);
                 return Ok(ty);
             }
@@ -1287,7 +1363,7 @@ impl FunctionChecker<'_> {
                 let Type::Struct(id) = ty else {
                     return Err(Diagnostic::new(
                         receiver.span,
-                        "a method receiver must be a struct value; use '->' through a struct borrow",
+                        "a method receiver must be a struct value or reference; use '->' through a raw pointer",
                     ));
                 };
                 if self.types.structs[id]
@@ -1311,7 +1387,7 @@ impl FunctionChecker<'_> {
                                 arguments: arguments.clone(),
                             },
                         };
-                        let result = self.expression(&call)?;
+                        let result = self.reference_expression(&call)?;
                         self.method_calls.insert(expression.span, call);
                         return Ok(result);
                     }
@@ -1360,7 +1436,7 @@ impl FunctionChecker<'_> {
                         arguments: lowered_arguments,
                     },
                 };
-                let result = self.expression(&call)?;
+                let result = self.reference_expression(&call)?;
                 self.method_calls.insert(expression.span, call);
                 return Ok(result);
             }
@@ -1421,16 +1497,15 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 match variable.ty {
-                    Type::Borrow { mutable, .. } => {
+                    Type::Borrow { .. } => {
                         let place = self.place(expression)?;
-                        let id = self.borrow(
-                            place.root,
-                            place.fields,
-                            mutable,
+                        self.access(
+                            &place.root,
+                            &place.fields,
+                            false,
                             place.via,
                             expression.span,
                         )?;
-                        self.references.insert(expression.span, id);
                     }
                     _ => self.access(&self.root(name), &[], false, None, expression.span)?,
                 }
@@ -1461,8 +1536,8 @@ impl FunctionChecker<'_> {
                         },
                     };
                     let variable = self.lookup(name, expression.span)?;
-                    if self.types.callback(variable.ty).is_some() {
-                        let result = self.expression(&call)?;
+                    if self.types.callback(variable.ty.referent()).is_some() {
+                        let result = self.reference_expression(&call)?;
                         self.method_calls.insert(expression.span, call);
                         return Ok(result);
                     }
@@ -1578,7 +1653,19 @@ impl FunctionChecker<'_> {
 
                 if name == "print" {
                     let previous_loans = self.loans.len();
-                    let actual = self.expression(&arguments[0])?;
+                    let borrowed_text =
+                        self.probe_receiver_type(&arguments[0])
+                            .ok()
+                            .is_some_and(|ty| {
+                                ty.is_borrow() && self.types.byte_array_length(ty).is_some()
+                            });
+                    let actual = if borrowed_text {
+                        // Preserve bounded, volatile reads instead of copying
+                        // the entire array before printing it.
+                        self.reference_expression(&arguments[0])?
+                    } else {
+                        self.expression(&arguments[0])?
+                    };
                     if self.types.byte_array_length(actual).is_none() {
                         self.integer(actual, arguments[0].span)?;
                     }
@@ -1657,50 +1744,12 @@ impl FunctionChecker<'_> {
                         self.record_function_symbol(name, *name_span);
                         return self.function_reference(name, expression.span);
                     }
-                    self.require_unsafe(expression.span, "creating a raw pointer")?;
                     let place = self.checked_place(operand)?;
-                    if place.ty.is_borrow() {
-                        return Err(Diagnostic::new(
-                            operand.span,
-                            "raw pointers cannot point to borrow bindings",
-                        ));
-                    }
-                    self.access(
-                        &place.root,
-                        &place.fields,
-                        false,
-                        place.via,
-                        expression.span,
-                    )?;
-                    return Ok(self.types.qualified_pointer_to(
-                        place.ty,
-                        place.mutable,
-                        place.volatile,
-                    ));
+                    let mutable = place.mutable;
+                    return self.borrow_place(expression, operand.span, place, mutable);
                 }
                 if let UnaryOperator::Borrow { mutable } = operator {
-                    let place = self.checked_place(operand)?;
-                    if *mutable && !place.mutable {
-                        return Err(Diagnostic::new(
-                            operand.span,
-                            "cannot create a mutable borrow through a shared borrow",
-                        ));
-                    }
-                    let ty = place.ty.borrowed_qualified(*mutable, place.volatile).ok_or_else(|| {
-                        Diagnostic::new(
-                            operand.span,
-                            "borrows of borrows are not supported; reborrow the pointee instead",
-                        )
-                    })?;
-                    let id = self.borrow(
-                        place.root,
-                        place.fields,
-                        *mutable,
-                        place.via,
-                        expression.span,
-                    )?;
-                    self.references.insert(expression.span, id);
-                    return Ok(ty);
+                    return self.borrow_address(expression, operand, *mutable);
                 }
                 if *operator == UnaryOperator::Dereference {
                     let place = self.checked_place(expression)?;
@@ -1730,7 +1779,7 @@ impl FunctionChecker<'_> {
                     if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
                             expression.span,
-                            "a borrowed owner cannot be copied or moved out; read it through another dereference",
+                            "a borrowed owner cannot be copied or moved out",
                         ));
                     }
                     return Ok(place.ty);
@@ -1893,6 +1942,44 @@ impl FunctionChecker<'_> {
     }
 
     fn require_type(&mut self, expression: &Expression, expected: Type) -> Result<(), Diagnostic> {
+        if matches!(expected, Type::Pointer(_))
+            && let ExpressionKind::Conditional {
+                condition,
+                then_value,
+                else_value,
+            } = &expression.kind
+        {
+            self.conditional(condition, then_value, else_value, Some(expected))?;
+            self.expression_types.insert(expression.span, expected);
+            return Ok(());
+        }
+        if let ExpressionKind::Unary {
+            operator: UnaryOperator::Address,
+            operand,
+        } = &expression.kind
+        {
+            if matches!(expected, Type::Pointer(_)) && !self.function_address(operand) {
+                let actual = self.raw_address(expression, operand)?;
+                self.expression_types.insert(expression.span, actual);
+                return self.convert(expression, actual, expected);
+            }
+            if let Type::Borrow { mutable, .. } = expected {
+                let actual = self.borrow_address(expression, operand, mutable)?;
+                self.expression_types.insert(expression.span, actual);
+                return self.convert(expression, actual, expected);
+            }
+        }
+        if let Type::Borrow { mutable, .. } = expected {
+            if let ExpressionKind::Variable { name, .. } = &expression.kind
+                && self.lookup(name, expression.span)?.ty.is_borrow()
+            {
+                let actual = self.borrow_address(expression, expression, mutable)?;
+                self.expression_types.insert(expression.span, actual);
+                return self.convert(expression, actual, expected);
+            }
+            let actual = self.reference_expression(expression)?;
+            return self.convert(expression, actual, expected);
+        }
         if let ExpressionKind::StringLiteral { bytes, .. } = &expression.kind
             && let Type::Array(_) = expected
         {
@@ -1947,6 +2034,118 @@ impl FunctionChecker<'_> {
             self.expression(expression)?
         };
         return self.convert(expression, actual, expected);
+    }
+
+    fn function_address(&self, operand: &Expression) -> bool {
+        return match &operand.kind {
+            ExpressionKind::StaticReference { .. } => true,
+            ExpressionKind::Variable { name, .. } => {
+                !self
+                    .scopes
+                    .iter()
+                    .rev()
+                    .any(|scope| scope.contains_key(name))
+                    && self.signatures.contains_key(name)
+            }
+            _ => false,
+        };
+    }
+
+    fn raw_address(
+        &mut self,
+        expression: &Expression,
+        operand: &Expression,
+    ) -> Result<Type, Diagnostic> {
+        let place = self.checked_place(operand)?;
+        self.access(
+            &place.root,
+            &place.fields,
+            false,
+            place.via,
+            expression.span,
+        )?;
+        return Ok(self
+            .types
+            .qualified_pointer_to(place.ty, place.mutable, place.volatile));
+    }
+
+    fn borrow_address(
+        &mut self,
+        expression: &Expression,
+        operand: &Expression,
+        mutable: bool,
+    ) -> Result<Type, Diagnostic> {
+        let place = self.checked_place(operand)?;
+        return self.borrow_place(expression, operand.span, place, mutable);
+    }
+
+    fn borrow_place(
+        &mut self,
+        expression: &Expression,
+        operand_span: Span,
+        place: Place,
+        mutable: bool,
+    ) -> Result<Type, Diagnostic> {
+        if mutable && !place.mutable {
+            return Err(Diagnostic::new(
+                operand_span,
+                "cannot create a mutable borrow through a shared borrow",
+            ));
+        }
+        let ty = place
+            .ty
+            .borrowed_qualified(mutable, place.volatile)
+            .ok_or_else(|| Diagnostic::new(operand_span, "invalid borrow type"))?;
+        let id = self.borrow(
+            place.root,
+            place.fields,
+            mutable,
+            place.via,
+            expression.span,
+        )?;
+        self.references.insert(expression.span, id);
+        return Ok(ty);
+    }
+
+    fn conditional(
+        &mut self,
+        condition: &Expression,
+        then_value: &Expression,
+        else_value: &Expression,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        let condition_loans = self.loans.len();
+        let condition_type = self.expression(condition)?;
+        self.scalar_condition(condition_type, condition.span)?;
+        self.loans.truncate(condition_loans);
+        let before = self.scopes.clone();
+        let loan_count = self.loans.len();
+        let then_type = self.conditional_branch(then_value, expected)?;
+        let then_scopes = self.scopes.clone();
+        let then_loans = self.loans.split_off(loan_count);
+        self.scopes = before;
+        let else_type = self.conditional_branch(else_value, expected)?;
+        self.scopes = merge(&then_scopes, &self.scopes);
+        self.loans.extend(then_loans);
+        if let Some(ty) = expected {
+            return Ok(ty);
+        }
+        let ty = self.conditional_type(then_value, then_type, else_value, else_type)?;
+        self.convert(then_value, then_type, ty)?;
+        self.convert(else_value, else_type, ty)?;
+        return Ok(ty);
+    }
+
+    fn conditional_branch(
+        &mut self,
+        expression: &Expression,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        if let Some(ty) = expected {
+            self.require_type(expression, ty)?;
+            return Ok(ty);
+        }
+        return self.expression(expression);
     }
 
     fn conditional_type(
@@ -2054,7 +2253,18 @@ impl FunctionChecker<'_> {
 
     fn variadic_arguments(&mut self, arguments: &[Expression]) -> Result<(), Diagnostic> {
         for argument in arguments {
-            let ty = self.expression(argument)?;
+            let ty = if let ExpressionKind::Unary {
+                operator: UnaryOperator::Address,
+                operand,
+            } = &argument.kind
+                && !self.function_address(operand)
+            {
+                let ty = self.raw_address(argument, operand)?;
+                self.expression_types.insert(argument.span, ty);
+                ty
+            } else {
+                self.expression(argument)?
+            };
             if ty.is_borrow()
                 || self.types.owns(ty)
                 || !self.types.is_sized(ty)
@@ -2093,6 +2303,33 @@ impl FunctionChecker<'_> {
         expected: Type,
     ) -> Result<(), Diagnostic> {
         if actual == expected {
+            return Ok(());
+        }
+        if let (
+            Type::Borrow {
+                pointee: source,
+                mutable: source_mutable,
+                volatile: source_volatile,
+            },
+            Type::Borrow {
+                pointee: target,
+                mutable: target_mutable,
+                volatile: target_volatile,
+            },
+        ) = (actual, expected)
+            && source == target
+            && (source_mutable || !target_mutable)
+            && source_volatile == target_volatile
+        {
+            if !self.unevaluated {
+                let id = self.references[&expression.span];
+                self.loans
+                    .iter_mut()
+                    .find(|loan| loan.id == id)
+                    .expect("reference has a live loan")
+                    .mutable = target_mutable;
+            }
+            self.conversions.insert(expression.span, expected);
             return Ok(());
         }
         if let Type::Pointer(target) = expected {
@@ -2189,7 +2426,7 @@ impl FunctionChecker<'_> {
     // Resolve the receiver's type without evaluating it. In particular, probing
     // move(value).method() must not move value before checking the actual call.
     fn receiver_type(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
-        let ty = self.probe_receiver_type(expression)?;
+        let ty = self.probe_receiver_type(expression)?.referent();
         self.receiver_types.insert(expression.span, ty);
         return Ok(ty);
     }
@@ -2339,7 +2576,6 @@ impl FunctionChecker<'_> {
             } => {
                 return match self.receiver_type(operand)? {
                     Type::BoxInt => Ok(Type::Integer(IntType::I32)),
-                    Type::Borrow { pointee, .. } => Ok(pointee.ty()),
                     Type::Pointer(id) => Ok(self.types.pointers[id].pointee),
                     _ => Err(Diagnostic::new(
                         expression.span,
@@ -2426,7 +2662,10 @@ impl FunctionChecker<'_> {
         return match &expression.kind {
             ExpressionKind::Variable { name, .. } => {
                 let variable = self.available(name, expression.span)?;
-                Ok(variable.mutable && !variable.ty.is_borrow())
+                Ok(match variable.ty {
+                    Type::Borrow { mutable, .. } => mutable,
+                    _ => variable.mutable,
+                })
             }
             ExpressionKind::Field { base, .. } => self.probe_mutability(base),
             ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
@@ -2451,7 +2690,11 @@ impl FunctionChecker<'_> {
     fn probe_volatile(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
         return match &expression.kind {
             ExpressionKind::Variable { name, .. } => {
-                Ok(self.available(name, expression.span)?.volatile)
+                let variable = self.available(name, expression.span)?;
+                Ok(match variable.ty {
+                    Type::Borrow { volatile, .. } => volatile,
+                    _ => variable.volatile,
+                })
             }
             ExpressionKind::Field { base, .. } => self.probe_volatile(base),
             ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
@@ -2581,6 +2824,11 @@ impl FunctionChecker<'_> {
                 return Err(error);
             }
         };
+        let place = if place.ty.is_borrow() {
+            self.reference_place(expression, place.ty)?
+        } else {
+            place
+        };
         self.receiver_types.insert(expression.span, place.ty);
         self.place_volatile.insert(expression.span, place.volatile);
         return Ok(place);
@@ -2588,11 +2836,23 @@ impl FunctionChecker<'_> {
 
     fn check_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
         match &expression.kind {
+            ExpressionKind::Call { .. }
+            | ExpressionKind::MethodCall { .. }
+            | ExpressionKind::StaticCall { .. } => {
+                let place = self.temporary_place(expression)?;
+                if self.expression_types[&expression.span].is_borrow() {
+                    return Ok(place);
+                }
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "a temporary value is not an assignable place",
+                ));
+            }
             ExpressionKind::Index { base, index } => {
                 let place = if base.is_place() {
                     self.checked_place(base)?
                 } else {
-                    self.temporary_pointer_place(base)?
+                    self.temporary_place(base)?
                 };
                 let element = match place.ty {
                     Type::Array(id) => self.types.arrays[id].element,
@@ -2675,15 +2935,10 @@ impl FunctionChecker<'_> {
                 let place = if operand.is_place() {
                     self.checked_place(operand)?
                 } else {
-                    self.temporary_pointer_place(operand)?
+                    self.temporary_place(operand)?
                 };
                 let (ty, mutable, volatile) = match place.ty {
                     Type::BoxInt => (Type::Integer(IntType::I32), place.mutable, false),
-                    Type::Borrow {
-                        pointee,
-                        mutable,
-                        volatile,
-                    } => (pointee.ty(), mutable, volatile),
                     Type::Pointer(id) => {
                         self.require_unsafe(expression.span, "dereferencing a raw pointer")?;
                         let pointer = self.types.pointers[id];
@@ -2698,7 +2953,7 @@ impl FunctionChecker<'_> {
                     _ => {
                         return Err(Diagnostic::new(
                             expression.span,
-                            "dereference needs a BoxInt or a borrow",
+                            "dereference requires a raw pointer or a heap owner",
                         ));
                     }
                 };
@@ -2718,37 +2973,24 @@ impl FunctionChecker<'_> {
         }
     }
 
-    fn temporary_pointer_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
-        let ty = self.expression(expression)?;
+    fn temporary_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
+        let ty = self.reference_expression(expression)?;
         if !ty.is_borrow() && !matches!(ty, Type::Pointer(_)) {
             return Err(Diagnostic::new(
                 expression.span,
                 "dereference of a temporary requires a returned borrow or raw pointer",
             ));
         }
-        if self.unevaluated || matches!(ty, Type::Pointer(_)) {
-            return Ok(Place {
-                volatile: false,
-                ty,
-                mutable: false,
-                root: (self.scopes.len(), format!("@{}", expression.span.start)),
-                fields: Vec::new(),
-                via: None,
-            });
+        if ty.is_borrow() {
+            return self.reference_place(expression, ty);
         }
-        let id = self.references[&expression.span];
-        let loan = self
-            .loans
-            .iter()
-            .find(|loan| loan.id == id)
-            .expect("returned reference has a loan");
         return Ok(Place {
             ty,
             mutable: false,
             volatile: false,
-            root: loan.root.clone(),
-            fields: loan.fields.clone(),
-            via: Some(id),
+            root: (self.scopes.len(), format!("@{}", expression.span.start)),
+            fields: Vec::new(),
+            via: None,
         });
     }
 
@@ -2794,9 +3036,16 @@ impl FunctionChecker<'_> {
             (self.root(name), Vec::new())
         };
         return Ok(Place {
-            ty: variable.ty,
-            volatile: variable.volatile,
-            mutable: variable.mutable && !variable.ty.is_borrow(),
+            ty: variable.ty.referent(),
+            volatile: match variable.ty {
+                Type::Borrow { volatile, .. } => volatile,
+                _ => variable.volatile,
+            },
+            mutable: variable.mutable
+                && match variable.ty {
+                    Type::Borrow { mutable, .. } => mutable,
+                    _ => true,
+                },
             root,
             fields,
             via: variable.reference,

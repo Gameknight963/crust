@@ -8,19 +8,19 @@ struct Counter {
     }
 
     int value() const {
-        unsafe { return native_value(this->handle); }
+        unsafe { return native_value(this.handle); }
     }
 
     NativeStatus status() const {
-        unsafe { return native_status(this->handle); }
+        unsafe { return native_status(this.handle); }
     }
 
     void add(int amount) {
-        unsafe { native_add(this->handle, amount); }
+        unsafe { native_add(this.handle, amount); }
     }
 
     ~Counter() {
-        unsafe { native_destroy(this->handle); }
+        unsafe { native_destroy(this.handle); }
     }
 };
 

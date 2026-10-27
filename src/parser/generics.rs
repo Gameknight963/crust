@@ -798,7 +798,7 @@ impl Parser {
                 mutable,
                 volatile,
             } => format!(
-                "{}^",
+                "{}&",
                 Qualifiers {
                     readonly: !mutable,
                     volatile

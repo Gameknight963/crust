@@ -8,11 +8,11 @@ struct Counter {
     }
 
     Count get() const {
-        return this->value;
+        return this.value;
     }
 
     void increment() {
-        this->value = this->value + 1;
+        this.value = this.value + 1;
     }
 };
 

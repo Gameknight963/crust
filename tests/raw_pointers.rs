@@ -58,17 +58,17 @@ fn named_struct_and_typedef_pointer_slots_support_mutable_and_shared_borrows() {
         r#"
         struct Item { int value; };
         typedef Item Named;
-        void set_pointer<T>(T*^ target, T* next) {
-            T*^ slot = ^*target;
-            *slot = next;
+        void set_pointer<T>(T*& target, T* next) {
+            T*& slot = &target;
+            slot = next;
         }
         int main() {
             Item first = { .value = 7 };
             Item second = { .value = 42 };
             unsafe {
                 Item* pointer = &first;
-                { Item*^ slot = ^pointer; set_pointer<Item>(^*slot, &second); print((*slot)->value); }
-                { Named* const^ slot = ^const pointer; print((*slot)->value); }
+                { Item*& slot = &pointer; set_pointer<Item>(&slot, &second); print((slot)->value); }
+                { Named* const& slot = &const pointer; print((slot)->value); }
                 pointer = &first; print(pointer->value);
             }
             return 0;
@@ -82,8 +82,8 @@ fn named_struct_and_typedef_pointer_slots_support_mutable_and_shared_borrows() {
 #[test]
 fn pointer_slot_borrows_preserve_shared_permissions_and_exclusive_root_loans() {
     for (declaration, action) in [
-        ("Handle* const^ slot = ^const pointer;", "*slot = 0;"),
-        ("Handle*^ slot = ^pointer;", "pointer = 0;"),
+        ("Handle* const& slot = &const pointer;", "slot = 0;"),
+        ("Handle*& slot = &pointer;", "pointer = 0;"),
     ] {
         let source = format!(
             "struct Handle; int main() {{ Handle* pointer = 0; {declaration} {action} return 0; }}"
@@ -105,8 +105,8 @@ fn raw_pointers_support_nested_indirection_and_safe_borrow_bindings() {
                 int** pp = &p;
                 **pp = 2;
                 {
-                    Pointer^ slot = ^p;
-                    **slot += 1;
+                    Pointer& slot = &p;
+                    *slot += 1;
                 }
                 const int* view = p;
                 print(*view); print(*p);
@@ -179,10 +179,9 @@ fn unsafe_blocks_scope_owners_and_preserve_cleanup_on_return_and_loop_control() 
 #[test]
 fn raw_pointer_operations_and_c_calls_require_explicit_unsafe_contexts() {
     for source in [
-        "int main() { int n = 1; int* p = &n; return 0; }",
         "int read(int* p) { return *p; } int main() { return 0; }",
         "int main() { int* p = 0; *p = 1; return 0; }",
-        "int main() { int* p = 0; int^ r = ^*p; return 0; }",
+        "int main() { int* p = 0; int& r = &*p; return 0; }",
         "int main() { int* p = (int*)0; return 0; }",
         "int main() { int* p = 0; uintptr_t bits = (uintptr_t)p; return 0; }",
         "extern void abort(); int main() { abort(); return 0; }",
@@ -203,7 +202,7 @@ fn pointer_type_checks_reject_invalid_casts_mutability_and_c_signatures() {
         "int main() { unsafe { const int* p = 0; int* q = p; } return 0; }",
         "int main() { unsafe { const int* p = 0; void* q = p; } return 0; }",
         "extern BoxInt make(); int main() { return 0; }",
-        "extern void take(int^); int main() { return 0; }",
+        "extern void take(int&); int main() { return 0; }",
         "extern void take(int values[2]); int main() { return 0; }",
         "extern int main();",
     ] {
@@ -244,7 +243,7 @@ fn pointer_arithmetic_indexing_and_compound_steps_follow_c_element_sizes() {
                 middle -= 1; print(*middle);
                 middle += 2; print(*middle);
                 *(middle - 1) = 99;
-                (&values[0])[0] = 5;
+                ((int*)&values[0])[0] = 5;
                 print(start[0]); print(start[2]);
                 const int* view = start;
                 print(view[3]); print(middle - view);
@@ -326,21 +325,21 @@ fn c_backed_buffer_has_checked_access_and_automatic_cleanup() {
         .unwrap();
     run(
         &format!(
-            "{definitions} int main() {{ IntBuffer empty = IntBuffer::create(0); print(empty.count()); IntBuffer values = IntBuffer::create(2); {{ int^ first = values.at_mut(0); *first = 7; }} IntBuffer moved = move(values); print(*moved.at(1)); return 0; }}"
+            "{definitions} int main() {{ IntBuffer empty = IntBuffer::create(0); print(empty.count()); IntBuffer values = IntBuffer::create(2); {{ int& first = values.at_mut(0); first = 7; }} IntBuffer moved = move(values); print(moved.at(1)); return 0; }}"
         ),
         "0\n0\n",
         "drop:7\n",
     );
     let output = common::tracked_run(&format!(
-        "{definitions} int main() {{ IntBuffer values = IntBuffer::create(2); print(*values.at(2)); return 0; }}"
+        "{definitions} int main() {{ IntBuffer values = IntBuffer::create(2); print(values.at(2)); return 0; }}"
     ));
     assert!(
         !output.status.success(),
         "out-of-bounds access must terminate before reading memory"
     );
     for body in [
-        "IntBuffer values = IntBuffer::create(2); int^ view = values.at_mut(0); IntBuffer next = move(values);",
-        "IntBuffer values = IntBuffer::create(2); const int^ view = values.at(0); values = IntBuffer::create(3);",
+        "IntBuffer values = IntBuffer::create(2); int& view = values.at_mut(0); IntBuffer next = move(values);",
+        "IntBuffer values = IntBuffer::create(2); const int& view = values.at(0); values = IntBuffer::create(3);",
         "IntBuffer values = { .data = 0, .length = 3 };",
     ] {
         assert!(crust::check(&format!("{definitions} int main() {{ {body} return 0; }}")).is_err());

@@ -23,12 +23,12 @@ fn bare_struct_names_work_before_definitions_in_fields_functions_and_borrows() {
         r#"
         Item make(int n) { return (Item){ .value = n }; }
         struct Parent { Item item; };
-        int read(const Item^ item) { return item->value; }
+        int read(const Item& item) { return item.value; }
         struct Item { int value; };
         int main() {
             Parent p = { .item = { .value = 41 } };
             struct Item other = make(42);
-            print(read(^const p.item));
+            print(read(&const p.item));
             print(other.value);
             return 0;
         }
@@ -47,15 +47,15 @@ fn forward_and_transitive_typedefs_resolve_to_the_underlying_types() {
         typedef Count Number;
         typedef struct Item Item;
         typedef Item Alias;
-        typedef const Number^ ReadRef;
+        typedef const Number& ReadRef;
         typedef void Nothing;
         struct Item { Count value; };
-        Number read(ReadRef value) { return *value; }
+        Number read(ReadRef value) { return value; }
         Nothing show(Alias item) { print(item.value); }
         int main() {
             Alias a = (Alias){ .value = 42 };
             show(a);
-            print(read(^const a.value));
+            print(read(&const a.value));
             return 0;
         }
     "#,
@@ -70,7 +70,7 @@ fn aliases_preserve_ownership_destructors_and_whole_value_moves() {
         r#"
         typedef BoxInt Owned;
         typedef Resource Handle;
-        struct Resource { Owned value; ~Resource() { print(*this->value); } };
+        struct Resource { Owned value; ~Resource() { print(*this.value); } };
         Handle relay(Handle h) { return move(h); }
         int main() {
             Handle first = { .value = box_int(7) };
@@ -103,12 +103,13 @@ fn type_and_value_names_coexist_and_explicit_struct_tags_disambiguate() {
             print((Item));
             print(Item ^ 1);
             print(Item ^ other);
+            print(Item & other);
             struct Item object = { .value = 42 };
             print(object.value);
             return 0;
         }
     "#,
-        "3\n2\n2\n42\n",
+        "3\n2\n2\n1\n42\n",
         "",
     );
 }
@@ -122,7 +123,7 @@ fn static_factories_calls_through_aliases_and_self_and_recursion_work() {
             BoxInt value;
             static Self create(int n) { return (Self){ .value = box_int(Self::count(n)) }; }
             static int count(int n) { if (n == 0) { return 0; } return 1 + Self::count(n - 1); }
-            int get() const { return *this->value; }
+            int get() const { return *this.value; }
             int finish(Self this) { return *this.value; }
             ~Resource() { print(100); }
         };
@@ -144,13 +145,13 @@ fn static_methods_keep_argument_order_and_borrow_rules() {
         r#"
         struct A {
             int unused;
-            static int sum(const int^ a, const int^ b) { return *a + *b; }
+            static int sum(const int& a, const int& b) { return a + b; }
             static int value(int a, int b) { return a + b; }
         };
         int mark(int n) { print(n); return n; }
         int main() {
             int n = 21;
-            print(A::sum(^const n, ^const n));
+            print(A::sum(&const n, &const n));
             print(A::value(mark(1), mark(2)));
             return 0;
         }
@@ -158,7 +159,7 @@ fn static_methods_keep_argument_order_and_borrow_rules() {
         "42\n1\n2\n3\n",
         "",
     );
-    let source = "struct A { int n; static void f(int^ a, const int^ b) {} }; int main() { int n = 1; A::f(^n, ^const n); return 0; }";
+    let source = "struct A { int n; static void f(int& a, const int& b) {} }; int main() { int n = 1; A::f(&n, &const n); return 0; }";
     assert!(
         crust::check(source)
             .unwrap_err()
@@ -189,7 +190,7 @@ fn rejects_invalid_aliases_and_unknown_types() {
 #[test]
 fn rejects_invalid_static_members_receivers_and_lookup() {
     for source in [
-        "struct A { int n; static int f() { return this->n; } }; int main() { return 0; }",
+        "struct A { int n; static int f() { return this.n; } }; int main() { return 0; }",
         "struct A { int n; static int f(Self this) { return 0; } }; int main() { return 0; }",
         "struct A { int n; static int f() const { return 0; } }; int main() { return 0; }",
         "struct A { static int n; }; int main() { return 0; }",

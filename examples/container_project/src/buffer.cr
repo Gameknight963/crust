@@ -19,20 +19,20 @@ struct Buffer<T> {
         }
     }
 
-    size_t count() const { return this->length; }
+    size_t count() const { return this.length; }
 
-    const T^ at(size_t index) const {
-        if (index >= this->length) { unsafe { abort(); } }
-        unsafe { return ^const this->data[index]; }
+    const T& at(size_t index) const {
+        if (index >= this.length) { unsafe { abort(); } }
+        unsafe { return &this.data[index]; }
     }
 
-    T^ at_mut(size_t index) {
-        if (index >= this->length) { unsafe { abort(); } }
-        unsafe { return ^this->data[index]; }
+    T& at_mut(size_t index) {
+        if (index >= this.length) { unsafe { abort(); } }
+        unsafe { return &this.data[index]; }
     }
 
     ~Buffer() {
-        unsafe { free(this->data); }
+        unsafe { free(this.data); }
     }
 };
 

@@ -33,15 +33,15 @@ fn destructor_runs_before_fields_and_nested_fields_drop_in_reverse_order() {
         struct Child {
             int id;
             BoxInt value;
-            ~Child() { print(this->id); print(*this->value); }
+            ~Child() { print(this.id); print(*this.value); }
         };
         struct Parent {
             struct Child first;
             struct Child second;
             ~Parent() {
                 print(100);
-                this->first.id = 11;
-                print(*this->second.value);
+                this.first.id = 11;
+                print(*this.second.value);
             }
         };
         int main() {
@@ -65,7 +65,7 @@ fn return_from_destructor_still_cleans_fields_and_destructor_locals() {
             BoxInt value;
             ~A() {
                 BoxInt temporary = box_int(9);
-                print(*this->value);
+                print(*this.value);
                 return;
             }
         };
@@ -85,7 +85,7 @@ fn whole_moves_returns_consuming_methods_and_discards_destroy_exactly_once() {
         r#"
         struct A {
             int id;
-            ~A() { print(this->id); }
+            ~A() { print(this.id); }
             Self forward(Self this) { return move(this); }
         };
         struct A make(int n) { return (struct A){ .id = n }; }
@@ -110,7 +110,7 @@ fn whole_moves_returns_consuming_methods_and_discards_destroy_exactly_once() {
 fn moves_of_parents_without_custom_destructors_skip_their_child_destructors() {
     run(
         r#"
-        struct Child { int id; ~Child() { print(this->id); } };
+        struct Child { int id; ~Child() { print(this.id); } };
         struct Parent { struct Child child; };
         struct Parent relay(struct Parent p) { return move(p); }
         int main() {
@@ -128,16 +128,16 @@ fn moves_of_parents_without_custom_destructors_skip_their_child_destructors() {
 fn replacement_through_fields_borrows_and_methods_drops_old_values() {
     run(
         r#"
-        struct Child { int id; ~Child() { print(this->id); } };
+        struct Child { int id; ~Child() { print(this.id); } };
         struct Parent {
             struct Child child;
-            void replace(int id) { this->child = (struct Child){ .id = id }; }
+            void replace(int id) { this.child = (struct Child){ .id = id }; }
         };
-        void replace(struct Child^ slot, int n) { *slot = (struct Child){ .id = n }; }
+        void replace(struct Child& slot, int n) { slot = (struct Child){ .id = n }; }
         int main() {
             struct Parent parent = { .child = { .id = 1 } };
             parent.replace(2);
-            replace(^parent.child, 3);
+            replace(&parent.child, 3);
             parent.child = (struct Child){ .id = 4 };
             return 0;
         }
@@ -151,7 +151,7 @@ fn replacement_through_fields_borrows_and_methods_drops_old_values() {
 fn branches_loops_and_early_returns_drop_only_live_instances_in_reverse_order() {
     run(
         r#"
-        struct A { int id; ~A() { print(this->id); } };
+        struct A { int id; ~A() { print(this.id); } };
         void consume(struct A a) { return; }
         void branch(int take) {
             struct A a = { .id = 10 + take };
@@ -181,9 +181,9 @@ fn destructor_has_exclusive_this_and_can_call_methods_and_replace_owning_fields(
         r#"
         struct A {
             BoxInt value;
-            ~A() { this->replace(8); print(this->get()); }
-            int get() const { return *this->value; }
-            void replace(int n) { this->value = box_int(n); }
+            ~A() { this.replace(8); print(this.get()); }
+            int get() const { return *this.value; }
+            void replace(int n) { this.value = box_int(n); }
         };
         int main() {
             struct A a = { .value = box_int(7) };
@@ -199,7 +199,7 @@ fn destructor_has_exclusive_this_and_can_call_methods_and_replace_owning_fields(
 fn drop_is_an_ordinary_method_name_and_does_not_define_a_destructor() {
     run(
         r#"
-        struct A { int id; void drop() { print(this->id); } };
+        struct A { int id; void drop() { print(this.id); } };
         int main() {
             struct A a = { .id = 7 };
             struct A b = a;
@@ -242,7 +242,7 @@ fn rejects_invalid_destructors_and_explicit_calls() {
         "struct A { int id; ~A() { return 1; } }; int main() { return 0; }",
         "struct A { int id; ~A() { move(this); } }; int main() { return 0; }",
         "struct A { int id; ~A() {} }; int main() { struct A a = { .id = 1 }; a.~A(); return 0; }",
-        "struct A { int id; ~A() {} }; void bad(struct A^ a) { a->~A(); } int main() { return 0; }",
+        "struct A { int id; ~A() {} }; void bad(struct A& a) { a.~A(); } int main() { return 0; }",
         "struct A { int id; ~A() {} }; int main() { ~A(); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

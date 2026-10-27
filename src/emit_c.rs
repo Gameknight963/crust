@@ -66,6 +66,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
             .collect(),
         types: &checked.types,
         expression_types: &empty_analysis.expression_types,
+        reference_reads: &empty_analysis.reference_reads,
         place_volatile: &empty_analysis.place_volatile,
         method_calls: &empty_analysis.method_calls,
         conversions: &empty_analysis.conversions,
@@ -196,6 +197,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         }
         let analysis = &checked.analyses[&function.name];
         emitter.expression_types = &analysis.expression_types;
+        emitter.reference_reads = &analysis.reference_reads;
         emitter.place_volatile = &analysis.place_volatile;
         emitter.method_calls = &analysis.method_calls;
         emitter.conversions = &analysis.conversions;
@@ -361,6 +363,7 @@ struct Emitter<'checked> {
     return_types: HashMap<String, Type>,
     types: &'checked Types,
     expression_types: &'checked HashMap<Span, Type>,
+    reference_reads: &'checked HashMap<Span, Type>,
     place_volatile: &'checked HashMap<Span, bool>,
     method_calls: &'checked HashMap<Span, Expression>,
     conversions: &'checked HashMap<Span, Type>,
@@ -635,6 +638,12 @@ impl Emitter<'_> {
                 // old value, before dropping the destination's previous owner.
                 let value = self.value_expression(value);
                 let local = self.local(name);
+                if let Type::Borrow { pointee, .. } = local.ty {
+                    let place = format!("*({})", local.name);
+                    self.drop_value(pointee.ty(), &place);
+                    self.line(&format!("{place} = {value};"));
+                    return;
+                }
                 self.drop_local(&local);
                 self.line(&format!("{} = {value};", local.name));
                 if let Some(live) = local.live {
@@ -815,7 +824,9 @@ impl Emitter<'_> {
             return value;
         }
         let cast = format!("({})({value})", c_type(to));
-        if matches!(from, Type::Pointer(_)) || matches!(to, Type::Pointer(_)) {
+        if matches!(from, Type::Pointer(_) | Type::Borrow { .. })
+            || matches!(to, Type::Pointer(_) | Type::Borrow { .. })
+        {
             return self.temporary(to, &cast);
         }
         if from == Type::Bool || to == Type::Bool {
@@ -935,7 +946,10 @@ impl Emitter<'_> {
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
         let previous = self.source_offset.replace(expression.span.start);
-        let value = self.expression_inner(expression);
+        let mut value = self.expression_inner(expression);
+        if let Some(ty) = self.reference_reads.get(&expression.span) {
+            value = value.map(|value| self.temporary(ty.referent(), &format!("*({value})")));
+        }
         self.source_offset = previous;
         return value;
     }
@@ -1108,7 +1122,7 @@ impl Emitter<'_> {
             ExpressionKind::Boolean(value) => return Some(value.to_string()),
             ExpressionKind::MethodCall { .. } | ExpressionKind::StaticCall { .. } => {
                 let call = self.method_calls[&expression.span].clone();
-                return self.expression(&call);
+                return self.expression_inner(&call);
             }
             ExpressionKind::StructLiteral { fields, .. } => {
                 let ty = self.expression_type(expression);
@@ -1153,7 +1167,7 @@ impl Emitter<'_> {
                 if let Some(call) = self.method_calls.get(&expression.span)
                     && matches!(call.kind, ExpressionKind::IndirectCall { .. })
                 {
-                    return self.expression(&call.clone());
+                    return self.expression_inner(&call.clone());
                 }
                 if name == "move" {
                     let ExpressionKind::Variable { name: owner, .. } = &arguments[0].kind else {
@@ -1374,20 +1388,31 @@ impl Emitter<'_> {
                 return format!("({}).crust_field_{name}", self.place(base));
             }
             ExpressionKind::Variable { name, .. } => {
-                return self.local(name).name;
+                let local = self.local(name);
+                return if local.ty.is_borrow() {
+                    format!("*({})", local.name)
+                } else {
+                    local.name
+                };
             }
             ExpressionKind::Unary {
                 operator: UnaryOperator::Dereference,
                 operand,
             } => {
-                let pointer = if operand.is_place() {
+                let pointer = if operand.is_place() || self.expression_type(operand).is_borrow() {
                     self.place(operand)
                 } else {
                     self.value_expression(operand)
                 };
                 return format!("*({pointer})");
             }
-            _ => unreachable!("checker requires an assignable or borrowable place"),
+            _ => {
+                let value = self.value_expression(expression);
+                if self.expression_type(expression).is_borrow() {
+                    return format!("*({value})");
+                }
+                unreachable!("checker requires an assignable or borrowable place");
+            }
         }
     }
 
@@ -1407,7 +1432,7 @@ impl Emitter<'_> {
                     .expect("checked field");
             }
             ExpressionKind::Variable { name, .. } => {
-                return self.local(name).ty;
+                return self.local(name).ty.referent();
             }
             ExpressionKind::Unary {
                 operator: UnaryOperator::Dereference,
@@ -1415,18 +1440,22 @@ impl Emitter<'_> {
             } => {
                 return match self.place_type(operand) {
                     Type::BoxInt => Type::Integer(IntType::I32),
-                    Type::Borrow { pointee, .. } => pointee.ty(),
                     Type::Pointer(id) => self.types.pointers[id].pointee,
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
             }
-            _ => return self.expression_type(expression),
+            _ => return self.expression_type(expression).referent(),
         }
     }
 
     fn place_mutable(&self, expression: &Expression) -> bool {
         match &expression.kind {
-            ExpressionKind::Variable { name, .. } => return !self.local(name).ty.is_borrow(),
+            ExpressionKind::Variable { name, .. } => {
+                return match self.local(name).ty {
+                    Type::Borrow { mutable, .. } => mutable,
+                    _ => true,
+                };
+            }
             ExpressionKind::Index { base, .. }
                 if matches!(self.place_type(base), Type::Pointer(_)) =>
             {
@@ -1443,13 +1472,17 @@ impl Emitter<'_> {
                 operand,
             } => {
                 return match self.place_type(operand) {
-                    Type::Borrow { mutable, .. } => mutable,
                     Type::Pointer(id) => self.types.pointers[id].mutable,
                     Type::BoxInt => self.place_mutable(operand),
                     _ => unreachable!(),
                 };
             }
-            _ => unreachable!(),
+            _ => {
+                return matches!(
+                    self.expression_type(expression),
+                    Type::Borrow { mutable: true, .. }
+                );
+            }
         }
     }
 

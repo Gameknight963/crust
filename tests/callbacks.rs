@@ -142,7 +142,7 @@ fn rejects_incompatible_signatures_non_c_values_and_invalid_function_objects() {
         "typedef int (*Callback)(int); int f(int n) { return n; } int main() { Callback a = f; unsafe { a(); } return 0; }",
         "typedef int (*Callback)(int); int f(int n) { return n; } int main() { Callback a = f; unsafe { a(box_int(1)); } return 0; }",
         "typedef BoxInt (*Callback)(int); int main() { return 0; }",
-        "typedef int (*Callback)(const int^); int main() { return 0; }",
+        "typedef int (*Callback)(const int&); int main() { return 0; }",
         "typedef int (*Callback)(void value); int main() { return 0; }",
         "typedef int Function(int); int main() { Function value = 0; return 0; }",
         "typedef int Function(int); int main() { print(sizeof(Function)); return 0; }",

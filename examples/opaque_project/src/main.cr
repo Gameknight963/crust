@@ -18,15 +18,15 @@ struct Counter {
     }
 
     int get() const {
-        unsafe { return counter_get(this->handle); }
+        unsafe { return counter_get(this.handle); }
     }
 
     void set(int value) {
-        unsafe { counter_set(this->handle, value); }
+        unsafe { counter_set(this.handle, value); }
     }
 
     ~Counter() {
-        unsafe { counter_destroy(this->handle); }
+        unsafe { counter_destroy(this.handle); }
     }
 };
 

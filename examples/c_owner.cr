@@ -14,26 +14,26 @@ struct HeapInt {
         }
     }
 
-    const int^ value() const {
-        unsafe { return ^const *this->pointer; }
+    const int& value() const {
+        unsafe { return &*this.pointer; }
     }
 
-    int^ value_mut() {
-        unsafe { return ^*this->pointer; }
+    int& value_mut() {
+        unsafe { return &*this.pointer; }
     }
 
     ~HeapInt() {
-        unsafe { free(this->pointer); }
+        unsafe { free(this.pointer); }
     }
 };
 
 int main() {
     HeapInt first = HeapInt::create(40);
     {
-        int^ value = first.value_mut();
-        *value += 2;
+        int& value = first.value_mut();
+        value += 2;
     }
     HeapInt second = move(first);
-    print(*second.value());
+    print(second.value());
     return 0;
 }

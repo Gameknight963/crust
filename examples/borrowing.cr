@@ -1,28 +1,28 @@
-void increment(int^ value)
+void increment(int& value)
 {
-    *value = *value + 1;
+    value = value + 1;
 }
 
-int read_box(const BoxInt^ owner)
+int read_box(const BoxInt& owner)
 {
-    return **owner;
+    return *owner;
 }
 
-void replace_box(BoxInt^ owner, int value)
+void replace_box(BoxInt& owner, int value)
 {
-    *owner = box_int(value);
+    owner = box_int(value);
 }
 
 int main(void)
 {
     int number = 41;
-    increment(^number);
+    increment(&number);
     print(number);
 
     BoxInt owner = box_int(7);
-    increment(^*owner);
-    print(read_box(^const owner));
-    replace_box(^owner, 99);
+    increment(&*owner);
+    print(read_box(&owner));
+    replace_box(&owner, 99);
     print(*owner);
 
     return 0;

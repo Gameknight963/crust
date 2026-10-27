@@ -37,7 +37,7 @@ fn replacing_box_contents_destroys_the_previous_owner_and_borrows_keep_the_box_l
         .unwrap();
     run(
         &format!(
-            "{definitions} int main() {{ Box<BoxInt> value = Box<BoxInt>::create(box_int(1)); *value.get_mut() = box_int(2); print(**value.get()); Box<BoxInt> other = move(value); return 0; }}"
+            "{definitions} int main() {{ Box<BoxInt> value = Box<BoxInt>::create(box_int(1)); value.get_mut() = box_int(2); print(*value.get()); Box<BoxInt> other = move(value); return 0; }}"
         ),
         "2\n",
         &format!(
@@ -46,8 +46,8 @@ fn replacing_box_contents_destroys_the_previous_owner_and_borrows_keep_the_box_l
         ),
     );
     for body in [
-        "Box<int> value = Box<int>::create(1); const int^ view = value.get(); Box<int> other = move(value);",
-        "Box<int> value = Box<int>::create(1); const int^ view = value.get(); *value.get_mut() = 2;",
+        "Box<int> value = Box<int>::create(1); const int& view = value.get(); Box<int> other = move(value);",
+        "Box<int> value = Box<int>::create(1); const int& view = value.get(); value.get_mut() = 2;",
         "Box<int> value = { .data = 0 };",
     ] {
         assert!(crust::check(&format!("{definitions} int main() {{ {body} return 0; }}")).is_err());
@@ -61,7 +61,7 @@ fn initializing_unwritten_array_storage_skips_old_cleanup_and_destroy_reverses_e
         r#"
         extern void* malloc(size_t bytes);
         extern void free(void* pointer);
-        struct Owner { BoxInt value; ~Owner() { print(*this->value); } };
+        struct Owner { BoxInt value; ~Owner() { print(*this.value); } };
         typedef Owner Owners[2];
         int main() {
             unsafe {
@@ -104,7 +104,7 @@ fn storage_operations_require_mutable_complete_raw_pointers_and_unsafe_contexts(
         "unsafe { void* pointer = 0; init(pointer, 1); }",
         "unsafe { void* pointer = 0; destroy(pointer); }",
         "unsafe { struct Opaque* pointer = 0; destroy(pointer); }",
-        "unsafe { int value = 0; init(^value, 1); }",
+        "unsafe { int value = 0; init(&value, 1); }",
         "unsafe { int* pointer = 0; init(pointer, box_int(1)); }",
         "unsafe { int* pointer = 0; init(pointer); }",
         "unsafe { int* pointer = 0; destroy(pointer, 1); }",
@@ -175,7 +175,7 @@ fn raw_moves_reject_const_owners_incomplete_values_and_safe_partial_moves() {
         "BoxInt* pointer = 0; BoxInt value = move(*pointer);",
         "const BoxInt* pointer = 0; unsafe { BoxInt value = move(*pointer); }",
         "struct Opaque* pointer = 0; unsafe { move(*pointer); }",
-        "BoxInt owner = box_int(1); BoxInt^ view = ^owner; unsafe { BoxInt value = move(*view); }",
+        "BoxInt owner = box_int(1); BoxInt& view = &owner; unsafe { BoxInt value = move(view); }",
         "BoxInt items[1] = { box_int(1) }; unsafe { BoxInt value = move(items[0]); }",
     ] {
         assert!(
