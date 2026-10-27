@@ -35,6 +35,7 @@ pub struct Target {
 pub enum TargetKind {
     Executable,
     StaticLibrary,
+    SharedLibrary,
 }
 
 impl TargetKind {
@@ -48,14 +49,34 @@ impl TargetKind {
                 name.push(".a");
                 output.with_file_name(name)
             }
+            Self::SharedLibrary if cfg!(windows) => output.with_extension("dll"),
+            Self::SharedLibrary => {
+                let mut name = std::ffi::OsString::from("lib");
+                name.push(output.file_name().ok_or("output needs a filename")?);
+                name.push(if cfg!(target_os = "macos") {
+                    ".dylib"
+                } else {
+                    ".so"
+                });
+                output.with_file_name(name)
+            }
         });
     }
 
     pub fn program_kind(self) -> crate::ProgramKind {
         return match self {
             Self::Executable => crate::ProgramKind::Executable,
-            Self::StaticLibrary => crate::ProgramKind::Library,
+            Self::StaticLibrary | Self::SharedLibrary => crate::ProgramKind::Library,
         };
+    }
+
+    pub fn link_path(self, output: &Path) -> Result<PathBuf, String> {
+        let artifact = self.artifact_path(output)?;
+        return Ok(if self == Self::SharedLibrary && cfg!(windows) {
+            crate::native::import_library(&artifact)
+        } else {
+            artifact
+        });
     }
 }
 
@@ -185,8 +206,9 @@ impl Project {
                 )
                 .into());
             }
-            if let Some(previous) = entry_kinds.insert(target.entry.clone(), target.kind)
-                && previous != target.kind
+            if let Some(previous) =
+                entry_kinds.insert(target.entry.clone(), target.kind.program_kind())
+                && previous != target.kind.program_kind()
             {
                 return Err(format!(
                     "{}: entry {} is used by incompatible target kinds",

@@ -66,6 +66,7 @@
 - Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
 - C header generation for scalar, enum, opaque-pointer, and callback exports
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
+- Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links
@@ -74,7 +75,7 @@
 
 ## Compiler work
 
-1. Add module namespaces, visibility, project dependencies, and shared-library targets
+1. Add module namespaces, visibility, and project dependencies
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
 3. Extend C header importing and ABI coverage to layout attributes and further C declarations
 

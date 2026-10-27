@@ -1,6 +1,6 @@
 # Projects
 
-A `crust.toml` file defines a project and its executable or static-library targets:
+A `crust.toml` file defines a project and its executable and library targets:
 
 ```toml
 [project]
@@ -37,6 +37,7 @@ crust metadata
 - Single-file commands continue to accept a source path directly
 - Each executable's output goes to `<project>/target/crust/<target>/`
 - Static libraries use the same output directory, named `<target>.lib` on Windows and `lib<target>.a` on Unix
+- Shared libraries use `<target>.dll` on Windows, `lib<target>.so` on Linux, and `lib<target>.dylib` on macOS
 - Generated files are checked against the manifest and all entry files before writing
 - Native source files and explicit link inputs are also protected from output collisions
 - Imported source files from every target are protected before build output is written
@@ -60,9 +61,10 @@ or missing imports. `--target name` filters the target list.
 | `formatVersion` | Metadata schema version, currently `1` |
 | `manifest`, `directory` | Absolute project paths |
 | `name` | Project name |
-| `targets[].name`, `targets[].kind` | Target name and `executable` or `static-library` kind |
+| `targets[].name`, `targets[].kind` | Target name and `executable`, `static-library`, or `shared-library` kind |
 | `targets[].entry`, `targets[].output` | Absolute entry and native artifact paths |
 | `targets[].linkTargets` | Names of native target dependencies |
+| `targets[].runtimePaths` | Shared-library dependency directories for launching the target |
 
 Metadata preserves target order from the manifest. The command works before a
 build and requires project configuration. `Project::metadata` exposes the same
@@ -119,7 +121,42 @@ clang examples/library_project/native/consumer.c -Iexamples/library_project/incl
 
 On Unix, link `examples/library_project/target/crust/math/libmath.a` instead.
 
-### C headers
+## Shared libraries
+
+```toml
+[[targets]]
+name = "math"
+kind = "shared-library"
+entry = "src/library.cr"
+```
+
+Shared libraries use the same source-level C exports as static libraries.
+Build with `crust build --target math`. Windows builds also produce `math.lib`
+for consumers to link. Unix consumers link the shared library itself.
+
+`CC` selects the compiler. Native sources, includes, definitions, libraries, and
+link inputs apply to the shared-library build. Static-library objects built by
+Crust use position-independent code on Unix so they can link into shared libraries.
+
+Failed builds preserve the previous shared library and its Windows import
+library. Both outputs must be freshly produced and validated for a successful
+Windows build.
+
+Use `link-targets` to connect executables and libraries. `crust run` builds their
+dependencies before launching the executable. Windows builds place dependency
+DLLs beside their consumers and write an application manifest naming the DLLs.
+Keep the executable, DLLs, and manifest together when moving an application.
+Unix builds record dependency directories in runtime search paths, and `run`
+also supplies the runtime library environment.
+
+The [shared-library project](../examples/shared_project/) exports a function from
+one target and calls it from another:
+
+```powershell
+cargo run -- run --project examples/shared_project --target app
+```
+
+## C headers
 
 `crust emit-header --target math` writes declarations for the target's named C
 exports to stdout. It checks the source and imports through the compiler frontend.
@@ -140,9 +177,9 @@ when signatures change. For example:
 cargo run -- emit-header --project examples/library_project | Set-Content -Encoding utf8 target/library_public.h
 ```
 
-### Linked targets
+## Linked targets
 
-An executable or library can name other static-library targets in its native
+An executable or library can name static-library or shared-library targets in its native
 configuration:
 
 ```toml
@@ -162,11 +199,12 @@ entry = "src/math.cr"
 
 `build`, `check`, and `run --target app` process linked targets before their
 consumers. Dependencies reached through multiple paths are built once. Links
-form a directed acyclic graph, and each reference names a static-library target.
+form a directed acyclic graph, and each reference names a library target.
 
 Cross-target calls use matching `extern` declarations and named C exports.
-Each archive contains its own objects. Executables link the transitive set of
-archives with consumers before their dependencies.
+Each static archive contains its own objects. Executables and shared libraries
+link the transitive set of native library artifacts with consumers before their
+dependencies.
 
 Run [the linked project](../examples/linked_project/) with:
 

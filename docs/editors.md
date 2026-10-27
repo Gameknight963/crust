@@ -43,7 +43,7 @@ refresh semantic highlighting, using editor text for open files. Direct clients
 can also send `workspace/didChangeWatchedFiles` notifications.
 Project configuration errors appear on `crust.toml` and clear when repaired.
 TOML errors underline the offending key or value using UTF-16 editor positions.
-Static-library targets use library analysis, including entries without `main`.
+Static and shared library targets use library analysis, including entries without `main`.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.
 Rename rechecks the edited source and preserves existing identifier bindings.
@@ -105,6 +105,7 @@ or run its project. Commands save open documents, write compiler output to the
 **Crust** Output pane, and put source errors in the Error List. Run selects an
 executable target and opens a console with input support. The console waits for
 a key after the program exits.
+Windows builds place dependency DLLs and their application manifest beside the executable.
 
 The client uses Visual Studio's editing UI for compiler diagnostics, completion,
 navigation, references, rename, and semantic highlighting. Syntax highlighting

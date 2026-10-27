@@ -36,6 +36,7 @@ ownership checking, C generation, and native compilation.
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
+| `src/native/shared.rs` | Shared-library compilation, import libraries, and coordinated output recovery |
 | `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
 | `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
@@ -97,6 +98,16 @@ and order builds. Executable link inputs reverse that order so dependent
 archives precede their dependencies. Archive builds retain separate outputs
 for linked targets. The native drivers require target references to be resolved
 to file inputs before invocation.
+
+Shared-library builds define `CRUST_BUILD_SHARED`. On Windows, generated C marks
+named export definitions with `__declspec(dllexport)`, and the driver requests a
+matching import library. Both artifacts have backups until validation succeeds.
+Resolved native options carry runtime dependency directories for linker search
+paths and executable launch. Project metadata exposes these as `runtimePaths`.
+Windows builds deploy the exact dependency DLLs beside consumers. Executables
+also receive a side-by-side application manifest listing those DLLs, which
+supports application directories containing semicolons. Existing DLL copies and
+the manifest have backups until the executable links and validates successfully.
 
 `emit_header` checks an executable or library entry and renders its named C
 exports. Callback aliases are allocated within each exported symbol's prefix,

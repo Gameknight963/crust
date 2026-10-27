@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel.Design;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -102,11 +101,7 @@ public sealed class CrustPackage : AsyncPackage
             if (result.ExitCode != 0) { if (errors.Tasks.Count > 0) errors.Show(); return; }
             if (selected != null)
             {
-                string runner = Path.Combine(Path.GetDirectoryName(typeof(CrustPackage).Assembly.Location)!, "Tools", "Crust.Console.exe");
-                using (Process.Start(new ProcessStartInfo(runner,
-                    ProjectTool.QuoteArgument(selected.output) + " " + ProjectTool.QuoteArgument(Path.GetDirectoryName(manifest)!)) {
-                        WorkingDirectory = Path.GetDirectoryName(manifest)!, UseShellExecute = false
-                    })) { }
+                using (Process.Start(ProjectTool.ConsoleStartInfo(selected, manifest))) { }
             }
         }
         catch (Exception error)

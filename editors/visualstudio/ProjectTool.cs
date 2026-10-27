@@ -73,6 +73,16 @@ public static class ProjectTool
         return Path.Combine(Path.GetDirectoryName(typeof(ProjectTool).Assembly.Location)!, "Server", "crust.exe");
     }
 
+    public static ProcessStartInfo ConsoleStartInfo(TargetMetadata target, string manifest)
+    {
+        string runner = Path.Combine(Path.GetDirectoryName(typeof(ProjectTool).Assembly.Location)!, "Tools", "Crust.Console.exe");
+        string directory = Path.GetDirectoryName(manifest)!;
+        var start = new ProcessStartInfo(runner, QuoteArgument(target.output) + " " + QuoteArgument(directory)) {
+            WorkingDirectory = directory, UseShellExecute = false
+        };
+        return start;
+    }
+
     public static async Task<ToolResult> ExecuteAsync(string compiler, string manifest, string command, string? target = null)
     {
         if (command != "metadata" && command != "build" && command != "check")
@@ -118,11 +128,14 @@ public static class ProjectTool
             throw new InvalidOperationException("Unsupported Crust project metadata. Update the compiler and extension together.");
         foreach (TargetMetadata target in info.targets)
         {
-            if (target.output.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
-                target.output = @"\\" + target.output.Substring(8);
-            else if (target.output.StartsWith(@"\\?\", StringComparison.Ordinal))
-                target.output = target.output.Substring(4);
+            target.output = DisplayPath(target.output);
         }
         return info;
+    }
+
+    private static string DisplayPath(string path)
+    {
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + path.Substring(8);
+        return path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path.Substring(4) : path;
     }
 }

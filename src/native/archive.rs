@@ -46,6 +46,9 @@ pub fn compile_static_library(
         let mut command = Command::new(&compiler);
         configure_windows_toolchain(&mut command);
         command.args(["-std=c11", "-c", "-x", "c"]);
+        if !cfg!(windows) {
+            command.arg("-fPIC");
+        }
         for define in &options.defines {
             command.arg("-D").arg(define);
         }

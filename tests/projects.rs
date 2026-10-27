@@ -58,7 +58,9 @@ fn text(output: &Output) -> String {
 fn success(output: &Output) {
     assert!(
         output.status.success(),
-        "{}",
+        "status: {:?}\nstdout: {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -485,6 +487,11 @@ fn native_drivers_require_project_target_links_to_be_resolved_before_compilation
             Path::new("unused.a"),
             &options,
         ),
+        crust::native::compile_shared_library(
+            Path::new("missing.c"),
+            Path::new("unused.dll"),
+            &options,
+        ),
     ] {
         assert!(result.unwrap_err().contains("resolved by a project build"));
     }
@@ -527,6 +534,290 @@ fn native_target_links_build_dependencies_before_a_selected_executable() {
 }
 
 #[test]
+fn shared_library_targets_link_through_static_dependencies_and_report_runtime_paths() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge', 'widget']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nlink-targets=['widget']\n[[targets]]\nname='widget'\nkind='shared-library'\nentry='widget.cr'\n[targets.native]\nlink-targets=['base']\n[[targets]]\nname='base'\nkind='static-library'\nentry='base.cr'\n");
+    fixture.write("main.cr", "extern int bridge(); extern int shared_add(int); int main() { unsafe { print(bridge()); print(shared_add(2)); } return 0; }");
+    fixture.write(
+        "bridge.cr",
+        "extern int shared_add(int); extern int bridge() { return shared_add(1); }",
+    );
+    fixture.write("widget.cr", "extern int base_value(); int helper(int value) { return value; } extern int add(int input) = \"shared_add\" { BoxInt value = box_int(input); return base_value() + helper(*value); }");
+    fixture.write("base.cr", "extern int base_value() { return 40; }");
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .args(["check", "--target", "app"])
+        .env("CC", "missing-shared-test-compiler")
+        .current_dir(&fixture.directory)
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(!fixture.directory.join("target").exists());
+    let metadata = fixture.invoke(&["metadata"]);
+    success(&metadata);
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+    assert_eq!(metadata["targets"][2]["kind"], "shared-library");
+    assert_eq!(
+        metadata["targets"][0]["runtimePaths"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        metadata["targets"][2]["runtimePaths"],
+        serde_json::json!([])
+    );
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "41\n42\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let library = project.select(Some("widget"), true).unwrap()[0];
+    let artifact = library
+        .kind
+        .artifact_path(&project.output_base(library))
+        .unwrap();
+    assert!(artifact.is_file());
+    if cfg!(windows) {
+        assert!(crust::native::import_library(&artifact).is_file());
+    }
+    let header = fixture.invoke(&["emit-header", "--target", "widget"]);
+    success(&header);
+    assert!(text(&header).contains("shared_add"));
+    assert!(!text(&header).contains("helper"));
+    let run = fixture.invoke(&["run", "--target", "widget"]);
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("shared libraries are built"));
+}
+
+#[test]
+fn shared_library_rebuild_failures_preserve_native_and_import_artifacts() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='library'\nkind='shared-library'\nentry='library.cr'\n");
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    success(&fixture.invoke(&["build"]));
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let target = &project.targets[0];
+    let artifact = target
+        .kind
+        .artifact_path(&project.output_base(target))
+        .unwrap();
+    let mut artifacts = vec![artifact.clone()];
+    if cfg!(windows) {
+        artifacts.push(crust::native::import_library(&artifact));
+    }
+    let previous: Vec<_> = artifacts
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect();
+    for (writes, code) in [(false, 0), (true, 0), (true, 1)] {
+        let compiler = compiler_stub(&fixture, writes, code);
+        let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg("build")
+            .env("CC", compiler)
+            .current_dir(&fixture.directory)
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "a compiler stub must not reuse old shared outputs"
+        );
+        for (path, contents) in artifacts.iter().zip(&previous) {
+            assert_eq!(&fs::read(path).unwrap(), contents);
+        }
+    }
+    #[cfg(windows)]
+    {
+        // A native-looking DLL still needs a fresh import library.
+        let compiler = compiler_stub(&fixture, true, 0);
+        let script = fs::read_to_string(&compiler)
+            .unwrap()
+            .replace("invalid-executable", "MZ DLL");
+        fs::write(&compiler, script).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg("build")
+            .env("CC", compiler)
+            .current_dir(&fixture.directory)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("did not produce an import library")
+        );
+        for (path, contents) in artifacts.iter().zip(&previous) {
+            assert_eq!(&fs::read(path).unwrap(), contents);
+        }
+    }
+    fixture.write("library.cr", "extern int answer() { return 7; }");
+    success(&fixture.invoke(&["build"]));
+    assert_ne!(fs::read(&artifact).unwrap(), previous[0]);
+    assert!(
+        fs::read_dir(artifact.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("crust-build-"))
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn failed_executable_links_restore_deployed_dlls_and_application_manifests() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['library']\n[[targets]]\nname='library'\nkind='shared-library'\nentry='library.cr'\n");
+    let main = "extern int answer(); int main() { unsafe { print(answer()); } return 0; }";
+    fixture.write("main.cr", main);
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    success(&fixture.invoke(&["build", "--target", "app"]));
+    let program = executable(&fixture);
+    let deployed = program.parent().unwrap().join("library.dll");
+    let manifest = crust::native::application_manifest(&program);
+    let paths = [&program, &deployed, &manifest];
+    let previous: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    fixture.write("library.cr", "extern int answer() { return 7; }");
+    fixture.write("main.cr", "extern int answer(); extern int missing(); int main() { unsafe { print(answer()); return missing(); } }");
+    let output = fixture.invoke(&["build", "--target", "app"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("C compiler failed"));
+    for (path, contents) in paths.iter().zip(previous) {
+        assert_eq!(fs::read(path).unwrap(), contents);
+    }
+    let output = Command::new(&program).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    fixture.write("main.cr", main);
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "7\n");
+    assert_no_build_staging(&fixture);
+}
+
+#[test]
+#[cfg(windows)]
+fn shared_library_import_outputs_preserve_native_inputs() {
+    let fixture = Fixture::new();
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    fixture.write(
+        "target/crust/library/library.lib",
+        "int native_source(void) { return 7; }",
+    );
+    fixture.manifest("[[targets]]\nname='library'\nkind='shared-library'\nentry='library.cr'\n[targets.native]\nsources=['target/crust/library/library.lib']\n");
+    let output = fixture.invoke(&["build"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("output would overwrite an input file")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join("target/crust/library/library.lib")).unwrap(),
+        "int native_source(void) { return 7; }"
+    );
+    assert!(
+        !fixture
+            .directory
+            .join("target/crust/library/library.c")
+            .exists()
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn deployed_dlls_and_application_manifests_preserve_project_inputs() {
+    for source in ["library.dll", "app.exe.manifest"] {
+        let fixture = Fixture::new();
+        fixture.write("library.cr", "extern int answer() { return 42; }");
+        fixture.write("main.cr", "int main() { return 0; }");
+        let input = format!("target/crust/app/{source}");
+        fixture.write(&input, "int native_source(void) { return 7; }");
+        fixture.manifest(&format!("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['library']\nsources=['{input}']\n[[targets]]\nname='library'\nkind='shared-library'\nentry='library.cr'\n"));
+        let output = fixture.invoke(&["build", "--target", "app"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("output would overwrite an input file")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.directory.join(input)).unwrap(),
+            "int native_source(void) { return 7; }"
+        );
+        assert!(!fixture.directory.join("target/crust/app/app.c").exists());
+    }
+}
+
+#[test]
+fn shared_library_chains_run_and_link_from_a_c_consumer() {
+    let mut fixture = Fixture::new();
+    fixture.directory.push("paths, with; delimiters");
+    fs::create_dir_all(&fixture.directory).unwrap();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['outer']\n[[targets]]\nname='outer'\nkind='shared-library'\nentry='outer.cr'\n[targets.native]\nlink-targets=['inner']\n[[targets]]\nname='inner'\nkind='shared-library'\nentry='inner.cr'\n");
+    fixture.write(
+        "main.cr",
+        "extern int answer(); int main() { unsafe { print(answer()); } return 0; }",
+    );
+    fixture.write(
+        "outer.cr",
+        "extern int inner_answer(); extern int answer() { return inner_answer() + 1; }",
+    );
+    fixture.write("inner.cr", "extern int inner_answer() { return 41; }");
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let app = project.select(Some("app"), true).unwrap()[0];
+    let options = project.resolved_native(app).unwrap();
+    assert_eq!(options.runtime_dirs.len(), 2);
+    fixture.write("consumer.c", "#include <stdio.h>\nextern int answer(void); int main(void) { printf(\"%d\\n\", answer()); return 0; }\n");
+    let executable = fixture
+        .directory
+        .join("consumer")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    crust::native::compile_file_with_options(
+        &fixture.directory.join("consumer.c"),
+        &executable,
+        &options,
+    )
+    .unwrap();
+    let variable = if cfg!(windows) {
+        "PATH"
+    } else if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    let mut paths = options.runtime_dirs;
+    paths.extend(std::env::split_paths(
+        &std::env::var_os(variable).unwrap_or_default(),
+    ));
+    let output = Command::new(executable)
+        .env(variable, std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+}
+
+#[test]
+fn shared_and_static_libraries_can_build_the_same_source_entry() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='dynamic'\nkind='shared-library'\nentry='library.cr'\n[[targets]]\nname='archive'\nkind='static-library'\nentry='library.cr'\n");
+    fixture.write(
+        "library.cr",
+        "int helper() { return 42; } extern int answer() { return helper(); }",
+    );
+    success(&fixture.invoke(&["build"]));
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    for target in &project.targets {
+        assert!(
+            target
+                .kind
+                .artifact_path(&project.output_base(target))
+                .unwrap()
+                .is_file()
+        );
+    }
+}
+
+#[test]
 fn native_target_link_graphs_reject_unknown_repeated_executable_and_cyclic_dependencies() {
     let fixture = Fixture::new();
     fixture.write("library.cr", "extern int value() { return 0; }");
@@ -550,7 +841,7 @@ fn native_target_link_graphs_reject_unknown_repeated_executable_and_cyclic_depen
         ),
         (
             "[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['app']\n",
-            "must be a static-library target",
+            "must be a static-library or shared-library target",
         ),
     ] {
         fixture.manifest(targets);

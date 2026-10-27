@@ -169,10 +169,15 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
         println!("{json}");
         return Ok(ExitCode::SUCCESS);
     }
-    if options.mode == Mode::Run && targets[0].kind == TargetKind::StaticLibrary {
-        return Err(
-            "static libraries are built with 'crust build' and linked by a consumer".to_owned(),
-        );
+    if options.mode == Mode::Run && targets[0].kind != TargetKind::Executable {
+        return Err(format!(
+            "{} libraries are built with 'crust build' and linked by a consumer",
+            if targets[0].kind == TargetKind::StaticLibrary {
+                "static"
+            } else {
+                "shared"
+            }
+        ));
     }
     let run_target = targets.first().map(|target| target.name.clone());
     let targets = if matches!(options.mode, Mode::Build | Mode::Run | Mode::Check) {
@@ -229,10 +234,15 @@ fn process_source(
     native: &crust::native::Options,
     kind: TargetKind,
 ) -> Result<ExitCode, String> {
-    if mode == Mode::Run && kind == TargetKind::StaticLibrary {
-        return Err(
-            "static libraries are built with 'crust build' and linked by a consumer".to_owned(),
-        );
+    if mode == Mode::Run && kind != TargetKind::Executable {
+        return Err(format!(
+            "{} libraries are built with 'crust build' and linked by a consumer",
+            if kind == TargetKind::StaticLibrary {
+                "static"
+            } else {
+                "shared"
+            }
+        ));
     }
     match mode {
         Mode::Tokens => {
@@ -282,6 +292,7 @@ fn process_source(
         .cloned()
         .chain(sources.files().iter().map(|file| file.path.clone()))
         .chain(sources.native_headers().iter().cloned())
+        .chain(native.runtime_libraries.iter().cloned())
         .collect();
     let executable = build(&generated, output, &protected, native, kind)?;
     if matches!(mode, Mode::Build | Mode::BuildDependency) {
@@ -290,7 +301,23 @@ fn process_source(
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let status = Command::new(&executable)
+    let mut command = Command::new(&executable);
+    if !cfg!(windows) && !native.runtime_dirs.is_empty() {
+        let variable = if cfg!(windows) {
+            "PATH"
+        } else if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
+        let mut paths = native.runtime_dirs.clone();
+        paths.extend(env::split_paths(&env::var_os(variable).unwrap_or_default()));
+        command.env(
+            variable,
+            env::join_paths(paths).map_err(|error| error.to_string())?,
+        );
+    }
+    let status = command
         .status()
         .map_err(|error| format!("could not run {}: {error}", executable.display()))?;
     return Ok(ExitCode::from(status.code().unwrap_or(1) as u8));
@@ -308,7 +335,26 @@ fn build(
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let c_path = output.with_extension("c");
     let executable = kind.artifact_path(output)?;
-    for destination in [&c_path, &executable] {
+    let import = crust::native::import_library(&executable);
+    let mut destinations = vec![c_path.clone(), executable.clone()];
+    if kind == TargetKind::SharedLibrary && cfg!(windows) {
+        destinations.push(import);
+    }
+    if cfg!(windows) {
+        if kind == TargetKind::Executable && !native.runtime_libraries.is_empty() {
+            destinations.push(crust::native::application_manifest(&executable));
+        }
+        for library in &native.runtime_libraries {
+            destinations.push(
+                directory.join(
+                    library
+                        .file_name()
+                        .ok_or("runtime library needs a filename")?,
+                ),
+            );
+        }
+    }
+    for destination in &destinations {
         let resolved = if destination.exists() {
             destination
                 .canonicalize()
@@ -335,10 +381,16 @@ fn build(
     }
     fs::write(&c_path, generated)
         .map_err(|error| format!("could not write {}: {error}", c_path.display()))?;
-    if kind == TargetKind::StaticLibrary {
-        crust::native::compile_static_library(&c_path, &executable, native)?;
-    } else {
-        crust::native::compile_file_with_options(&c_path, &executable, native)?;
+    match kind {
+        TargetKind::StaticLibrary => {
+            crust::native::compile_static_library(&c_path, &executable, native)?
+        }
+        TargetKind::SharedLibrary => {
+            crust::native::compile_shared_library(&c_path, &executable, native)?
+        }
+        TargetKind::Executable => {
+            crust::native::compile_file_with_options(&c_path, &executable, native)?
+        }
     }
     return Ok(executable);
 }

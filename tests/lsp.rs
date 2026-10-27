@@ -1162,11 +1162,18 @@ fn signature_help_preserves_volatile_qualifiers_on_pointer_slot_borrows() {
 
 #[test]
 fn library_targets_support_unsaved_dependency_analysis_navigation_and_rename_without_main() {
+    for kind in ["static-library", "shared-library"] {
+        check_library_editor_support(kind);
+    }
+}
+
+fn check_library_editor_support(kind: &str) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-library")
+        .join(kind)
         .join(std::process::id().to_string());
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("crust.toml"), "[project]\nname='library'\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n").unwrap();
+    std::fs::write(root.join("crust.toml"), format!("[project]\nname='library'\n[[targets]]\nname='library'\nkind='{kind}'\nentry='library.cr'\n")).unwrap();
     let library = "import \"helper.cr\"; extern int answer(int value) { return helper(value); }";
     let helper = "int helper(int value) { return value + 1; }";
     std::fs::write(root.join("library.cr"), library).unwrap();

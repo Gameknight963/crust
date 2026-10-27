@@ -115,12 +115,12 @@ internal static class ClientProbe
         Assert(quote("") == "\"\"", "empty argument quoting");
         Assert(quote("C:\\folder\\") == "\"C:\\folder\\\\\"", "trailing slash quoting");
         Assert(quote("a\"b") == "\"a\\\"b\"", "embedded quote escaping");
-        string root = Path.Combine(package, "project ü & spaces");
+        string root = Path.Combine(package, "project ü & spaces, with; delimiters");
         string nested = Path.Combine(root, "src");
         Directory.CreateDirectory(nested);
         string manifest = Path.Combine(root, "crust.toml");
         string source = Path.Combine(nested, "main.cr");
-        Write(manifest, "[project]\nname='console'\n[[targets]]\nname='app'\nkind='executable'\nentry='src/main.cr'\n[targets.native]\nsources=['input.c']\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n");
+        Write(manifest, "[project]\nname='console'\n[[targets]]\nname='app'\nkind='executable'\nentry='src/main.cr'\n[targets.native]\nsources=['input.c']\nlink-targets=['dynamic']\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n[[targets]]\nname='dynamic'\nkind='shared-library'\nentry='library.cr'\n");
         Write(source, "int main() { return missing; }");
         Write(Path.Combine(root, "library.cr"), "extern int answer() { return 42; }");
         Write(Path.Combine(root, "input.c"), "#include <stdio.h>\nint interactive(void) { int value = 0; if (scanf(\"%d\", &value) != 1) return 3; printf(\"%d\\n\", value + 1); return 0; }\n");
@@ -130,7 +130,7 @@ internal static class ClientProbe
         Assert(compiler == Path.Combine(package, "Server", "crust.exe"), "bundled compiler path");
         object info = Await((Task)tool.GetMethod("ReadMetadataAsync").Invoke(null, new object[] { compiler, manifest }));
         var targets = (Array)info.GetType().GetProperty("targets").GetValue(info);
-        Assert(targets.Length == 2, "metadata target kinds");
+        Assert(targets.Length == 3, "metadata target kinds");
         object app = targets.GetValue(0);
         Assert((string)app.GetType().GetProperty("kind").GetValue(app) == "executable", "executable metadata");
         Assert(!Directory.Exists(Path.Combine(root, "target")), "metadata leaves build outputs untouched");
@@ -139,18 +139,20 @@ internal static class ClientProbe
         Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) != 0, "invalid source check");
         string diagnostic = (string)result.GetType().GetProperty("Error").GetValue(result);
         Assert(diagnostic.Contains("main.cr:1:") && diagnostic.Contains("missing"), "compiler error path and message");
-        Write(source, "extern int interactive(); int main() { unsafe { return interactive(); } }");
+        Write(source, "extern int interactive(); extern int answer(); int main() { unsafe { print(answer()); return interactive(); } }");
         result = execute("build");
         Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) == 0,
             "project build: " + result.GetType().GetProperty("Error").GetValue(result));
         string executable = (string)app.GetType().GetProperty("output").GetValue(app);
         Assert(File.Exists(executable), "built executable");
-        using (var console = Process.Start(new ProcessStartInfo(Path.Combine(package, "Tools", "Crust.Console.exe"),
-            quote(executable) + " " + quote(root)) {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
-            }))
+        var startInfo = (ProcessStartInfo)tool.GetMethod("ConsoleStartInfo").Invoke(null, new object[] { app, manifest });
+        startInfo.CreateNoWindow = true;
+        startInfo.RedirectStandardInput = true;
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.StandardOutputEncoding = Encoding.UTF8;
+        startInfo.StandardErrorEncoding = Encoding.UTF8;
+        using (var console = Process.Start(startInfo))
         {
             Assert(console != null, "console launch");
             console.StandardInput.WriteLine("41");
@@ -159,7 +161,7 @@ internal static class ClientProbe
             Task<string> error = console.StandardError.ReadToEndAsync();
             if (!console.WaitForExit(15000)) { console.Kill(); throw new Exception("console input timeout"); }
             Assert(console.ExitCode == 0, "console program exit: " + output.Result + error.Result);
-            Assert(output.Result.Replace("\r\n", "\n").StartsWith("42\n", StringComparison.Ordinal), "inherited console input/output: " + output.Result);
+            Assert(output.Result.Replace("\r\n", "\n").StartsWith("42\n42\n", StringComparison.Ordinal), "shared-library lookup and inherited console input/output: " + output.Result);
         }
     }
 

@@ -35,9 +35,9 @@ impl Project {
                         target.name
                     ));
                 }
-                if self.targets[index].kind != TargetKind::StaticLibrary {
+                if self.targets[index].kind == TargetKind::Executable {
                     return Err(format!(
-                        "{}: target '{}' links '{name}', which must be a static-library target",
+                        "{}: target '{}' links '{name}', which must be a static-library or shared-library target",
                         self.manifest.display(),
                         target.name
                     ));
@@ -97,17 +97,35 @@ impl Project {
     pub fn resolved_native(&self, target: &Target) -> Result<crate::native::Options, String> {
         let mut native = target.native.clone();
         native.link_targets.clear();
-        if target.kind == TargetKind::Executable {
+        if target.kind != TargetKind::StaticLibrary {
             for dependency in self.ordered_targets(&[target])?.into_iter().rev() {
                 if dependency.name != target.name {
-                    native.link_inputs.push(
-                        dependency
-                            .kind
-                            .artifact_path(&self.output_base(dependency))?,
-                    );
+                    native
+                        .link_inputs
+                        .push(dependency.kind.link_path(&self.output_base(dependency))?);
                 }
             }
         }
+        native.runtime_dirs = self.runtime_paths(target)?;
+        native.runtime_libraries = self
+            .ordered_targets(&[target])?
+            .into_iter()
+            .filter(|dependency| {
+                dependency.kind == TargetKind::SharedLibrary && dependency.name != target.name
+            })
+            .map(|dependency| dependency.kind.artifact_path(&self.output_base(dependency)))
+            .collect::<Result<Vec<_>, _>>()?;
         return Ok(native);
+    }
+
+    pub fn runtime_paths(&self, target: &Target) -> Result<Vec<PathBuf>, String> {
+        return Ok(self
+            .ordered_targets(&[target])?
+            .into_iter()
+            .filter(|dependency| {
+                dependency.kind == TargetKind::SharedLibrary && dependency.name != target.name
+            })
+            .map(|dependency| self.output_base(dependency).parent().unwrap().to_owned())
+            .collect());
     }
 }

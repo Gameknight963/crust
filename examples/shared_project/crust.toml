@@ -1,0 +1,15 @@
+[project]
+name = "shared-example"
+
+[[targets]]
+name = "app"
+kind = "executable"
+entry = "main.cr"
+
+[targets.native]
+link-targets = ["math"]
+
+[[targets]]
+name = "math"
+kind = "shared-library"
+entry = "math.cr"

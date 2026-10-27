@@ -18,6 +18,7 @@ pub struct TargetMetadata {
     pub entry: PathBuf,
     pub output: PathBuf,
     pub link_targets: Vec<String>,
+    pub runtime_paths: Vec<PathBuf>,
 }
 
 impl Project {
@@ -30,6 +31,7 @@ impl Project {
                 entry: target.entry.clone(),
                 output: target.kind.artifact_path(&self.output_base(target))?,
                 link_targets: target.native.link_targets.clone(),
+                runtime_paths: self.runtime_paths(target)?,
             });
         }
         return Ok(ProjectMetadata {

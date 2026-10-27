@@ -3,7 +3,7 @@ Crust (C-Rust get it) is to Rust (the language) as Crust is to Rust (the game)
 # Crust
 
 A C-like language with ownership checking, written in Rust. The compiler generates
-C and builds native executables and static libraries.
+C and builds native executables, static libraries, and shared libraries.
 
 ## Goals
 
@@ -45,6 +45,7 @@ use UTF-8 byte arrays.
 - [Volatile access](examples/volatile.cr): qualified pointers and borrowed views
 - [Exports](examples/export_project/): a C source file calling a named Crust function
 - [Static library](examples/library_project/): a native archive linked into a C consumer
+- [Shared library](examples/shared_project/): a C export linked into a Crust executable
 - [Target links](examples/linked_project/): automatic library builds and native linking
 - [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64
 
@@ -77,7 +78,7 @@ directory containing `crust.toml`:
 | Command | Action |
 | --- | --- |
 | `run` | Compile and run |
-| `build` | Build an executable or static library |
+| `build` | Build executables and libraries |
 | `check` | Check names, types, ownership, and borrows |
 | `emit-c` | Write generated C to stdout |
 | `emit-header` | Write C declarations for named exports to stdout |

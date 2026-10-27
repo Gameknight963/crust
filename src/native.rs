@@ -7,11 +7,13 @@ mod archive;
 mod executable;
 #[cfg(test)]
 mod runtime_tests;
+mod shared;
 mod staging;
 #[cfg(test)]
 mod volatile_tests;
 pub use archive::compile_static_library;
 pub(crate) use archive::validate_options as validate_archive_options;
+pub use shared::{application_manifest, compile_shared_library, import_library};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -23,6 +25,10 @@ pub struct Options {
     pub libraries: Vec<String>,
     pub link_inputs: Vec<PathBuf>,
     pub link_targets: Vec<String>,
+    #[serde(skip)]
+    pub runtime_dirs: Vec<PathBuf>,
+    #[serde(skip)]
+    pub runtime_libraries: Vec<PathBuf>,
 }
 
 // The caller controls artifact locations. This driver never invokes a shell.
@@ -37,10 +43,38 @@ pub fn compile_file_with_options(
 ) -> Result<(), String> {
     resolved_targets(options)?;
     validate_defines(&options.defines)?;
-    return executable::build(executable, || invoke_compiler(c_path, executable, options));
+    let copies = shared::runtime_copies(executable, options)?;
+    let manifest = (cfg!(windows) && !options.runtime_libraries.is_empty())
+        .then(|| application_manifest(executable));
+    let build = || {
+        executable::build(executable, || {
+            if let Some(manifest) = &manifest {
+                shared::write_application_manifest(manifest, options)?;
+            }
+            invoke_compiler(c_path, executable, options, false)?;
+            shared::copy_runtime_libraries(&copies)?;
+            return Ok(());
+        })
+    };
+    if copies.is_empty() && manifest.is_none() {
+        return build();
+    }
+    let mut outputs: Vec<_> = copies
+        .iter()
+        .map(|(_, destination)| destination.as_path())
+        .collect();
+    if let Some(manifest) = &manifest {
+        outputs.push(manifest);
+    }
+    return shared::replace_outputs(&outputs, build);
 }
 
-fn invoke_compiler(c_path: &Path, executable: &Path, options: &Options) -> Result<(), String> {
+fn invoke_compiler(
+    c_path: &Path,
+    executable: &Path,
+    options: &Options,
+    shared: bool,
+) -> Result<(), String> {
     let compiler = env::var_os("CC").unwrap_or_else(|| {
         if cfg!(windows) {
             return "clang".into();
@@ -50,6 +84,50 @@ fn invoke_compiler(c_path: &Path, executable: &Path, options: &Options) -> Resul
     let mut command = Command::new(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
+    if shared {
+        command.arg("-DCRUST_BUILD_SHARED");
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.arg("-shared");
+        }
+        if cfg!(windows) {
+            let gnu = Command::new(&compiler)
+                .arg("-dumpmachine")
+                .output()
+                .ok()
+                .is_some_and(|result| {
+                    let target = String::from_utf8_lossy(&result.stdout).to_ascii_lowercase();
+                    result.status.success()
+                        && (target.contains("mingw") || target.contains("windows-gnu"))
+                });
+            let mut flag = std::ffi::OsString::from(if gnu { "--out-implib=" } else { "/implib:" });
+            flag.push(import_library(executable));
+            command.arg("-Xlinker").arg(flag);
+        } else {
+            command.arg("-fPIC");
+            let name = executable
+                .file_name()
+                .ok_or("shared library output needs a filename")?;
+            if cfg!(target_os = "macos") {
+                let mut install_name = std::ffi::OsString::from("@rpath/");
+                install_name.push(name);
+                command
+                    .args(["-Xlinker", "-install_name", "-Xlinker"])
+                    .arg(install_name);
+            } else {
+                command.args(["-Xlinker", "-soname", "-Xlinker"]).arg(name);
+            }
+        }
+    }
+    if !cfg!(windows) {
+        for directory in &options.runtime_dirs {
+            // Xlinker keeps commas and other path characters within one argv.
+            command
+                .args(["-Xlinker", "-rpath", "-Xlinker"])
+                .arg(directory);
+        }
+    }
     for define in &options.defines {
         command.arg("-D").arg(define);
     }
