@@ -1512,12 +1512,33 @@ impl Parser {
         }
         let base = self.array_suffix(base)?;
         let ty = if self.consume(&Token::Ampersand) {
-            let ty = base
+            let mut ty = base
                 .borrowed_qualified(!qualifiers.readonly, qualifiers.volatile)
                 .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?;
+            if let Type::Array(id) = base
+                && self.arrays[id].length == 0
+            {
+                if qualifiers.volatile {
+                    return Err(Diagnostic::new(
+                        token.span,
+                        "volatile slices are not supported",
+                    ));
+                }
+                ty = Type::Borrow {
+                    pointee: Pointee::Slice(id),
+                    mutable: !qualifiers.readonly,
+                    volatile: false,
+                };
+            }
             qualifiers = Qualifiers::default();
             ty
         } else {
+            if matches!(base, Type::Array(id) if self.arrays[id].length == 0) {
+                return Err(Diagnostic::new(
+                    token.span,
+                    "an unsized array requires a reference: T[]&",
+                ));
+            }
             if (qualifiers.readonly || qualifiers.volatile) && !allow_const {
                 return Err(Diagnostic::new(
                     token.span,
@@ -1559,6 +1580,10 @@ impl Parser {
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
         let mut dimensions = Vec::new();
         while self.consume(&Token::LeftBracket) {
+            if self.consume(&Token::RightBracket) {
+                dimensions.push((0, self.tokens[self.position - 1].span));
+                continue;
+            }
             let expression = self.expression(1)?;
             let value = self.integer_constant(&expression, true)?.value;
             let length = usize::try_from(value)
@@ -1574,7 +1599,10 @@ impl Parser {
             dimensions.push((length, expression.span));
         }
         for (length, span) in dimensions.into_iter().rev() {
-            if element == Type::Void || element.is_borrow() {
+            if element == Type::Void
+                || element.is_borrow()
+                || matches!(element, Type::Array(id) if self.arrays[id].length == 0)
+            {
                 return Err(Diagnostic::new(span, "array elements must be values"));
             }
             let id = if let Some(id) = self

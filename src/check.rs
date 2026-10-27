@@ -208,7 +208,7 @@ fn analyze(
         }
         if matches!(
             global.name.as_str(),
-            "Self" | "this" | "print" | "move" | "box_int"
+            "Self" | "this" | "print" | "move" | "box_int" | "slice"
         ) || types.enumerator(&global.name).is_some()
             || function_declarations.contains_key(&global.name)
         {
@@ -262,6 +262,11 @@ fn analyze(
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
         ("box_int", Type::BoxInt, vec![Type::Integer(IntType::I32)]),
         ("move", Type::BoxInt, vec![Type::BoxInt]),
+        (
+            "slice",
+            Type::Void,
+            vec![Type::Void, Type::Integer(IntType::named("size_t").unwrap())],
+        ),
     ] {
         signatures.insert(
             name.to_owned(),
@@ -1013,6 +1018,12 @@ impl FunctionChecker<'_> {
                 }
             )
         {
+            if matches!(pointee, Pointee::Slice(_)) {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "slices are accessed through references",
+                ));
+            }
             let place = self.reference_place(expression, ty)?;
             self.access(
                 &place.root,
@@ -1582,6 +1593,55 @@ impl FunctionChecker<'_> {
                     self.require_unsafe(expression.span, "calling an unsafe function")?;
                 }
 
+                if name == "slice" {
+                    self.require_unsafe(expression.span, "constructing a slice from raw storage")?;
+                    let mut place = self.checked_place(&arguments[0])?;
+                    let Type::Pointer(id) = place.ty else {
+                        return Err(Diagnostic::new(
+                            arguments[0].span,
+                            "slice requires a raw pointer and length",
+                        ));
+                    };
+                    let pointer = self.types.pointers[id];
+                    if pointer.volatile || !self.types.is_sized(pointer.pointee) {
+                        return Err(Diagnostic::new(
+                            arguments[0].span,
+                            "slice requires a pointer to a complete non-volatile object type",
+                        ));
+                    }
+                    self.access(
+                        &place.root,
+                        &place.fields,
+                        false,
+                        place.via,
+                        arguments[0].span,
+                    )?;
+                    self.expression_types.insert(arguments[0].span, place.ty);
+                    if let ExpressionKind::Variable { name, .. } = &arguments[0].kind {
+                        let original = self.lookup(name, arguments[0].span)?.ty;
+                        if original.is_borrow() {
+                            self.reference_reads.insert(arguments[0].span, original);
+                        }
+                    }
+                    let ty = self.types.slice(
+                        pointer.pointee,
+                        pointer.mutable && place.mutable,
+                        expression.span,
+                    );
+                    place.ty = ty.referent();
+                    place.volatile = false;
+                    self.borrow_place(
+                        expression,
+                        arguments[0].span,
+                        place,
+                        matches!(ty, Type::Borrow { mutable: true, .. }),
+                    )?;
+                    self.require_type(
+                        &arguments[1],
+                        Type::Integer(IntType::named("size_t").unwrap()),
+                    )?;
+                    return Ok(ty);
+                }
                 if name == "move" {
                     if let ExpressionKind::Variable {
                         name: owner,
@@ -2092,10 +2152,19 @@ impl FunctionChecker<'_> {
                 "cannot create a mutable borrow through a shared borrow",
             ));
         }
-        let ty = place
+        let mut ty = place
             .ty
             .borrowed_qualified(mutable, place.volatile)
             .ok_or_else(|| Diagnostic::new(operand_span, "invalid borrow type"))?;
+        if let Type::Array(id) = place.ty
+            && self.types.arrays[id].length == 0
+        {
+            ty = Type::Borrow {
+                pointee: Pointee::Slice(id),
+                mutable,
+                volatile: place.volatile,
+            };
+        }
         let id = self.borrow(
             place.root,
             place.fields,
@@ -2196,7 +2265,7 @@ impl FunctionChecker<'_> {
     }
 
     fn function_reference(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
-        if matches!(name, "print" | "box_int" | "move") {
+        if matches!(name, "print" | "box_int" | "move" | "slice") {
             return Err(Diagnostic::new(
                 span,
                 "compiler builtins do not have callback addresses",
@@ -2317,7 +2386,9 @@ impl FunctionChecker<'_> {
                 volatile: target_volatile,
             },
         ) = (actual, expected)
-            && source == target
+            && (source == target
+                || matches!((source, target), (Pointee::Array(a), Pointee::Slice(b))
+                if self.types.arrays[a].element == self.types.arrays[b].element))
             && (source_mutable || !target_mutable)
             && source_volatile == target_volatile
         {
@@ -2873,7 +2944,9 @@ impl FunctionChecker<'_> {
                 self.integer(index_type, index.span)?;
                 if let Type::Array(id) = place.ty {
                     if let Some(value) = constant_integer(index)
-                        && (value < 0 || value >= self.types.arrays[id].length as i128)
+                        && (value < 0
+                            || (self.types.arrays[id].length != 0
+                                && value >= self.types.arrays[id].length as i128))
                     {
                         return Err(Diagnostic::new(index.span, "array index is out of bounds"));
                     }
@@ -2915,6 +2988,8 @@ impl FunctionChecker<'_> {
                 fields.push(projection.to_owned());
                 return Ok(Place {
                     ty,
+                    mutable: place.mutable
+                        && !matches!(place.ty, Type::Array(id) if self.types.arrays[id].length == 0),
                     fields,
                     ..place
                 });

@@ -11,6 +11,14 @@ struct Vector<T> {
 
     size_t count() const { return this.length; }
 
+    const T[]& view() const {
+        unsafe { return slice(this.data, this.length); }
+    }
+
+    T[]& view_mut() {
+        unsafe { return slice(this.data, this.length); }
+    }
+
     void reserve(size_t capacity) {
         if (capacity <= this.capacity) { return; }
         unsafe {

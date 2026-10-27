@@ -154,6 +154,11 @@ impl Index {
             ("print", "void print", vec!["value".to_owned()]),
             ("move", "move", vec!["value".to_owned()]),
             ("box_int", "BoxInt box_int", vec!["int value".to_owned()]),
+            (
+                "slice",
+                "unsafe T[]& slice",
+                vec!["T* pointer".to_owned(), "size_t length".to_owned()],
+            ),
         ] {
             functions.insert(
                 name.to_owned(),

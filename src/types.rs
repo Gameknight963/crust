@@ -55,7 +55,7 @@ impl Types {
             for variant in &definition.variants {
                 if matches!(
                     variant.name.as_str(),
-                    "Self" | "this" | "print" | "move" | "box_int"
+                    "Self" | "this" | "print" | "move" | "box_int" | "slice"
                 ) || !enumerators.insert(variant.name.clone())
                 {
                     return Err(Diagnostic::new(
@@ -230,7 +230,8 @@ impl Types {
         if let Type::Array(id) = ty {
             array_states[id] = 1;
             let array = self.arrays[id];
-            self.array_owns[id] = self.visit(array.element, states, array_states, array.span)?;
+            let owns = self.visit(array.element, states, array_states, array.span)?;
+            self.array_owns[id] = array.length != 0 && owns;
             array_states[id] = 2;
             self.order.push(ty);
             return Ok(self.array_owns[id]);
@@ -269,11 +270,38 @@ impl Types {
         };
     }
 
+    pub fn slice(&mut self, element: Type, mutable: bool, span: Span) -> Type {
+        let id = if let Some(id) = self
+            .arrays
+            .iter()
+            .position(|array| array.element == element && array.length == 0)
+        {
+            id
+        } else {
+            let id = self.arrays.len();
+            self.arrays.push(ArrayType {
+                element,
+                length: 0,
+                span,
+            });
+            self.array_owns.push(false);
+            self.order.push(Type::Array(id));
+            id
+        };
+        return Type::Borrow {
+            pointee: crate::ast::Pointee::Slice(id),
+            mutable,
+            volatile: false,
+        };
+    }
+
     pub fn is_sized(&self, ty: Type) -> bool {
         return match ty {
             Type::Void | Type::Function(_) => false,
             Type::Struct(id) => self.structs[id].complete,
-            Type::Array(id) => self.is_sized(self.arrays[id].element),
+            Type::Array(id) => {
+                self.arrays[id].length != 0 && self.is_sized(self.arrays[id].element)
+            }
             _ => true,
         };
     }
@@ -343,7 +371,9 @@ impl Types {
             _ => return None,
         };
         let array = self.arrays[id];
-        return if matches!(array.element, Type::Integer(IntType::U8 | IntType::Char)) {
+        return if array.length != 0
+            && matches!(array.element, Type::Integer(IntType::U8 | IntType::Char))
+        {
             Some(array.length)
         } else {
             None
@@ -436,6 +466,9 @@ impl Types {
                     .describe(pointer.pointee, self.describe(pointer.pointee))
                 )
             }
+            Type::Array(id) if self.arrays[id].length == 0 => {
+                format!("{}[]", self.describe(self.arrays[id].element))
+            }
             Type::Array(id) => format!(
                 "{}[{}]",
                 self.describe(self.arrays[id].element),
@@ -457,6 +490,9 @@ impl Types {
     }
 
     pub fn field(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
+        if matches!(ty, Type::Array(id) if self.arrays[id].length == 0) && name == "length" {
+            return Ok(Type::Integer(IntType::named("size_t").unwrap()));
+        }
         if let Type::Struct(id) = ty {
             if !self.structs[id].complete {
                 return Err(Diagnostic::new(

@@ -276,6 +276,10 @@ pub(crate) fn c_type(ty: Type) -> String {
         Type::Enum(id) => format!("crust_enum_{id}"),
         Type::Pointer(id) => format!("crust_ptr_{id}"),
         Type::Borrow {
+            pointee: Pointee::Slice(id),
+            ..
+        } => format!("struct crust_array_{id}"),
+        Type::Borrow {
             pointee,
             mutable,
             volatile,
@@ -310,7 +314,9 @@ fn header(function: &Function, kind: crate::ProgramKind) -> String {
     }
     return format!(
         "{}{result} {}{}({parameters})",
-        if kind == crate::ProgramKind::Library && function.link_name.is_none() {
+        if (kind == crate::ProgramKind::Library && function.link_name.is_none())
+            || function.name.contains('!')
+        {
             "static "
         } else if function.dll_import {
             "__declspec(dllimport) "
@@ -486,6 +492,10 @@ impl Emitter<'_> {
         for ty in &self.types.order {
             if let Type::Array(id) = ty {
                 let array = self.types.arrays[*id];
+                if array.length == 0 {
+                    self.line(&format!("struct crust_array_{id} {{ {} const *crust_elements; size_t crust_field_length; }};", c_type(array.element)));
+                    continue;
+                }
                 self.line(&format!(
                     "struct crust_array_{id} {{ {} crust_elements[{}]; }};",
                     c_type(array.element),
@@ -824,6 +834,20 @@ impl Emitter<'_> {
 
     fn convert_value(&mut self, value: String, from: Type, to: Type, span: Span) -> String {
         if from == to {
+            return value;
+        }
+        if let Type::Borrow {
+            pointee: Pointee::Slice(_),
+            ..
+        } = to
+        {
+            if let Type::Borrow {
+                pointee: Pointee::Array(source),
+                ..
+            } = from
+            {
+                return self.temporary(to, &format!("({}){{ .crust_elements = ({value})->crust_elements, .crust_field_length = {} }}", c_type(to), self.types.arrays[source].length));
+            }
             return value;
         }
         let cast = format!("({})({value})", c_type(to));
@@ -1197,6 +1221,27 @@ impl Emitter<'_> {
                 for argument in arguments {
                     values.push(self.value_expression(argument));
                 }
+                if name == "slice" {
+                    let ty = self.expression_type(expression);
+                    let Type::Borrow {
+                        pointee: Pointee::Slice(id),
+                        ..
+                    } = ty
+                    else {
+                        unreachable!()
+                    };
+                    let location = self.runtime_location(expression.span);
+                    self.line(&format!("if (({} == NULL && {} != 0) || {} > SIZE_MAX / sizeof({})) {{ crust_rt_fail(\"invalid slice storage\", {}); }}", values[0], values[1], values[1], c_type(self.types.arrays[id].element), location));
+                    return Some(self.temporary(
+                        ty,
+                        &format!(
+                            "({}){{ .crust_elements = {}, .crust_field_length = {} }}",
+                            c_type(ty),
+                            values[0],
+                            values[1]
+                        ),
+                    ));
+                }
                 if name == "box_int" {
                     values.push(self.runtime_location(expression.span));
                 }
@@ -1239,6 +1284,15 @@ impl Emitter<'_> {
             ExpressionKind::Unary { operator, operand } => {
                 if *operator == UnaryOperator::Address {
                     let place = self.place(operand);
+                    if matches!(
+                        self.expression_type(expression),
+                        Type::Borrow {
+                            pointee: Pointee::Slice(_),
+                            ..
+                        }
+                    ) {
+                        return Some(self.temporary(self.expression_type(expression), &place));
+                    }
                     return Some(
                         self.temporary(self.expression_type(expression), &format!("&({place})")),
                     );
@@ -1246,6 +1300,15 @@ impl Emitter<'_> {
                 if let UnaryOperator::Borrow { .. } = operator {
                     let ty = self.expression_type(expression);
                     let place = self.place(operand);
+                    if matches!(
+                        ty,
+                        Type::Borrow {
+                            pointee: Pointee::Slice(_),
+                            ..
+                        }
+                    ) {
+                        return Some(self.temporary(ty, &place));
+                    }
                     let value = self.temporary(ty, &format!("&({place})"));
                     return Some(value);
                 }
@@ -1377,14 +1440,26 @@ impl Emitter<'_> {
                     &format!("&({place})"),
                 );
                 let value = self.value_expression(index);
+                let dynamic = length == 0;
+                let bound = if dynamic {
+                    format!("({address})->crust_field_length")
+                } else {
+                    length.to_string()
+                };
                 let signed = self.expression_type(index).integer().unwrap().signed();
                 let check = format!(
-                    "crust_rt_index_{}({value}, {length}, {})",
+                    "crust_rt_index_{}({value}, {bound}, {})",
                     if signed { "signed" } else { "unsigned" },
                     self.runtime_location(index.span)
                 );
                 let checked_index =
                     self.temporary(Type::Integer(IntType::named("size_t").unwrap()), &check);
+                if dynamic && self.place_mutable(base) {
+                    return format!(
+                        "(({} *)({address})->crust_elements)[{checked_index}]",
+                        c_type(self.types.arrays[id].element)
+                    );
+                }
                 return format!("({address})->crust_elements[{checked_index}]");
             }
             ExpressionKind::Field { base, name, .. } => {
@@ -1392,7 +1467,14 @@ impl Emitter<'_> {
             }
             ExpressionKind::Variable { name, .. } => {
                 let local = self.local(name);
-                return if local.ty.is_borrow() {
+                return if local.ty.is_borrow()
+                    && !matches!(
+                        local.ty,
+                        Type::Borrow {
+                            pointee: Pointee::Slice(_),
+                            ..
+                        }
+                    ) {
                     format!("*({})", local.name)
                 } else {
                     local.name
@@ -1412,6 +1494,15 @@ impl Emitter<'_> {
             _ => {
                 let value = self.value_expression(expression);
                 if self.expression_type(expression).is_borrow() {
+                    if matches!(
+                        self.expression_type(expression),
+                        Type::Borrow {
+                            pointee: Pointee::Slice(_),
+                            ..
+                        }
+                    ) {
+                        return value;
+                    }
                     return format!("*({value})");
                 }
                 unreachable!("checker requires an assignable or borrowable place");

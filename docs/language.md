@@ -33,6 +33,55 @@ requires public visibility. Static functions cannot declare C imports or exports
 Imports are top-level declarations. Each file contains complete declarations,
 and file-based commands report errors with the original filename and location.
 
+## Slices
+
+`T[]&` borrows a sequence of elements whose length is known at runtime.
+`const T[]&` provides shared access. A slice carries a pointer and a length.
+Indexing checks the bounds, and the read-only `length` field has type `size_t`.
+
+```c
+int sum(const int[]& values) {
+    int total = 0;
+    for (size_t i = 0; i < values.length; i++) {
+        total += values[i];
+    }
+    return total;
+}
+
+int main() {
+    int[3] values = { 10, 20, 30 };
+    print(sum(&values));
+    return 0;
+}
+```
+
+Borrowing a fixed-size array converts it to a slice when the destination expects
+one. Slices support reborrowing, generic element types, and borrowed returns.
+Their backing storage must remain alive, and mutable access requires an exclusive
+borrow. Whole-slice assignment cannot replace the backing storage or its length.
+Access elements through the slice and use references when passing it onward.
+
+The library's `Buffer<T>` and `Vector<T>` provide `view()` and `view_mut()`.
+A live view prevents conflicting container operations, including resizing,
+clearing, moving, or destroying the container. Empty containers provide empty
+slices.
+
+Inside `unsafe`, `slice(pointer, length)` constructs a slice from a raw pointer
+stored in a variable or field. The pointer must refer to at least `length`
+initialized, contiguous elements, and that storage must remain valid for the
+borrow. The pointer's mutability and the source's access permissions determine
+the slice's mutability. Null pointers require a zero length. The compiler tracks
+the borrow against the pointer's source, including a resource wrapper's receiver.
+Volatile slice elements are currently rejected.
+
+```c
+const T[]& view() const {
+    unsafe { return slice(this.data, this.length); }
+}
+```
+
+See [the slice example](../examples/slices.cr).
+
 ## Functions and control flow
 
 - Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names

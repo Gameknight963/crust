@@ -135,7 +135,9 @@ impl Parser {
         }
         loop {
             match self.tokens.get(position).map(|token| &token.kind) {
-                Some(Token::Star | Token::Const | Token::Volatile | Token::Caret) => position += 1,
+                Some(Token::Star | Token::Const | Token::Volatile | Token::Ampersand) => {
+                    position += 1
+                }
                 Some(Token::LeftBracket) => {
                     let mut brackets = 1usize;
                     position += 1;

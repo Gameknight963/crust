@@ -26,5 +26,9 @@ Containers release their allocations on scope exit. Bounds errors and allocation
 failures terminate the process. Mutable and shared access follow the compiler's
 borrow rules.
 
+Buffers and vectors expose `view()` as `const T[]&` and `view_mut()` as `T[]&`.
+Slices provide checked indexing and a read-only `length` field. Keep views in
+a nested scope when the container needs to be changed afterward.
+
 The [container project](../examples/container_project/) and
 [sorting example](../examples/sorting.cr) use these implementations.

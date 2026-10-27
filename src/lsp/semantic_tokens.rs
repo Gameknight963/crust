@@ -71,7 +71,11 @@ fn builtin(token: &Token) -> Option<usize> {
         | Token::Void
         | Token::BoxInt => Some(0),
         Token::Identifier(name) if IntType::named(name).is_some() => Some(0),
-        Token::Identifier(name) if matches!(name.as_str(), "print" | "move" | "box_int") => Some(5),
+        Token::Identifier(name)
+            if matches!(name.as_str(), "print" | "move" | "box_int" | "slice") =>
+        {
+            Some(5)
+        }
         Token::Identifier(name) if name == "this" => Some(9),
         _ => None,
     };

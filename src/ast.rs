@@ -211,6 +211,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pointee {
+    Slice(usize),
     Integer(IntType),
     Bool,
     BoxInt,
@@ -223,6 +224,7 @@ pub enum Pointee {
 impl Pointee {
     pub fn ty(self) -> Type {
         return match self {
+            Pointee::Slice(id) => Type::Array(id),
             Pointee::Integer(kind) => Type::Integer(kind),
             Pointee::Bool => Type::Bool,
             Pointee::BoxInt => Type::BoxInt,

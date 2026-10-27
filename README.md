@@ -38,6 +38,7 @@ use UTF-8 byte arrays.
 ### Ownership and containers
 
 - [Library](lib/): reusable boxes, buffers, vectors, and sorting
+- [Slices](examples/slices.cr): borrowed views of arrays and containers
 - [C allocation](examples/c_owner.cr): private storage, checked borrows, and a destructor
 - [Generic buffer](examples/generic_buffer.cr): one container for integers, characters, and structs
 - [Generic box](examples/generic_box.cr): heap values, including other owners

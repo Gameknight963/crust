@@ -21,6 +21,14 @@ struct Buffer<T> {
 
     size_t count() const { return this.length; }
 
+    const T[]& view() const {
+        unsafe { return slice(this.data, this.length); }
+    }
+
+    T[]& view_mut() {
+        unsafe { return slice(this.data, this.length); }
+    }
+
     const T& at(size_t index) const {
         if (index >= this.length) { unsafe { abort(); } }
         unsafe { return &this.data[index]; }
