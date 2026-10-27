@@ -52,6 +52,8 @@ pub fn compile_shared_library(
     resolved_targets(options)?;
     validate_defines(&options.defines)?;
     let import = import_library(output);
+    let debug = debug_symbols_for(output, options);
+    let bundle = debug_bundle::output(output, options);
     let copies = runtime_copies(output, options)?;
     let mut outputs = vec![output];
     if cfg!(windows) {
@@ -64,25 +66,36 @@ pub fn compile_shared_library(
         outputs.push(&import);
     }
     outputs.extend(copies.iter().map(|(_, destination)| destination.as_path()));
-    return replace_outputs(&outputs, || {
-        invoke_compiler(c_path, output, options, true)?;
-        validate_native(output)?;
-        if cfg!(windows) {
-            let mut signature = [0; 8];
-            fs::File::open(&import)
-                .and_then(|mut file| file.read_exact(&mut signature))
-                .map_err(|error| {
-                    format!(
-                        "C compiler did not produce an import library for {}: {error}",
-                        output.display()
-                    )
-                })?;
-            if &signature != b"!<arch>\n" {
-                return Err(format!("invalid import library: {}", import.display()));
+    if let Some(debug) = &debug {
+        outputs.push(debug);
+    }
+    return debug_bundle::replace(bundle.as_deref(), || {
+        replace_outputs(&outputs, || {
+            invoke_compiler(c_path, output, options, true)?;
+            validate_native(output)?;
+            if let Some(debug) = &debug {
+                validate_debug_symbols(debug)?;
             }
-        }
-        copy_runtime_libraries(&copies)?;
-        return Ok(());
+            if let Some(bundle) = &bundle {
+                debug_bundle::validate(bundle, output)?;
+            }
+            if cfg!(windows) {
+                let mut signature = [0; 8];
+                fs::File::open(&import)
+                    .and_then(|mut file| file.read_exact(&mut signature))
+                    .map_err(|error| {
+                        format!(
+                            "C compiler did not produce an import library for {}: {error}",
+                            output.display()
+                        )
+                    })?;
+                if &signature != b"!<arch>\n" {
+                    return Err(format!("invalid import library: {}", import.display()));
+                }
+            }
+            copy_runtime_libraries(&copies)?;
+            return Ok(());
+        })
     });
 }
 

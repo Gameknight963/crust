@@ -69,6 +69,7 @@ or missing imports. `--target name` filters the target list.
 | `targets[].linkTargets` | Names of native target dependencies |
 | `targets[].runtimePaths` | Shared-library dependency directories for launching the target |
 | `targets[].runtimeLibraries` | Runtime library files required by the target and its dependencies |
+| `targets[].debug` | Whether native debug information is enabled |
 
 Metadata preserves target order from the manifest. The command works before a
 build and requires project configuration. `Project::metadata` exposes the same
@@ -160,6 +161,30 @@ one target and calls it from another:
 cargo run -- run --project examples/shared_project --target app
 ```
 
+## Native debug information
+
+Enable debug information on each target whose code you want to inspect:
+
+```toml
+[targets.native]
+debug = true
+```
+
+The driver passes `-g` to the C compiler for generated code and native sources.
+Source line records point back to the original `.cr` files, including imports
+and automatic cleanup. Native debuggers display the generated C names for
+variables and functions.
+
+- Windows builds using the MSVC ABI produce a `.pdb` beside the executable or DLL
+- macOS builds produce an adjacent `.dSYM` bundle
+- Other native formats retain the compiler's debug information in the artifact
+- Static libraries retain debug information in their object files
+
+Failed builds preserve the previous executable or library with its matching
+PDB or debug bundle. Symbol output paths receive the same input protection as
+native binaries. Metadata reports the target's `debug` setting without invoking
+the native compiler.
+
 ## C headers
 
 `crust emit-header --target math` writes declarations for the target's named C
@@ -241,6 +266,7 @@ link-inputs = ["native/extra.o"]
 - `sources` compile as C11 translation units alongside the generated C
 - `include-dirs` configure the native preprocessor's header search
 - `defines` pass object-like or function-like C macro definitions through `-D`
+- `debug` enables native debug information, defaulting to false
 - `runtime-libraries` lists existing shared-library files used when running the target
 - `library-dirs` configure the linker's library search
 - `libraries` pass names through the C driver's `-l` option

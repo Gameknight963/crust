@@ -79,12 +79,15 @@ name = "msbuild-test"
 name = "native"
 kind = "shared-library"
 entry = "../src/native.cr"
+[targets.native]
+debug = true
 [[targets]]
 name = "app"
 kind = "executable"
 entry = "../src/app.cr"
 [targets.native]
 link-targets = ["native"]
+debug = true
 [[targets]]
 name = "tool"
 kind = "executable"
@@ -111,6 +114,7 @@ entry = "../src/tool.cr"
     $crustApp = Join-Path $crustDirectory 'config/target/crust/app/app.exe'
     $crustTool = Join-Path $crustDirectory 'config/target/crust/tool/tool.exe'
     if (Test-Path -LiteralPath $crustTool) { throw 'Selecting app also built the unrelated tool target.' }
+    if (-not (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($crustApp, '.pdb')))) { throw 'MSBuild did not preserve the target debug setting.' }
     if ((& $crustApp) -ne '42' -or $LASTEXITCODE -ne 0) { throw 'MSBuild shared-library application did not run.' }
     Assert-CrustSuccess (Invoke-CrustBuild $crustHostKind $crustProject @('-t:Rebuild') '')
     if ((& $crustTool) -ne '7' -or $LASTEXITCODE -ne 0) { throw 'MSBuild all-target build did not produce the tool.' }

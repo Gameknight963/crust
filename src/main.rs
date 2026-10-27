@@ -338,10 +338,21 @@ fn build(
     let executable = kind.artifact_path(output)?;
     let import = crust::native::import_library(&executable);
     let mut destinations = vec![c_path.clone(), executable.clone()];
+    let debug_bundle =
+        (cfg!(target_os = "macos") && native.debug && kind != TargetKind::StaticLibrary)
+            .then(|| crust::native::debug_bundle(&executable));
+    if let Some(bundle) = &debug_bundle {
+        destinations.push(bundle.clone());
+    }
     if kind == TargetKind::SharedLibrary && cfg!(windows) {
         destinations.push(import);
     }
     if cfg!(windows) {
+        if kind != TargetKind::StaticLibrary
+            && let Some(debug) = crust::native::debug_symbols_for(&executable, native)
+        {
+            destinations.push(debug);
+        }
         if kind == TargetKind::Executable && !native.runtime_libraries.is_empty() {
             destinations.push(crust::native::application_manifest(&executable));
         }
@@ -372,7 +383,9 @@ fn build(
         };
         for input in protected {
             let input = input.canonicalize().map_err(|error| error.to_string())?;
-            if resolved == input {
+            if resolved == input
+                || (debug_bundle.as_ref() == Some(destination) && input.starts_with(&resolved))
+            {
                 return Err(format!(
                     "output would overwrite an input file: {}",
                     destination.display()

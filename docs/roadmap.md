@@ -73,6 +73,7 @@
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
 - Source line mapping in generated C for native function, expression, and cleanup locations
+- Per-target native debug information with PDB validation, debug bundle recovery, and protected symbol outputs
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links
@@ -93,7 +94,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Use `crust.toml` as the authoritative project configuration
-- Add native source-level debugging through the generated C backend
+- Add native debugger launch from `.crproj` and VS Code
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
 source outlines, reference searches, rename, and scope and member completion.

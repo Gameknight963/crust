@@ -40,6 +40,7 @@ ownership checking, C generation, and native compilation.
 | `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
 | `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
 | `src/native/tool_paths.rs` | Native tool working directories and preserved input paths |
+| `src/native/debug_bundle.rs` | macOS symbol bundle validation and recovery |
 | `src/native/source_mapping_tests.rs` | Native source locations, debug records, and filename escaping |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
@@ -251,6 +252,9 @@ The CLI writes the generated UTF-8 file after validation. See
 - Expression types, conversions, resolved calls, and constants are recorded separately for each function, including generic instances sharing source spans
 - Interface constraints compare concrete method signatures before function bodies are checked, and calls retain ordinary direct dispatch
 - The driver invokes `CC`, defaulting to `clang` on Windows and `cc` elsewhere
+- Native `debug` enables `-g` for generated C and native translation units, including archive objects
+- Windows MSVC debug builds validate fresh PDB files and recover matching binary and symbol outputs together
+- macOS debug builds validate the dSYM's Mach-O data and recover the previous bundle on failure
 - Compiler arguments follow the Clang/GCC convention
 - Single-file build output goes to `target/crust/`, using the source file's basename
 - Project build output goes to `<project>/target/crust/<target>/`

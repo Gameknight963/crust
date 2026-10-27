@@ -321,6 +321,178 @@ fn project_metadata_supports_discovery_explicit_projects_and_target_selection() 
 }
 
 #[test]
+fn debug_metadata_and_checks_work_without_a_native_compiler() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\ndebug=true\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n");
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    for command in ["metadata", "check"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg(command)
+            .env("CC", "missing-compiler-for-debug-check")
+            .current_dir(&fixture.directory)
+            .output()
+            .unwrap();
+        success(&output);
+        if command == "metadata" {
+            let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(metadata["targets"][0]["debug"], true);
+            assert_eq!(metadata["targets"][1]["debug"], false);
+        }
+    }
+    assert!(!fixture.directory.join("target").exists());
+}
+
+#[test]
+fn native_debug_information_records_original_source_files() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\ndebug=true\n");
+    fixture.write("main.cr", "import \"math.cr\";\nint main() {\n    int value = 41;\n    print(add(value));\n    return 0;\n}\n");
+    fixture.write("math.cr", "int add(int value) { return value + 1; }\n");
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let artifact = executable(&fixture);
+    if cfg!(target_os = "macos") {
+        assert!(
+            crust::native::debug_bundle(&artifact)
+                .join("Contents/Resources/DWARF/app")
+                .is_file()
+        );
+    } else if !cfg!(windows) {
+        assert!(
+            fs::read(&artifact)
+                .unwrap()
+                .windows(b".debug_info".len())
+                .any(|bytes| bytes == b".debug_info")
+        );
+    }
+    #[cfg(windows)]
+    {
+        let symbols = Command::new("llvm-pdbutil")
+            .args(["dump", "-summary", "-l"])
+            .arg(crust::native::debug_symbols(&artifact))
+            .output()
+            .unwrap();
+        success(&symbols);
+        let records = text(&symbols);
+        assert!(
+            records.contains("main.cr") && records.contains("math.cr"),
+            "{records}"
+        );
+        let guid = records
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("GUID: "))
+            .unwrap();
+        let binary = Command::new("llvm-readobj")
+            .arg("--coff-debug-directory")
+            .arg(&artifact)
+            .output()
+            .unwrap();
+        success(&binary);
+        assert!(text(&binary).contains(&format!("PDBGUID: {guid}")));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn debug_build_failures_restore_matching_binaries_import_libraries_and_pdbs() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\ndebug=true\n[[targets]]\nname='library'\nkind='shared-library'\nentry='library.cr'\n[targets.native]\ndebug=true\n");
+    fixture.write("main.cr", "int main() { print(42); return 0; }");
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    success(&fixture.invoke(&["build"]));
+    let app = executable(&fixture);
+    let library = fixture.directory.join("target/crust/library/library.dll");
+    for (target, artifact) in [("app", app.clone()), ("library", library)] {
+        let pdb = crust::native::debug_symbols(&artifact);
+        let mut artifacts = vec![artifact.clone(), pdb.clone()];
+        if target == "library" {
+            artifacts.push(crust::native::import_library(&artifact));
+        }
+        let previous: Vec<_> = artifacts
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect();
+        assert!(previous[1].starts_with(b"Microsoft C/C++ MSF 7.00"));
+        for failure in ["exit", "missing", "invalid"] {
+            let compiler = compiler_stub(
+                &fixture,
+                failure != "exit",
+                if failure == "exit" { 1 } else { 0 },
+            );
+            if failure != "exit" {
+                let mut script = fs::read_to_string(&compiler)
+                    .unwrap()
+                    .replace("invalid-executable", "MZ test artifact");
+                if failure == "invalid" {
+                    script = script.replace(
+                        "> \"%~1\" echo MZ test artifact",
+                        "> \"%~1\" echo MZ test artifact\r\n> \"%~dpn1.pdb\" echo invalid-debug-symbols-padding-not-a-pdb");
+                }
+                fs::write(&compiler, script).unwrap();
+            }
+            let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+                .args(["build", "--target", target])
+                .env("CC", compiler)
+                .current_dir(&fixture.directory)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            if failure == "missing" {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains("did not produce debug symbols"),
+                    "{target}/{failure}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            if failure == "invalid" {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains("invalid native debug symbols"),
+                    "{target}/{failure}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            for (path, contents) in artifacts.iter().zip(&previous) {
+                assert_eq!(
+                    &fs::read(path).unwrap(),
+                    contents,
+                    "{failure}: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    let output = Command::new(&app).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    fixture.write("main.cr", "int main() { print(7); return 0; }");
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "7\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn debug_symbols_cannot_overwrite_another_targets_source() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\ndebug=true\n[[targets]]\nname='source'\nkind='static-library'\nentry='target/crust/app/app.pdb'\n");
+    fixture.write("main.cr", "int main() { return 0; }");
+    let source = "extern int answer() { return 42; }";
+    fixture.write("target/crust/app/app.pdb", source);
+    let output = fixture.invoke(&["build", "--target", "app"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("overwrite an input"));
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join("target/crust/app/app.pdb")).unwrap(),
+        source
+    );
+    assert!(!executable(&fixture).exists());
+}
+
+#[test]
 fn discovers_projects_from_subdirectories_and_runs_the_named_output() {
     let fixture = Fixture::new();
     fixture.write("src/main.cr", "struct A { int n; static Self create() { return (Self){ .n = 42 }; } }; int main() { A a = A::create(); print(a.n); return 0; }");
@@ -1824,18 +1996,21 @@ fn native_libraries_and_relative_driver_inputs_build_in_percent_named_directorie
         [targets.native]
         sources = ['helper.c']
         include-dirs = ['include']
+        debug = true
         [[targets]]
         name = 'shared'
         kind = 'shared-library'
         entry = 'shared.cr'
         [targets.native]
         link-targets = ['core']
+        debug = true
         [[targets]]
         name = 'app'
         kind = 'executable'
         entry = 'main.cr'
         [targets.native]
         link-targets = ['shared']
+        debug = true
     "#,
     );
     fixture.write("include/offset.h", "#define OFFSET 1\n");
@@ -1852,6 +2027,22 @@ fn native_libraries_and_relative_driver_inputs_build_in_percent_named_directorie
     let output = fixture.invoke(&["run", "--target", "app"]);
     success(&output);
     assert_eq!(text(&output), "42\n");
+    for (name, file) in [("app", "app.exe"), ("shared", "shared.dll")] {
+        let pdb = crust::native::debug_symbols(
+            &fixture.directory.join("target/crust").join(name).join(file),
+        );
+        assert!(
+            fs::read(pdb)
+                .unwrap()
+                .starts_with(b"Microsoft C/C++ MSF 7.00")
+        );
+    }
+    assert!(
+        !fixture
+            .directory
+            .join("target/crust/core/core.pdb")
+            .exists()
+    );
 
     // Public driver paths retain their meaning relative to the caller even
     // when the native tool runs from the output directory.
@@ -1861,6 +2052,7 @@ fn native_libraries_and_relative_driver_inputs_build_in_percent_named_directorie
         .unwrap();
     fixture.write("relative.c", "#include \"offset.h\"\nextern int answer(int); int main(void) { return answer(41) == 41 + OFFSET ? 0 : 1; }\n");
     let options = crust::native::Options {
+        debug: true,
         include_dirs: vec![relative.join("include")],
         link_inputs: vec![relative.join("target/crust/shared/shared.lib")],
         runtime_libraries: vec![relative.join("target/crust/shared/shared.dll")],

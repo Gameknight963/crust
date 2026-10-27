@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod archive;
+mod debug_bundle;
 mod executable;
 #[cfg(test)]
 mod runtime_tests;
@@ -16,11 +17,13 @@ mod tool_paths;
 mod volatile_tests;
 pub use archive::compile_static_library;
 pub(crate) use archive::validate_options as validate_archive_options;
+pub use debug_bundle::debug_bundle;
 pub use shared::{application_manifest, compile_shared_library, import_library};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
+    pub debug: bool,
     pub defines: Vec<String>,
     pub sources: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
@@ -46,6 +49,15 @@ pub fn compile_file_with_options(
     resolved_targets(options)?;
     validate_defines(&options.defines)?;
     let copies = shared::runtime_copies(executable, options)?;
+    let debug = debug_symbols_for(executable, options);
+    let bundle = debug_bundle::output(executable, options);
+    if debug.is_some()
+        && executable
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdb"))
+    {
+        return Err("an executable and its debug symbols need distinct paths".to_owned());
+    }
     let manifest = (cfg!(windows) && !options.runtime_libraries.is_empty())
         .then(|| application_manifest(executable));
     let build = || {
@@ -54,13 +66,16 @@ pub fn compile_file_with_options(
                 shared::write_application_manifest(manifest, options)?;
             }
             invoke_compiler(c_path, executable, options, false)?;
+            if let Some(debug) = &debug {
+                validate_debug_symbols(debug)?;
+            }
+            if let Some(bundle) = &bundle {
+                debug_bundle::validate(bundle, executable)?;
+            }
             shared::copy_runtime_libraries(&copies)?;
             return Ok(());
         })
     };
-    if copies.is_empty() && manifest.is_none() {
-        return build();
-    }
     let mut outputs: Vec<_> = copies
         .iter()
         .map(|(_, destination)| destination.as_path())
@@ -68,7 +83,55 @@ pub fn compile_file_with_options(
     if let Some(manifest) = &manifest {
         outputs.push(manifest);
     }
-    return shared::replace_outputs(&outputs, build);
+    if let Some(debug) = &debug {
+        outputs.push(debug);
+    }
+    return debug_bundle::replace(bundle.as_deref(), || {
+        if outputs.is_empty() {
+            return build();
+        }
+        return shared::replace_outputs(&outputs, build);
+    });
+}
+
+pub fn debug_symbols(output: &Path) -> PathBuf {
+    return output.with_extension("pdb");
+}
+
+fn windows_gnu(compiler: &std::ffi::OsStr) -> bool {
+    return Command::new(compiler)
+        .arg("-dumpmachine")
+        .output()
+        .ok()
+        .is_some_and(|result| {
+            let target = String::from_utf8_lossy(&result.stdout).to_ascii_lowercase();
+            result.status.success() && (target.contains("mingw") || target.contains("windows-gnu"))
+        });
+}
+
+pub fn debug_symbols_for(output: &Path, options: &Options) -> Option<PathBuf> {
+    if !cfg!(windows) || !options.debug {
+        return None;
+    }
+    let compiler = env::var_os("CC").unwrap_or_else(|| "clang".into());
+    return (!windows_gnu(&compiler)).then(|| debug_symbols(output));
+}
+
+fn validate_debug_symbols(path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut signature = [0; 32];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut signature))
+        .map_err(|error| {
+            format!(
+                "C compiler did not produce debug symbols for {}: {error}",
+                path.display()
+            )
+        })?;
+    if &signature != b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0" {
+        return Err(format!("invalid native debug symbols: {}", path.display()));
+    }
+    return Ok(());
 }
 
 fn invoke_compiler(
@@ -87,6 +150,9 @@ fn invoke_compiler(
     let mut command = paths.command(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
+    if options.debug {
+        command.arg("-g");
+    }
     if shared {
         command.arg("-DCRUST_BUILD_SHARED");
         if cfg!(target_os = "macos") {
@@ -95,16 +161,7 @@ fn invoke_compiler(
             command.arg("-shared");
         }
         if cfg!(windows) {
-            let gnu = paths
-                .command(&compiler)
-                .arg("-dumpmachine")
-                .output()
-                .ok()
-                .is_some_and(|result| {
-                    let target = String::from_utf8_lossy(&result.stdout).to_ascii_lowercase();
-                    result.status.success()
-                        && (target.contains("mingw") || target.contains("windows-gnu"))
-                });
+            let gnu = windows_gnu(&compiler);
             let mut flag = std::ffi::OsString::from(if gnu { "--out-implib=" } else { "/implib:" });
             flag.push(paths.output(&import_library(executable)));
             command.arg("-Xlinker").arg(flag);
