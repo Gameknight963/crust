@@ -1563,6 +1563,23 @@ impl Parser {
         return self.nested(Self::statement_inner);
     }
 
+    fn control_body(&mut self) -> Result<Block, Diagnostic> {
+        if self.at(&Token::LeftBrace) {
+            return self.block();
+        }
+        let statement = self.statement()?;
+        if matches!(statement.kind, StatementKind::Local { .. }) {
+            return Err(Diagnostic::new(
+                statement.span,
+                "a local declaration in a control-flow body requires braces",
+            ));
+        }
+        return Ok(Block {
+            span: statement.span,
+            statements: vec![statement],
+        });
+    }
+
     fn statement_inner(&mut self) -> Result<Statement, Diagnostic> {
         let start = self.current().span;
 
@@ -1586,17 +1603,9 @@ impl Parser {
             self.expect(Token::LeftParen, "expected '(' after 'if'")?;
             let condition = self.expression(1)?;
             self.expect(Token::RightParen, "expected ')' after the condition")?;
-            let then_block = self.block()?;
+            let then_block = self.control_body()?;
             let else_block = if self.consume(&Token::Else) {
-                if self.at(&Token::If) {
-                    let branch = self.statement()?;
-                    Some(Block {
-                        span: branch.span,
-                        statements: vec![branch],
-                    })
-                } else {
-                    Some(self.block()?)
-                }
+                Some(self.control_body()?)
             } else {
                 None
             };
@@ -1614,7 +1623,7 @@ impl Parser {
         }
 
         if self.consume(&Token::Do) {
-            let body = self.block()?;
+            let body = self.control_body()?;
             self.expect(Token::While, "expected 'while' after the do body")?;
             self.expect(Token::LeftParen, "expected '(' after 'while'")?;
             let condition = self.expression(1)?;
@@ -1633,7 +1642,7 @@ impl Parser {
             self.expect(Token::LeftParen, "expected '(' after 'while'")?;
             let condition = self.expression(1)?;
             self.expect(Token::RightParen, "expected ')' after the condition")?;
-            let body = self.block()?;
+            let body = self.control_body()?;
             return Ok(Statement {
                 span: start.through(body.span),
                 kind: StatementKind::While {
@@ -1678,7 +1687,7 @@ impl Parser {
                 self.assignment_or_expression()?
             };
             let step_end = self.expect(Token::RightParen, "expected ')' after the for step")?;
-            let body = self.block()?;
+            let body = self.control_body()?;
             self.value_scopes.pop();
             let span = start.through(body.span);
             let loop_statement = Statement {

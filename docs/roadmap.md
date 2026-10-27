@@ -7,6 +7,7 @@
 - Instance methods, value receivers, and destructors
 - Bare struct names, basic typedefs, and static methods
 - For loops, break/continue cleanup, and compound assignments
+- Single-statement control-flow bodies with nearest-if else binding and ordinary cleanup
 - Do-while loops with body-first checking, condition-directed continue, and ownership cleanup
 - Conditional expressions with short-circuit evaluation, owner-state merging, and integer constants
 - Prefix and postfix increment and decrement with single destination evaluation and volatile accesses

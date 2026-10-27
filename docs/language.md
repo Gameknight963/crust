@@ -21,7 +21,7 @@ and file-based commands report errors with the original filename and location.
 - Executable targets use `int main()` or `int main(void)` as their entry point
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
-- `if`, `else`, `while`, `do`, and `for` bodies use braces
+- `if`, `else`, `while`, `do`, and `for` bodies accept blocks or single statements
 - `else if` chains test successive conditions and give each branch its own scope
 - `break` exits the innermost loop, and `continue` advances to its next iteration
 - `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
@@ -52,6 +52,15 @@ int main() {
 
 For-loop clauses may be empty. An omitted condition continues until a `break`
 or return. Header variables are scoped to the loop.
+
+A single-statement body can contain an expression, return, loop control, or
+another control-flow statement. An `else` belongs to the nearest unmatched
+`if`. Local declarations in control-flow bodies require braces.
+
+```c
+if (value < 0) return 0;
+for (int index = 0; index < 3; index++) print(index);
+```
 
 `do { ... } while (condition);` runs its body before testing the condition.
 `continue` cleans up body locals and advances to that test. `break` exits without

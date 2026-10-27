@@ -55,6 +55,94 @@ fn do_while_runs_once_and_continue_evaluates_the_condition() {
 }
 
 #[test]
+fn single_statement_bodies_bind_else_to_the_nearest_if_and_run_loop_steps() {
+    run(
+        r#"
+        int select(int value) {
+            if (value == 0) return 10;
+            else if (value == 1) return 20;
+            else return 30;
+        }
+        int main() {
+            if (true)
+                if (false) print(1);
+                else print(2);
+            if (false)
+                if (true) print(3);
+                else print(4);
+            else print(5);
+            print(select(0)); print(select(1)); print(select(2));
+            int value = 0;
+            while (value < 3) value++;
+            print(value);
+            do value--; while (value > 1);
+            print(value);
+            for (int index = 0; index < 3; index++)
+                if (index == 1) continue;
+                else print(index);
+            int count = 0;
+            do continue; while (++count < 3);
+            print(count);
+            while (true) break;
+            for (;;) break;
+            do ; while (false);
+            for (; false;) ;
+            return 0;
+        }
+    "#,
+        "2\n5\n10\n20\n30\n3\n1\n0\n2\n3\n",
+        "",
+    );
+}
+
+#[test]
+fn single_statement_bodies_preserve_return_cleanup_and_discarded_owner_cleanup() {
+    run(
+        r#"
+        int select(bool condition) {
+            BoxInt owner = box_int(10);
+            if (condition) return *owner;
+            else return 20;
+        }
+        int main() {
+            print(select(true)); print(select(false));
+            int index = 0;
+            while (index++ < 2) box_int(index);
+            print(index);
+            do box_int(index++); while (index < 5);
+            print(index);
+            for (index = 0; index < 2; index++) box_int(index);
+            print(index);
+            return 0;
+        }
+    "#,
+        "10\n20\n3\n5\n2\n",
+        "drop:10\ndrop:10\ndrop:1\ndrop:2\ndrop:3\ndrop:4\ndrop:0\ndrop:1\n",
+    );
+}
+
+#[test]
+fn single_statement_bodies_reject_declarations_without_braces_and_bound_nesting() {
+    for body in [
+        "if (true) int value = 1;",
+        "if (true) ; else int value = 1;",
+        "while (false) int value = 1;",
+        "do int value = 1; while (false);",
+        "for (;;) int value = 1;",
+    ] {
+        let error = crust::check(&format!("int main() {{ {body} return 0; }}")).unwrap_err();
+        assert!(error.message.contains("requires braces"), "{body}: {error}");
+    }
+    let source = format!("int main() {{ {}return 0; }}", "if (true) ".repeat(2000));
+    assert!(
+        crust::check(&source)
+            .unwrap_err()
+            .message
+            .contains("nesting limit")
+    );
+}
+
+#[test]
 fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break() {
     run(
         r#"
@@ -121,7 +209,7 @@ fn do_while_rejects_invalid_syntax_scope_and_owner_backedges() {
         "do { int local = 1; } while (local);",
         "do { } while (true)",
         "do { } (true);",
-        "do print(1); while (true);",
+        "do print(1) while (true);",
     ] {
         let source = format!(
             "int consume(BoxInt owner) {{ return 0; }} int main() {{ BoxInt a = box_int(7); {body} return 0; }}"
@@ -410,7 +498,7 @@ fn rejects_loop_control_outside_loops_and_for_scope_leaks() {
         "int main() { for (int i = 0; i < 1; i = i + 1) {} return i; }",
         "int main() { for (break; 1;) {} return 0; }",
         "int main() { for (return 0; 1;) {} return 0; }",
-        "int main() { for (;;) break; return 0; }",
+        "int main() { for (int i = 0; i < 1; i++) ; print(i); return 0; }",
         "int f() { while (1) { break; } } int main() { return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
