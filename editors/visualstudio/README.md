@@ -6,6 +6,8 @@ Language support through the bundled `crust-lsp` server:
 - Completion, hover, and signature help
 - Navigation, references, and rename
 - Shared syntax highlighting and bracket configuration
+- Project build and check commands with Error List navigation
+- Executable target selection and console execution
 
 ## Build and install
 
@@ -23,6 +25,28 @@ Use `-Offline` when the Cargo and NuGet dependencies are cached. A development
 server can be selected by setting `CRUST_LSP_PATH` to its full path before
 starting Visual Studio.
 
+## Build and run projects
+
+Open a source file or `crust.toml`, then use **Tools > Crust**:
+
+- **Build Project** builds all targets
+- **Check Project** checks all targets
+- **Run Project** builds an executable target and opens its console
+
+Commands save open documents and use the project containing the active file.
+Run offers a target selector when a project has multiple executables.
+The **Crust** Output pane contains compiler output. Source errors also appear
+in the Error List, where double-click opens the source location.
+
+Programs inherit console input and output. The console stays open after the
+program exits and closes when you press a key.
+
+The VSIX bundles the compiler and language server. Install a C11 compiler and
+development libraries for native builds, as described in the project README.
+Set `CRUST_COMPILER_PATH` to a development compiler's full path before starting
+Visual Studio to override the bundled compiler. Setting `CRUST_LSP_PATH` also
+selects a compiler beside that server when one exists.
+
 ## Development checks
 
 ```powershell
@@ -32,4 +56,6 @@ starting Visual Studio.
 
 The test checks the VSIX contents and runs the packaged client with Visual
 Studio's runtime assemblies. It verifies activation, unsaved diagnostics,
-recovery after an edit, and server shutdown.
+recovery after an edit, and server shutdown. It also checks command resources,
+project metadata, compiler diagnostics, native builds, and console input through
+the packaged tools using a project path containing Unicode, spaces, and `&`.

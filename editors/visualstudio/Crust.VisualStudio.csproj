@@ -12,16 +12,21 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>Crust.VisualStudio</AssemblyName>
-    <GeneratePkgDefFile>false</GeneratePkgDefFile>
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <UseCodebase>true</UseCodebase>
     <CreateVsixContainer>true</CreateVsixContainer>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
     <IncludeCopyLocalReferencesInVSIXContainer>false</IncludeCopyLocalReferencesInVSIXContainer>
     <DeployExtension>false</DeployExtension>
     <ServerExecutable Condition="'$(ServerExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/release/crust-lsp.exe</ServerExecutable>
+    <CompilerExecutable Condition="'$(CompilerExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/release/crust.exe</CompilerExecutable>
+    <ConsoleExecutable Condition="'$(ConsoleExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/visualstudio-console/Crust.Console.exe</ConsoleExecutable>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Client" Version="17.14.60" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VisualStudio.Shell.15.0" Version="17.14.40264" ExcludeAssets="runtime" />
+    <PackageReference Include="envdte" Version="17.14.40260" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.CoreUtility" Version="17.14.249" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.Text.Logic" Version="17.14.249" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.Telemetry" Version="17.14.18" ExcludeAssets="runtime" />
@@ -31,10 +36,17 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.ComponentModel.Composition" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Design" />
     <Compile Include="CrustLanguageClient.cs" />
+    <Compile Include="CrustPackage.cs" />
+    <Compile Include="ProjectTool.cs" />
     <Compile Include="AssemblyInfo.cs" />
     <None Include="source.extension.vsixmanifest"><SubType>Designer</SubType></None>
     <Content Include="crust.pkgdef"><IncludeInVSIX>true</IncludeInVSIX></Content>
+    <VSCTCompile Include="Commands.vsct"><ResourceName>Menus.ctmenu</ResourceName></VSCTCompile>
     <Content Include="../vscode/syntaxes/crust.tmLanguage.json">
       <Link>Grammars/crust.tmLanguage.json</Link>
       <IncludeInVSIX>true</IncludeInVSIX>
@@ -50,9 +62,16 @@
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="$(CompilerExecutable)">
+      <Link>Server/crust.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(ConsoleExecutable)">
+      <Link>Tools/Crust.Console.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <Target Name="RequireLanguageServer" BeforeTargets="BeforeBuild">
     <Error Condition="!Exists('$(ServerExecutable)')" Text="Build the bundled server with cargo build --release --bin crust-lsp, or pass /p:ServerExecutable with its full path." />
+    <Error Condition="!Exists('$(CompilerExecutable)') Or !Exists('$(ConsoleExecutable)')" Text="Run editors/visualstudio/build.ps1 to build the bundled compiler and console launcher." />
   </Target>
   <Import Project="$(MSBuildToolsPath)/Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)/VSSDK/Microsoft.VsSDK.targets" Condition="Exists('$(VSToolsPath)/VSSDK/Microsoft.VsSDK.targets')" />

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+  <Commands package="guidCrustPackage">
+    <Groups>
+      <Group guid="guidCrustCommands" id="CrustToolsGroup" priority="0x0600"><Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS" /></Group>
+      <Group guid="guidCrustCommands" id="CrustCommandsGroup" priority="0x0100"><Parent guid="guidCrustCommands" id="CrustMenu" /></Group>
+    </Groups>
+    <Menus>
+      <Menu guid="guidCrustCommands" id="CrustMenu" priority="0x0100" type="Menu">
+        <Parent guid="guidCrustCommands" id="CrustToolsGroup" /><Strings><ButtonText>Crust</ButtonText></Strings>
+      </Menu>
+    </Menus>
+    <Buttons>
+      <Button guid="guidCrustCommands" id="BuildProject" priority="0x0100" type="Button"><Parent guid="guidCrustCommands" id="CrustCommandsGroup" /><Strings><ButtonText>Build Project</ButtonText></Strings></Button>
+      <Button guid="guidCrustCommands" id="CheckProject" priority="0x0200" type="Button"><Parent guid="guidCrustCommands" id="CrustCommandsGroup" /><Strings><ButtonText>Check Project</ButtonText></Strings></Button>
+      <Button guid="guidCrustCommands" id="RunProject" priority="0x0300" type="Button"><Parent guid="guidCrustCommands" id="CrustCommandsGroup" /><Strings><ButtonText>Run Project</ButtonText></Strings></Button>
+    </Buttons>
+  </Commands>
+  <Symbols>
+    <GuidSymbol name="guidCrustPackage" value="{f9801e0c-892b-4886-8045-29fe53df7965}" />
+    <GuidSymbol name="guidCrustCommands" value="{df604453-c0fa-4bcb-8d82-813306bf15b2}">
+      <IDSymbol name="CrustToolsGroup" value="0x1000" /><IDSymbol name="CrustCommandsGroup" value="0x1001" /><IDSymbol name="CrustMenu" value="0x1002" />
+      <IDSymbol name="BuildProject" value="0x0100" /><IDSymbol name="CheckProject" value="0x0101" /><IDSymbol name="RunProject" value="0x0102" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

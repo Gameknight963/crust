@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustPackage = Join-Path $crustRepoRoot 'target/crust-visualstudio.vsix'
 $crustArchive = [IO.Compression.ZipFile]::OpenRead($crustPackage)
 try {
-    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Server/crust-lsp.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef')) {
+    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef')) {
         if (-not $crustArchive.GetEntry($crustRequired)) { throw "VSIX is missing $crustRequired" }
     }
     if ($crustArchive.Entries | Where-Object { $_.Name -like 'Microsoft.VisualStudio.*.dll' }) {
@@ -20,10 +20,18 @@ try {
     }
 } finally { $crustArchive.Dispose() }
 [IO.Compression.ZipFile]::ExtractToDirectory($crustPackage, $crustTestRoot)
+$crustRegistration = Get-Content -LiteralPath (Join-Path $crustTestRoot 'Crust.VisualStudio.pkgdef') -Raw
+if (-not $crustRegistration.Contains('"CodeBase"="$PackageFolder$\Crust.VisualStudio.dll"') -or
+    -not $crustRegistration.Contains('Menus.ctmenu') -or
+    -not $crustRegistration.Contains('{f9801e0c-892b-4886-8045-29fe53df7965}')) {
+    throw 'VSIX is missing command-package registration or its assembly path.'
+}
 $crustSources = @{
     'Grammars/crust.tmLanguage.json' = 'editors/vscode/syntaxes/crust.tmLanguage.json'
     'language-configuration.json' = 'editors/vscode/language-configuration.json'
     'Server/crust-lsp.exe' = 'target/release/crust-lsp.exe'
+    'Server/crust.exe' = 'target/release/crust.exe'
+    'Tools/Crust.Console.exe' = 'target/visualstudio-console/Crust.Console.exe'
 }
 foreach ($crustEntry in $crustSources.GetEnumerator()) {
     $crustPackagedFile = Join-Path $crustTestRoot $crustEntry.Key

@@ -89,7 +89,8 @@ tokens until the program checks successfully again.
 
 ## Visual Studio
 
-The [Visual Studio extension](../editors/visualstudio/) bundles `crust-lsp`.
+The [Visual Studio extension](../editors/visualstudio/) bundles the compiler and
+`crust-lsp`.
 
 ```powershell
 ./editors/visualstudio/build.ps1
@@ -97,7 +98,13 @@ The [Visual Studio extension](../editors/visualstudio/) bundles `crust-lsp`.
 
 Install `target/crust-visualstudio.vsix`, restart Visual Studio, and open a folder
 containing `crust.toml` and `.cr` files. The extension targets versions 17.14
-through 18.x on Windows x64. Build and run programs with the Crust CLI.
+through 18.x on Windows x64.
+
+Open a source file or `crust.toml`, then use **Tools > Crust** to build, check,
+or run its project. Commands save open documents, write compiler output to the
+**Crust** Output pane, and put source errors in the Error List. Run selects an
+executable target and opens a console with input support. The console waits for
+a key after the program exits.
 
 The client uses Visual Studio's editing UI for compiler diagnostics, completion,
 navigation, references, rename, and semantic highlighting. Syntax highlighting
@@ -105,6 +112,8 @@ and bracket configuration use the same files as the VS Code extension.
 
 Set `CRUST_LSP_PATH` to a development server's full path before starting Visual
 Studio to use that server. The default is the server bundled with the VSIX.
+`CRUST_COMPILER_PATH` selects a development compiler. Otherwise, commands use a
+compiler beside the configured server when present, then the bundled compiler.
 
 ## VS Code
 

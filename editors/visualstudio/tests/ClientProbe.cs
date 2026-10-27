@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Resources;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,7 +20,7 @@ internal static class ClientProbe
         try
         {
             Run(args[0], args[1]);
-            Console.WriteLine("Visual Studio client activation and bundled-server protocol checks passed");
+            Console.WriteLine("Visual Studio client, project commands, console execution, and bundled-server checks passed");
             return 0;
         }
         catch (Exception error)
@@ -49,6 +51,7 @@ internal static class ClientProbe
         };
         Environment.SetEnvironmentVariable("CRUST_LSP_PATH", null);
         var assembly = Assembly.LoadFrom(Path.Combine(package, "Crust.VisualStudio.dll"));
+        CheckProjectCommands(package, assembly);
         var type = assembly.GetType("Crust.VisualStudio.CrustLanguageClient", true);
         using (var client = (IDisposable)Activator.CreateInstance(type))
         {
@@ -95,6 +98,80 @@ internal static class ClientProbe
             var closed = Task.Run(() => reader.ReadByte());
             Assert(closed.Wait(TimeSpan.FromSeconds(10)) && closed.Result == -1, "server shutdown");
         }
+    }
+
+    private static void CheckProjectCommands(string package, Assembly assembly)
+    {
+        bool commandTable = false;
+        foreach (string resource in assembly.GetManifestResourceNames().Where(name => name.EndsWith(".resources", StringComparison.Ordinal)))
+        {
+            using (var reader = new ResourceReader(assembly.GetManifestResourceStream(resource)))
+                foreach (System.Collections.DictionaryEntry entry in reader)
+                    if ((string)entry.Key == "Menus.ctmenu") commandTable = entry.Value is byte[];
+        }
+        Assert(commandTable, "command table resource");
+        var tool = assembly.GetType("Crust.VisualStudio.ProjectTool", true);
+        Func<string, string> quote = value => (string)tool.GetMethod("QuoteArgument").Invoke(null, new object[] { value });
+        Assert(quote("") == "\"\"", "empty argument quoting");
+        Assert(quote("C:\\folder\\") == "\"C:\\folder\\\\\"", "trailing slash quoting");
+        Assert(quote("a\"b") == "\"a\\\"b\"", "embedded quote escaping");
+        string root = Path.Combine(package, "project ü & spaces");
+        string nested = Path.Combine(root, "src");
+        Directory.CreateDirectory(nested);
+        string manifest = Path.Combine(root, "crust.toml");
+        string source = Path.Combine(nested, "main.cr");
+        Write(manifest, "[project]\nname='console'\n[[targets]]\nname='app'\nkind='executable'\nentry='src/main.cr'\n[targets.native]\nsources=['input.c']\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n");
+        Write(source, "int main() { return missing; }");
+        Write(Path.Combine(root, "library.cr"), "extern int answer() { return 42; }");
+        Write(Path.Combine(root, "input.c"), "#include <stdio.h>\nint interactive(void) { int value = 0; if (scanf(\"%d\", &value) != 1) return 3; printf(\"%d\\n\", value + 1); return 0; }\n");
+        Assert((string)tool.GetMethod("FindManifest").Invoke(null, new object[] { source }) == manifest, "nearest manifest");
+        Environment.SetEnvironmentVariable("CRUST_COMPILER_PATH", null);
+        string compiler = (string)tool.GetMethod("CompilerPath").Invoke(null, null);
+        Assert(compiler == Path.Combine(package, "Server", "crust.exe"), "bundled compiler path");
+        object info = Await((Task)tool.GetMethod("ReadMetadataAsync").Invoke(null, new object[] { compiler, manifest }));
+        var targets = (Array)info.GetType().GetProperty("targets").GetValue(info);
+        Assert(targets.Length == 2, "metadata target kinds");
+        object app = targets.GetValue(0);
+        Assert((string)app.GetType().GetProperty("kind").GetValue(app) == "executable", "executable metadata");
+        Assert(!Directory.Exists(Path.Combine(root, "target")), "metadata leaves build outputs untouched");
+        Func<string, object> execute = command => Await((Task)tool.GetMethod("ExecuteAsync").Invoke(null, new object[] { compiler, manifest, command, "app" }));
+        object result = execute("check");
+        Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) != 0, "invalid source check");
+        string diagnostic = (string)result.GetType().GetProperty("Error").GetValue(result);
+        Assert(diagnostic.Contains("main.cr:1:") && diagnostic.Contains("missing"), "compiler error path and message");
+        Write(source, "extern int interactive(); int main() { unsafe { return interactive(); } }");
+        result = execute("build");
+        Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) == 0,
+            "project build: " + result.GetType().GetProperty("Error").GetValue(result));
+        string executable = (string)app.GetType().GetProperty("output").GetValue(app);
+        Assert(File.Exists(executable), "built executable");
+        using (var console = Process.Start(new ProcessStartInfo(Path.Combine(package, "Tools", "Crust.Console.exe"),
+            quote(executable) + " " + quote(root)) {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            }))
+        {
+            Assert(console != null, "console launch");
+            console.StandardInput.WriteLine("41");
+            console.StandardInput.Close();
+            Task<string> output = console.StandardOutput.ReadToEndAsync();
+            Task<string> error = console.StandardError.ReadToEndAsync();
+            if (!console.WaitForExit(15000)) { console.Kill(); throw new Exception("console input timeout"); }
+            Assert(console.ExitCode == 0, "console program exit: " + output.Result + error.Result);
+            Assert(output.Result.Replace("\r\n", "\n").StartsWith("42\n", StringComparison.Ordinal), "inherited console input/output: " + output.Result);
+        }
+    }
+
+    private static object Await(Task task)
+    {
+        Assert(task.Wait(TimeSpan.FromSeconds(30)), "project command timeout");
+        return task.GetType().GetProperty("Result").GetValue(task);
+    }
+
+    private static void Write(string path, string text)
+    {
+        File.WriteAllText(path, text, new UTF8Encoding(false));
     }
 
     private static Dictionary<string, object> Object(object value) => (Dictionary<string, object>)value;

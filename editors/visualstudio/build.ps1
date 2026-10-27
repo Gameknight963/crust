@@ -14,7 +14,7 @@ if (-not $MSBuild) {
 if (-not $MSBuild -or -not (Test-Path -LiteralPath $MSBuild)) {
     throw 'Visual Studio MSBuild was not found. Pass -MSBuild with its full path.'
 }
-$crustCargoArgs = @('build', '--release', '--bin', 'crust-lsp', '--manifest-path', (Join-Path $crustRepoRoot 'Cargo.toml'))
+$crustCargoArgs = @('build', '--release', '--bins', '--manifest-path', (Join-Path $crustRepoRoot 'Cargo.toml'))
 $crustBuildArgs = @((Join-Path $PSScriptRoot 'Crust.VisualStudio.csproj'), '/restore', '/t:Rebuild', '/m', '/v:minimal', "/p:Configuration=$Configuration")
 if ($Offline) {
     $crustCargoArgs += '--offline'
@@ -24,6 +24,11 @@ if ($Offline) {
 }
 & cargo @crustCargoArgs
 if ($LASTEXITCODE -ne 0) { throw 'Language server build failed' }
+$crustConsoleDirectory = Join-Path $crustRepoRoot 'target/visualstudio-console'
+[IO.Directory]::CreateDirectory($crustConsoleDirectory) | Out-Null
+$crustCsc = Join-Path (Split-Path -Parent $MSBuild) 'Roslyn/csc.exe'
+& $crustCsc /nologo /warnaserror /langversion:latest /target:exe "/out:$crustConsoleDirectory/Crust.Console.exe" (Join-Path $PSScriptRoot 'ConsoleRunner.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Console launcher build failed' }
 & $MSBuild @crustBuildArgs
 if ($LASTEXITCODE -ne 0) { throw 'Visual Studio extension build failed' }
 $crustArtifact = Join-Path $PSScriptRoot "bin/$Configuration/net472/Crust.VisualStudio.vsix"

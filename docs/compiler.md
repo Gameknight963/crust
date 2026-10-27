@@ -53,6 +53,9 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `editors/visualstudio/CrustLanguageClient.cs` | Visual Studio language client and server process lifetime |
+| `editors/visualstudio/CrustPackage.cs` | Visual Studio project commands, target selection, and build errors |
+| `editors/visualstudio/ProjectTool.cs` | Compiler process invocation and project metadata |
+| `editors/visualstudio/ConsoleRunner.cs` | Console input, output, and exit handling |
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
