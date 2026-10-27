@@ -396,6 +396,112 @@ fn renames_generic_parameters_as_value_bindings_without_touching_type_parameters
 }
 
 #[test]
+fn enum_rename_updates_qualifiers_type_expressions_and_constants() {
+    let source = r#"
+enum Flags : unsigned int { Read = 1, Write = 2, Both = (unsigned int)Flags::Read | (unsigned int)Flags::Write };
+typedef Flags Mode;
+struct Item { Flags value; };
+T identity<T>(T value) { return value; }
+int main() {
+    Flags value = Flags::Both;
+    Mode mode = identity<Flags>(value);
+    Item item = { .value = mode };
+    int values[(unsigned int)Flags::Both] = { 1, 2, 3 };
+    print((unsigned int)item.value);
+    print(values[2]);
+    print(sizeof(Flags) == sizeof(unsigned int));
+    int Flags = 7;
+    print(Flags);
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("Flags::Both").unwrap(), "Access")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("enum Access : unsigned int"));
+    assert!(renamed.contains("(unsigned int)Access::Read"));
+    assert!(renamed.contains("identity<Access>"));
+    assert!(renamed.contains("sizeof(Access)"));
+    assert!(renamed.contains("int Flags = 7;"));
+    assert!(renamed.contains("print(Flags)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "3\n3\n1\n7\n"
+    );
+}
+
+#[test]
+fn enum_rename_preserves_native_tags_with_implicit_and_explicit_aliases() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/enum-rename")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let header = root.join("native.h");
+    std::fs::write(&header, "#ifndef ENUM_RENAME_HEADER\n#define ENUM_RENAME_HEADER\nenum NativeMode { Off = 0, On = 42 };\n#endif\n").unwrap();
+    let header = header.to_string_lossy().replace('\\', "/");
+    for declaration in ["NativeMode", "LocalMode = \"NativeMode\""] {
+        let name = declaration.split_whitespace().next().unwrap();
+        let source = format!(
+            r#"
+extern header "{header}";
+extern enum {declaration} : int {{ Off = 0, On = 42 }};
+extern {name} choose({name} value) {{ return value; }}
+extern int native_check();
+int main() {{ unsafe {{ print((int)choose({name}::On)); print(native_check()); }} return 0; }}
+"#
+        );
+        let analysis = crust::analyze(&source).unwrap();
+        let edits = analysis
+            .rename(0, source.find(&format!("enum {name}")).unwrap() + 5, "Mode")
+            .unwrap();
+        let renamed = apply(&analysis, &edits).remove(0);
+        assert!(
+            renamed.contains("extern enum Mode = \"NativeMode\" : int"),
+            "{renamed}"
+        );
+        let public_header = crust::emit_header(&renamed, crust::ProgramKind::Executable).unwrap();
+        assert!(public_header.contains("enum NativeMode"));
+        let generated = format!(
+            "{}\nint32_t native_check(void) {{ enum NativeMode value = choose(On); return value == On; }}",
+            crust::compile(&renamed).unwrap()
+        );
+        let output = common::tracked_generated_c(&generated, false);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "42\n1\n"
+        );
+    }
+}
+
+#[test]
+fn enum_rename_rejects_type_capture_and_unresolved_template_references() {
+    for source in [
+        "enum Mode { On }; typedef int State; int main() { Mode mode = On; State value = 1; return value; }",
+        "enum Mode { On }; T unused<T>() { Mode value = On; return value; } int main() { return 0; }",
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        assert!(
+            analysis
+                .rename(0, source.find("Mode").unwrap(), "State")
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn type_parameter_rename_covers_struct_members_and_separate_instantiations() {
     let source = r#"
 struct Pair<T, U> {

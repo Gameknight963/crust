@@ -70,6 +70,35 @@ pub(super) fn native_bindings(
             },
         );
     }
+    for definition in &checked.program.enums {
+        let Some(name) = &definition.native_name else {
+            continue;
+        };
+        let location = locate(definition.name_span);
+        let file_tokens = &tokens[location.file];
+        let following = file_tokens
+            .get(file_tokens.partition_point(|token| token.span.start < location.span.end));
+        let alias = if following.is_some_and(|token| token.kind == Token::Equal) {
+            None
+        } else {
+            Some(Location {
+                file: location.file,
+                span: Span {
+                    start: location.span.end,
+                    end: location.span.end,
+                    column: location.span.column + location.span.end - location.span.start,
+                    ..location.span
+                },
+            })
+        };
+        bindings.insert(
+            location,
+            NativeBinding {
+                name: name.clone(),
+                alias,
+            },
+        );
+    }
     return bindings;
 }
 
@@ -88,6 +117,7 @@ impl Analysis {
                 | SymbolKind::Alias
                 | SymbolKind::Interface
                 | SymbolKind::TypeParameter
+                | SymbolKind::Enum
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
@@ -125,7 +155,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, parameter, type parameter, function, method, typedef, interface, or external variable to rename"
+                "select a local, parameter, type parameter, function, method, typedef, interface, enum, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -150,7 +180,10 @@ impl Analysis {
                 new_text: new_name.to_owned(),
             });
         }
-        if matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global) {
+        if matches!(
+            symbol.kind,
+            SymbolKind::Function | SymbolKind::Global | SymbolKind::Enum
+        ) {
             for declaration in self
                 .symbols
                 .iter()
@@ -184,6 +217,7 @@ impl Analysis {
                 | SymbolKind::Method
                 | SymbolKind::Alias
                 | SymbolKind::Interface
+                | SymbolKind::Enum
                 | SymbolKind::Global
         );
         let scope = self

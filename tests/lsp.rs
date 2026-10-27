@@ -126,8 +126,9 @@ impl Server {
         Message::Request(Request::new(id.into(), method.into(), params))
             .write(&mut self.input)
             .unwrap();
-        let Message::Response(response) = self.receive() else {
-            panic!("expected a response");
+        let message = self.receive();
+        let Message::Response(response) = message else {
+            panic!("expected a response, received {message:?}");
         };
         assert_eq!(response.id, id.into());
         return response;
@@ -731,6 +732,63 @@ fn interface_rename_updates_constraints_in_unopened_target_templates() {
         assert_eq!(changes[&uri][0]["newText"], "Inspectable");
         assert_eq!(changes[&uri][0]["range"]["start"], point(source, needle));
     }
+    server.stop();
+}
+
+#[test]
+fn enum_rename_preserves_c_tags_and_checks_unopened_project_targets() {
+    let root = rename_project("enums");
+    std::fs::write(root.join("native.h"), "enum NativeMode { On = 42 };\n").unwrap();
+    let shared = "extern header \"native.h\"; extern enum NativeMode : int { On = 42 };";
+    let first = "import \"shared.cr\"; int main() { return (int)NativeMode::On; }";
+    let second = "import \"shared.cr\"; NativeMode echo(NativeMode mode) { return mode; } int main() { return (int)echo(On); }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let first_uri = file_uri(&root.join("first.cr"));
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    let second_uri = file_uri(&root.join("second.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&first_uri, 1, first)["diagnostics"], json!([]));
+    let mut params =
+        json!({ "textDocument": { "uri": first_uri }, "position": point(first, "NativeMode::") });
+    assert_eq!(
+        server
+            .request("textDocument/prepareRename", params.clone())
+            .result
+            .unwrap()["placeholder"],
+        "NativeMode"
+    );
+    params["newName"] = json!("Access");
+    let response = server.request("textDocument/rename", params.clone());
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    assert_eq!(changes[&first_uri].as_array().unwrap().len(), 1);
+    assert_eq!(changes[&second_uri].as_array().unwrap().len(), 2);
+    let edits = changes[&shared_uri].as_array().unwrap();
+    assert_eq!(edits.len(), 2);
+    let alias = edits
+        .iter()
+        .find(|edit| edit["newText"] == " = \"NativeMode\"")
+        .unwrap();
+    assert_eq!(alias["range"]["start"], alias["range"]["end"]);
+    assert_eq!(alias["range"]["start"], point(shared, " : int"));
+    std::fs::write(
+        root.join("second.cr"),
+        format!("{second} typedef int Access;"),
+    )
+    .unwrap();
+    assert!(
+        server
+            .request("textDocument/rename", params)
+            .error
+            .is_some()
+    );
     server.stop();
 }
 

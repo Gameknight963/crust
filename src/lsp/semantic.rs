@@ -178,6 +178,7 @@ impl Context {
                         | SymbolKind::Alias
                         | SymbolKind::Interface
                         | SymbolKind::TypeParameter
+                        | SymbolKind::Enum
                         | SymbolKind::Global
                 )
             });
