@@ -41,6 +41,7 @@ ownership checking, C generation, and native compilation.
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/project/links.rs` | Native target dependency order and transitive archive inputs |
+| `src/project/metadata.rs` | Versioned project metadata for editor and build-tool integrations |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |

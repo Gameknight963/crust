@@ -16,6 +16,7 @@ enum Mode {
     EmitHeader,
     Check,
     Tokens,
+    Metadata,
 }
 
 struct Options {
@@ -49,7 +50,7 @@ fn run() -> Result<ExitCode, String> {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: crust [run|build|emit-c|emit-header|check|tokens] [file.cr|crust.toml|directory]"
+            "Usage: crust [run|build|emit-c|emit-header|check|tokens|metadata] [file.cr|crust.toml|directory]"
         );
         println!("       crust [command] [--project <path>] [--target <name>]");
         println!(
@@ -71,6 +72,9 @@ fn run() -> Result<ExitCode, String> {
                 .is_some_and(|extension| extension == "toml")
         {
             return run_project(Project::load(path)?, &options);
+        }
+        if options.mode == Mode::Metadata {
+            return Err("metadata requires a crust.toml file or project directory".to_owned());
         }
         if options.target.is_some() {
             return Err(String::from("--target requires a project"));
@@ -112,6 +116,7 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
             "emit-header" => Some(Mode::EmitHeader),
             "check" => Some(Mode::Check),
             "tokens" => Some(Mode::Tokens),
+            "metadata" => Some(Mode::Metadata),
             _ => None,
         })
     {
@@ -154,6 +159,16 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
         Mode::Run | Mode::EmitC | Mode::EmitHeader | Mode::Tokens
     );
     let targets = project.select(options.target.as_deref(), single)?;
+    if options.mode == Mode::Metadata {
+        let mut metadata = project.metadata()?;
+        if let Some(name) = &options.target {
+            metadata.targets.retain(|target| &target.name == name);
+        }
+        let json = serde_json::to_string_pretty(&metadata)
+            .map_err(|error| format!("could not serialize project metadata: {error}"))?;
+        println!("{json}");
+        return Ok(ExitCode::SUCCESS);
+    }
     if options.mode == Mode::Run && targets[0].kind == TargetKind::StaticLibrary {
         return Err(
             "static libraries are built with 'crust build' and linked by a consumer".to_owned(),

@@ -82,6 +82,7 @@ directory containing `crust.toml`:
 | `emit-c` | Write generated C to stdout |
 | `emit-header` | Write C declarations for named exports to stdout |
 | `tokens` | Print tokens and source locations |
+| `metadata` | Write project targets and output paths as JSON |
 
 Passing a source filename directly also compiles and runs it:
 

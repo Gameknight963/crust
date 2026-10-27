@@ -26,6 +26,7 @@ crust check
 crust run
 crust run --target example
 crust build --project path/to/crust.toml
+crust metadata
 ```
 
 - Commands discover `crust.toml` in the current directory or its parents
@@ -47,6 +48,25 @@ source location, including errors in imported files.
 Failed native compilation preserves the last working executable. A compiler
 that exits successfully must produce a fresh native executable before `run`
 starts it.
+
+## Project metadata
+
+`crust metadata` writes JSON for editor and build-tool integrations. It reads
+project configuration and reports targets even when source files contain errors
+or missing imports. `--target name` filters the target list.
+
+| Field | Meaning |
+| --- | --- |
+| `formatVersion` | Metadata schema version, currently `1` |
+| `manifest`, `directory` | Absolute project paths |
+| `name` | Project name |
+| `targets[].name`, `targets[].kind` | Target name and `executable` or `static-library` kind |
+| `targets[].entry`, `targets[].output` | Absolute entry and native artifact paths |
+| `targets[].linkTargets` | Names of native target dependencies |
+
+Metadata preserves target order from the manifest. The command works before a
+build and requires project configuration. `Project::metadata` exposes the same
+information to Rust callers.
 
 ## Source imports
 

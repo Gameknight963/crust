@@ -227,6 +227,98 @@ fn native_driver_accepts_executable_output_paths_without_extensions() {
 }
 
 #[test]
+fn project_metadata_reports_target_kinds_links_and_output_paths_without_compilation() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['math']\n[[targets]]\nname='math'\nkind='static-library'\nentry='library.cr'\n");
+    // Metadata remains available while source files are being edited.
+    fixture.write("main.cr", "incomplete source");
+    fixture.write("library.cr", "import \"missing.cr\";");
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("metadata")
+        .current_dir(&fixture.directory)
+        .env("CC", "missing-test-compiler")
+        .output()
+        .unwrap();
+    success(&output);
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(metadata["formatVersion"], 1);
+    assert_eq!(metadata["name"], "example");
+    assert_eq!(
+        PathBuf::from(metadata["manifest"].as_str().unwrap()),
+        fixture.directory.join("crust.toml").canonicalize().unwrap()
+    );
+    assert_eq!(
+        PathBuf::from(metadata["directory"].as_str().unwrap()),
+        fixture.directory.canonicalize().unwrap()
+    );
+    let targets = metadata["targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0]["name"], "app");
+    assert_eq!(targets[0]["kind"], "executable");
+    assert_eq!(targets[0]["linkTargets"], serde_json::json!(["math"]));
+    assert_eq!(targets[1]["kind"], "static-library");
+    let root = fixture.directory.canonicalize().unwrap();
+    let expected = [
+        (
+            "main.cr",
+            root.join("target/crust/app/app")
+                .with_extension(std::env::consts::EXE_EXTENSION),
+        ),
+        (
+            "library.cr",
+            root.join("target/crust/math").join(if cfg!(windows) {
+                "math.lib"
+            } else {
+                "libmath.a"
+            }),
+        ),
+    ];
+    for (json, (entry, output)) in targets.iter().zip(expected) {
+        assert_eq!(
+            PathBuf::from(json["entry"].as_str().unwrap()),
+            root.join(entry)
+        );
+        assert_eq!(PathBuf::from(json["output"].as_str().unwrap()), output);
+    }
+    assert!(!fixture.directory.join("target").exists());
+}
+
+#[test]
+fn project_metadata_supports_discovery_explicit_projects_and_target_selection() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='first'\nkind='executable'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='executable'\nentry='second.cr'\n");
+    fixture.write("first.cr", "int main() { return 0; }");
+    fixture.write("second.cr", "int main() { return 0; }");
+    fixture.write("nested/keep", "");
+    for input in [
+        Some(fixture.directory.join("crust.toml")),
+        Some(fixture.directory.clone()),
+        None,
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_crust"));
+        command
+            .args(["metadata", "--target", "second"])
+            .current_dir(fixture.directory.join("nested"));
+        if let Some(input) = input {
+            command.arg("--project").arg(input);
+        }
+        let output = command.output().unwrap();
+        success(&output);
+        let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(metadata["targets"].as_array().unwrap().len(), 1);
+        assert_eq!(metadata["targets"][0]["name"], "second");
+    }
+    let output = fixture.invoke(&["metadata", "--target", "unknown"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown target"));
+    assert!(output.stdout.is_empty());
+    let output = fixture.invoke(&["metadata", "first.cr"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("metadata requires"));
+    assert!(!fixture.directory.join("target").exists());
+}
+
+#[test]
 fn discovers_projects_from_subdirectories_and_runs_the_named_output() {
     let fixture = Fixture::new();
     fixture.write("src/main.cr", "struct A { int n; static Self create() { return (Self){ .n = 42 }; } }; int main() { A a = A::create(); print(a.n); return 0; }");

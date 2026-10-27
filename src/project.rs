@@ -1,9 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 mod links;
+mod metadata;
+pub use metadata::{ProjectMetadata, TargetMetadata};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,7 +30,7 @@ pub struct Target {
     pub native: crate::native::Options,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetKind {
     Executable,
