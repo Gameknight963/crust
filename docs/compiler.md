@@ -75,7 +75,8 @@ ordinary Crust functions internal linkage and preserves named C exports.
 
 Static-library builds compile each C source separately and copy explicit native
 objects under distinct staging names. The archiver writes a fresh archive before
-replacing the destination. Staging cleanup removes the files created for that
+replacing the destination with a single filesystem rename. Staging cleanup
+removes the files created for that
 build, including partial outputs after a tool failure.
 The archive signature is checked before replacement, including when an archiver
 exits successfully. Missing, truncated, and thin archive outputs preserve the

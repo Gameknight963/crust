@@ -117,10 +117,6 @@ pub fn compile_static_library(
             archive.display()
         ));
     }
-    if archive.exists() {
-        fs::remove_file(archive)
-            .map_err(|error| format!("could not replace {}: {error}", archive.display()))?;
-    }
     fs::rename(&temporary, archive)
         .map_err(|error| format!("could not write {}: {error}", archive.display()))?;
     return Ok(());
