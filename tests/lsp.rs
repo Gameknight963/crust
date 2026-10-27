@@ -450,6 +450,47 @@ fn workspace_roots_supply_target_context_for_external_unsaved_dependencies() {
 }
 
 #[test]
+fn excessive_nesting_reports_diagnostics_and_the_server_recovers() {
+    let uri = "untitled:deep.cr";
+    let mut server = Server::start();
+    assert_eq!(
+        server.open(uri, 1, "int main() { return 0; }")["diagnostics"],
+        json!([])
+    );
+    for (index, source) in [
+        format!("int main() {{ return {}1; }}", "1 + ".repeat(5000)),
+        format!(
+            "int main() {{ return {}0{}; }}",
+            "(".repeat(2000),
+            ")".repeat(2000)
+        ),
+        format!(
+            "int main() {{{}return 0;{}}}",
+            "{".repeat(2000),
+            "}".repeat(2000)
+        ),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let version = 2 + index as i32 * 2;
+        server.change(uri, version, source);
+        let result = server.diagnostics();
+        assert!(
+            result["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("nesting limit exceeded")
+        );
+        assert!(semantic_tokens(&mut server, uri).is_empty());
+        server.change(uri, version + 1, "int main() { return 0; }");
+        assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+        assert!(!semantic_tokens(&mut server, uri).is_empty());
+    }
+    server.stop();
+}
+
+#[test]
 fn workspace_folder_changes_recheck_external_dependency_context() {
     let (project, uri, _, _) = external_dependency_project("folder-changes");
     let source = "int answer(int value) { return supply(value); }";

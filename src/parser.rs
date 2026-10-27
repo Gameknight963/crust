@@ -6,6 +6,7 @@ mod calling_conventions;
 mod constants;
 mod generics;
 mod integers;
+mod limits;
 mod symbols;
 
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
@@ -35,6 +36,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         enum_sources: HashMap::new(),
         enumerator_owners: HashMap::new(),
         evaluating_enums: HashSet::new(),
+        nesting: 0,
     };
     parser.collect_templates()?;
     parser.collect_type_names()?;
@@ -156,6 +158,7 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    nesting: usize,
     enum_constants: HashMap<(usize, String), constants::EnumConstant>,
     enum_representations: HashMap<usize, IntType>,
     enum_sources: HashMap<usize, usize>,
@@ -488,6 +491,13 @@ impl Parser {
     }
 
     fn typedef_type(&mut self) -> Result<(String, Type), Diagnostic> {
+        let span = self.current().span;
+        let parsed = self.typedef_type_inner()?;
+        limits::ty(self, parsed.1, span)?;
+        return Ok(parsed);
+    }
+
+    fn typedef_type_inner(&mut self) -> Result<(String, Type), Diagnostic> {
         let mut ty = self.type_name()?;
         let convention = self.calling_convention()?;
         if self.consume(&Token::LeftParen) {
@@ -1325,6 +1335,13 @@ impl Parser {
     }
 
     fn qualified_type_name(&mut self, allow_const: bool) -> Result<(Type, bool), Diagnostic> {
+        let span = self.current().span;
+        let parsed = self.nested(|parser| parser.qualified_type_name_inner(allow_const))?;
+        limits::ty(self, parsed.0, span)?;
+        return Ok(parsed);
+    }
+
+    fn qualified_type_name_inner(&mut self, allow_const: bool) -> Result<(Type, bool), Diagnostic> {
         let start = self.current().span;
         let mut shared = self.consume(&Token::Const);
         let token = self.advance();
@@ -1460,6 +1477,7 @@ impl Parser {
             };
             element = Type::Array(id);
         }
+        limits::ty(self, element, self.current().span)?;
         return Ok(element);
     }
 
@@ -1485,6 +1503,10 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Statement, Diagnostic> {
+        return self.nested(Self::statement_inner);
+    }
+
+    fn statement_inner(&mut self) -> Result<Statement, Diagnostic> {
         let start = self.current().span;
 
         if self.consume(&Token::Unsafe) {
@@ -1728,6 +1750,10 @@ impl Parser {
     // Higher precedence binds more tightly. The recursive call with +1 makes
     // operators at the same precedence left-associative: a - b - c = (a - b) - c.
     fn expression(&mut self, minimum: u8) -> Result<Expression, Diagnostic> {
+        return self.nested(|parser| parser.expression_inner(minimum));
+    }
+
+    fn expression_inner(&mut self, minimum: u8) -> Result<Expression, Diagnostic> {
         let mut left = self.unary()?;
         while let Some((operator, precedence)) = Self::binary_operator(&self.current().kind) {
             if precedence < minimum {
@@ -1744,11 +1770,18 @@ impl Parser {
                     right: Box::new(right),
                 },
             };
+            limits::expression(&left)?;
         }
         return Ok(left);
     }
 
     fn unary(&mut self) -> Result<Expression, Diagnostic> {
+        let expression = self.nested(Self::unary_inner)?;
+        limits::expression(&expression)?;
+        return Ok(expression);
+    }
+
+    fn unary_inner(&mut self) -> Result<Expression, Diagnostic> {
         let start = self.current().span;
         if self.consume(&Token::Alignof) {
             self.expect(Token::LeftParen, "expected '(' after alignof")?;
@@ -1825,6 +1858,7 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expression, Diagnostic> {
         let mut expression = self.primary()?;
         loop {
+            limits::expression(&expression)?;
             if self.consume(&Token::LeftParen) {
                 let (arguments, end) = self.arguments()?;
                 expression = Expression {
@@ -1894,6 +1928,10 @@ impl Parser {
     }
 
     fn initializer(&mut self) -> Result<Expression, Diagnostic> {
+        return self.nested(Self::initializer_inner);
+    }
+
+    fn initializer_inner(&mut self) -> Result<Expression, Diagnostic> {
         if self.at(&Token::LeftBrace) {
             if !self.next_at(&Token::Dot) && !self.next_at(&Token::RightBrace) {
                 let start = self.advance().span;

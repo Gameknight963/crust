@@ -56,6 +56,7 @@
 - Workspace symbol search across unopened project targets and shared imports, with unsaved source overlays and folder updates
 - Signature help with resolved generic and callback signatures, parsed argument boundaries, and partial-argument recovery
 - Semantic highlighting from resolved bindings, declaration and built-in modifiers, and dependency refresh requests
+- Bounded parser recursion, expression trees, and composed types, with consistent frontend worker stacks
 - TOML project loading and named executable targets
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup

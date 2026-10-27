@@ -11,6 +11,8 @@ ownership checking, C generation, and native compilation.
 | `src/lib.rs` | Frontend and source-to-C APIs |
 | `src/lexer.rs` | Tokens and scanning |
 | `src/diagnostic.rs` | Source locations and diagnostics |
+| `src/frontend.rs` | Frontend worker stack and thread-start diagnostics |
+| `src/parser/limits.rs` | Parser recursion, expression-tree, and type-composition limits |
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
 | `src/analysis/rename.rs` | Rename edits, native-name preservation, and binding validation |
 | `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
@@ -58,6 +60,14 @@ protection, and generated C includes those paths directly.
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.
+
+Frontend APIs run parsing, checking, analysis, and emission on a scoped worker
+with a 16 MiB stack. This gives command-line and editor clients the same stack
+budget. Parser call nesting, expression trees, and composed pointer, array,
+borrow, and callback types have a 64-level limit with source diagnostics.
+Expression and type limits use iterative walks, including chains built without
+recursive parsing. Struct tags end the type-composition walk, allowing recursive
+structures through pointers.
 
 `crust::analyze` and `SourceSet::analyze` return source snapshots with declarations,
 resolved references, and expression types. Locations identify a file index and a

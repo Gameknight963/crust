@@ -106,6 +106,10 @@ impl SourceSet {
     }
 
     pub fn check(&self) -> Result<(), SourceError> {
+        return crate::frontend::run(|| self.check_inner()).map_err(|error| self.locate(error))?;
+    }
+
+    fn check_inner(&self) -> Result<(), SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
         crate::check::check(program).map_err(|error| self.locate(error))?;
@@ -113,6 +117,11 @@ impl SourceSet {
     }
 
     pub fn compile(&self) -> Result<String, SourceError> {
+        return crate::frontend::run(|| self.compile_inner())
+            .map_err(|error| self.locate(error))?;
+    }
+
+    fn compile_inner(&self) -> Result<String, SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
         let checked = crate::check::check(program).map_err(|error| self.locate(error))?;
@@ -128,6 +137,11 @@ impl SourceSet {
     }
 
     fn analyze_inner(&self, completion: bool) -> Result<crate::analysis::Analysis, SourceError> {
+        return crate::frontend::run(|| self.analyze_snapshot(completion))
+            .map_err(|error| self.locate(error))?;
+    }
+
+    fn analyze_snapshot(&self, completion: bool) -> Result<crate::analysis::Analysis, SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
         let checked = if completion {

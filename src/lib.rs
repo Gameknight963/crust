@@ -1,6 +1,7 @@
 mod ast;
 mod check;
 mod emit_c;
+mod frontend;
 mod parser;
 mod types;
 
@@ -24,6 +25,10 @@ pub(crate) fn analyze_completion(source: &str) -> Result<analysis::Analysis, Dia
 }
 
 fn analyze_inner(source: &str, completion: bool) -> Result<analysis::Analysis, Diagnostic> {
+    return frontend::run(|| analyze_snapshot(source, completion))?;
+}
+
+fn analyze_snapshot(source: &str, completion: bool) -> Result<analysis::Analysis, Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     let checked = if completion {
@@ -42,6 +47,10 @@ fn analyze_inner(source: &str, completion: bool) -> Result<analysis::Analysis, D
 }
 
 pub fn check(source: &str) -> Result<(), Diagnostic> {
+    return frontend::run(|| check_inner(source))?;
+}
+
+fn check_inner(source: &str) -> Result<(), Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     check::check(program)?;
@@ -49,6 +58,10 @@ pub fn check(source: &str) -> Result<(), Diagnostic> {
 }
 
 pub fn compile(source: &str) -> Result<String, Diagnostic> {
+    return frontend::run(|| compile_inner(source))?;
+}
+
+fn compile_inner(source: &str) -> Result<String, Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     let checked = check::check(program)?;
