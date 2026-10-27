@@ -60,6 +60,35 @@ impl Renderer {
         return name;
     }
 
+    pub fn typedef_name(&mut self, native: &str) -> String {
+        let name = self.binding_name(native);
+        if !self.enums.values().any(|tag| tag == &name) {
+            return name;
+        }
+        let mut alias = format!("c_{name}");
+        while !self.names.insert(alias.clone()) {
+            alias.push('_');
+        }
+        return alias;
+    }
+
+    pub fn alias_type(&mut self, node: &Value) -> Result<(String, bool), String> {
+        let qualified = Self::unwrap(node)?;
+        if kind(qualified) == "QualType" {
+            return Err(format!(
+                "top-level typedef qualifiers '{}' require importing the C function or variable directly",
+                qualified["qualifiers"].as_str().unwrap_or("unknown")
+            ));
+        }
+        let underlying = Self::unqualified(node)?;
+        let sized = !(matches!(
+            kind(underlying),
+            "RecordType" | "FunctionProtoType" | "FunctionNoProtoType"
+        ) || (kind(underlying) == "BuiltinType"
+            && underlying["type"]["qualType"] == "void"));
+        return Ok((self.ty(node, true)?, sized));
+    }
+
     pub fn enums(&mut self, definitions: Vec<enums::Enum>) -> Result<(), String> {
         for definition in &definitions {
             self.names.insert(definition.name.clone());
@@ -115,6 +144,7 @@ impl Renderer {
         while matches!(
             kind(node),
             "TypeOfExprType"
+                | "TypeOfType"
                 | "TypedefType"
                 | "ParenType"
                 | "ElaboratedType"

@@ -25,6 +25,200 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn selected_typedefs_preserve_native_scalars_pointer_qualifiers_and_callback_types() {
+    let path = header(
+        r#"
+        struct Native;
+        typedef struct Native Native;
+        typedef unsigned long NativeCount;
+        typedef const char* NativeText;
+        typedef int* const* NativeSlot;
+        typedef volatile int* NativeRegister;
+        typedef int (*NativeCallback)(NativeCount);
+        typedef int NativeFunction(NativeCount);
+        int use_callback(NativeCallback, NativeCount);
+    "#,
+    );
+    let mut selected = options(&["use_callback"]);
+    selected.typedefs = [
+        "Native",
+        "NativeCount",
+        "NativeText",
+        "NativeSlot",
+        "NativeRegister",
+        "NativeCallback",
+        "NativeFunction",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("typedef unsigned long NativeCount;"));
+    assert!(bindings.contains("typedef const char* NativeText;"));
+    assert!(bindings.contains("typedef int* const* NativeSlot;"));
+    assert!(bindings.contains("typedef volatile int* NativeRegister;"));
+    let source = format!(
+        r#"
+        {bindings}
+        int increment(NativeCount value) {{ return (int)value + 1; }}
+        int main() {{
+            NativeCount count = 41;
+            NativeCallback callback = increment;
+            NativeFunction* function = increment;
+            unsafe {{
+                print(use_callback(callback, count));
+                print(function(40));
+                Native* handle = 0;
+                NativeText text = 0;
+                print(handle == 0);
+                print(text == 0);
+                int value = 7;
+                int* pointer = &value;
+                NativeSlot slot = &pointer;
+                **slot = 42;
+                print(value);
+                NativeRegister register_value = &value;
+                *register_value = 9;
+                print(value);
+            }}
+            return 0;
+        }}
+    "#
+    );
+    let generated = format!(
+        "{}\n{}\nint use_callback(NativeCallback callback, NativeCount value) {{ return callback(value); }}",
+        std::fs::read_to_string(&path).unwrap(),
+        crust::compile(&source).unwrap()
+    );
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n41\n1\n1\n42\n9\n"
+    );
+    let invalid = format!(
+        "{bindings} int main() {{ unsafe {{ int first = 1; int second = 2; int* pointer = &first; NativeSlot slot = &pointer; *slot = &second; }} return 0; }}"
+    );
+    assert!(crust::check(&invalid).is_err());
+}
+
+#[test]
+fn typedef_only_imports_include_native_enums_and_avoid_alias_tag_name_cycles() {
+    let path = header(
+        "#include <stddef.h>\ntypedef enum Mode { Off = 0, On = 42 } Mode; typedef enum PointerTag { Value = 7 } *PointerTag; typedef void Empty;",
+    );
+    let mut selected = options(&[]);
+    selected.typedefs = ["Mode", "PointerTag", "size_t", "Empty"]
+        .map(str::to_owned)
+        .to_vec();
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("extern enum Mode"));
+    assert!(bindings.contains("typedef Mode c_Mode;"));
+    assert!(bindings.contains("typedef PointerTag* c_PointerTag;"));
+    assert!(bindings.contains(" c_size_t;"));
+    let source = format!(
+        "{bindings} int main() {{ c_Mode mode = Mode::On; c_size_t count = 7; c_PointerTag pointer = 0; Empty* empty = 0; print((int)mode); print(count); unsafe {{ print(pointer == 0); print(empty == 0); }} return 0; }}"
+    );
+    let output = common::tracked_run(&source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n7\n1\n1\n"
+    );
+}
+
+#[test]
+fn typedef_imports_reject_layout_changes_unsupported_types_and_invalid_selections() {
+    for (source, name, expected) in [
+        (
+            "typedef int Aligned __attribute__((aligned(32)));",
+            "Aligned",
+            "unsupported C typedef layout",
+        ),
+        ("typedef int Values[4];", "Values", "unsupported C type"),
+        ("typedef double Real;", "Real", "unsupported C scalar"),
+        (
+            "typedef const int Readonly;",
+            "Readonly",
+            "top-level typedef qualifiers",
+        ),
+        (
+            "typedef int* const Slot;",
+            "Slot",
+            "top-level typedef qualifiers",
+        ),
+        ("int function(void);", "function", "no typedef declaration"),
+        ("typedef int Present;", "Missing", "no typedef declaration"),
+    ] {
+        let path = header(source);
+        let mut selected = options(&[]);
+        selected.typedefs.push(name.to_owned());
+        let error = generate(&path, &selected).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+    let path = header("typedef int Count;");
+    let mut selected = options(&[]);
+    selected.typedefs = vec!["Count".to_owned(), "Count".to_owned()];
+    assert!(
+        generate(&path, &selected)
+            .unwrap_err()
+            .contains("selected twice")
+    );
+}
+
+#[test]
+fn cli_imports_typedefs_with_relative_enum_headers_and_late_c_macros() {
+    let path = header(
+        "typedef enum Mode { Active = 42 } Mode; typedef int init; typedef long other_alias;\n#define init other_alias\n",
+    );
+    let binding = path.parent().unwrap().join("types.cr");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .args(["--typedef", "Mode", "--typedef", "init", "--output"])
+        .arg(&binding)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = std::fs::read_to_string(&binding).unwrap();
+    assert!(text.contains("extern header \"native ü.h\";"));
+    assert!(text.contains("typedef int c_init;"));
+    assert!(!text.starts_with('\u{feff}'));
+    let source = path.parent().unwrap().join("main.cr");
+    std::fs::write(&source, "import \"types.cr\"; int main() { c_Mode mode = Active; c_init value = 7; print((int)mode); print(value); return 0; }").unwrap();
+    let sources = crust::source::SourceSet::load(&source).unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n7\n"
+    );
+    let missing = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .arg("--typedef")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("--typedef needs a name"));
+}
+
+#[test]
 fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types() {
     let path = header(
         r#"

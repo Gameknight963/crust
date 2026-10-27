@@ -143,8 +143,9 @@ types have no source declaration.
 Symbols expose a canonical declaration location for compatible redeclarations.
 `Analysis::references_at` collects bound uses and optionally declarations, with
 duplicate locations from generic replay removed.
-`Analysis::rename` returns source edits for locals, explicit parameters, free
-functions, instance and static methods, typedefs, interfaces, and external variables.
+`Analysis::rename` returns binding-checked edits for value, function, and source
+type declarations. It follows aggregate members, designated initializers, and
+shared generic source locations.
 It reanalyzes edited snapshot text and compares
 translated reference targets to reject name capture. Native imports gain explicit
 aliases when needed to preserve their C names.
@@ -202,11 +203,13 @@ responses clear on frontend errors. Clients advertising refresh support receive
 ## C header bindings
 
 `bindings::generate` asks Clang for native declarations and structured types,
-renders selected functions, variables, and enums, and checks the resulting Crust declarations.
+renders selected functions, variables, enums, and typedefs, and checks the resulting Crust declarations.
 Declaration queries filter to selected names, and type queries carry the
 reachable typedef and pointer information needed by those functions.
 Independent Clang type-compatibility assertions verify generated function and
 object types against the original header. Binding tests require Clang on `PATH`.
+Selected typedefs have synthetic pointer declarations for compatibility checks.
+Complete scalar and pointer aliases also have native size and alignment checks.
 Reachable native enums retain their C tags through emitted header references.
 Clang constant probes determine their compatible integer types and member values.
 

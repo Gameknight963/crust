@@ -1,7 +1,7 @@
 # C header bindings
 
 `crust import-c` reads a C header through Clang and writes declarations for selected
-functions, external variables, and named enums. Ordinary Crust source imports the
+functions, external variables, named enums, and typedefs. Ordinary Crust source imports the
 generated file.
 
 ```powershell
@@ -23,6 +23,7 @@ Crust struct with a destructor.
 | `--function <name>` | Select a C function, repeated for each export |
 | `--variable <name>` | Select external C storage, repeated for each variable |
 | `--enum <tag>` | Select a named C enum, repeated for each tag |
+| `--typedef <name>` | Select a C typedef, repeated for each alias |
 | `--output <file.cr>` | Write UTF-8 bindings to a file |
 | `--force` | Replace an existing output file |
 | `--include-dir <path>` | Add a C header search directory |
@@ -40,6 +41,7 @@ command protects its input header from replacement.
 - Adjusted array parameters and top-level parameter qualifiers
 - Opaque struct and union tags
 - Named enums with native integer representations and member values
+- Selected scalar, pointer, callback, and opaque aggregate typedefs
 - Function pointers, callback returns, and variadic functions
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
@@ -62,6 +64,28 @@ returning them. Types requiring further compiler support produce a diagnostic.
 Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
 Thread-local data require native C accessor functions.
+
+## Typedefs
+
+Select aliases directly when they are useful in Crust source:
+
+```powershell
+cargo run -- import-c native/api.h --typedef NativeCount --typedef NativeCallback --output types.cr
+```
+
+The generator writes Crust typedefs for the selected names. Functions still use
+their resolved native types. Pointer targets retain const and volatile
+qualifiers, and callbacks retain their calling conventions.
+
+Aliases sharing a name with an imported enum tag receive a `c_` prefix so both
+types remain available. Crust built-in names such as `size_t` receive the same
+treatment. Opaque struct and union aliases expose their pointers through the
+native tag.
+
+Generation checks pointer type compatibility and the size and alignment of
+complete scalar and pointer aliases. Typedefs with extra alignment or unsupported
+array layouts produce a diagnostic. For top-level const or volatile aliases,
+import the affected C functions and variables directly.
 
 ## Native enums and headers
 

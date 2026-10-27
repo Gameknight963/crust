@@ -9,13 +9,14 @@ pub(super) fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [options]"
+            "Usage: crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--typedef <name>] [options]"
         );
         println!("  --function <name>     Select a function, repeat for additional functions");
         println!(
             "  --variable <name>     Select an external variable, repeat for additional variables"
         );
         println!("  --enum <tag>          Select a named enum, repeat for additional enums");
+        println!("  --typedef <name>      Select a typedef, repeat for additional aliases");
         println!("  --output <file.cr>    Write UTF-8 bindings to a file, otherwise use stdout");
         println!("  --force               Replace an existing output file");
         println!("  --include-dir <path>  Add a C include directory");
@@ -50,6 +51,13 @@ pub(super) fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
                     .ok_or("--enum needs a tag name")?
                     .into_string()
                     .map_err(|_| "enum tags must be ASCII")?,
+            ),
+            Some("--typedef") => options.typedefs.push(
+                arguments
+                    .next()
+                    .ok_or("--typedef needs a name")?
+                    .into_string()
+                    .map_err(|_| "typedef names must be ASCII")?,
             ),
             Some("--output") => {
                 let path = PathBuf::from(arguments.next().ok_or("--output needs a path")?);

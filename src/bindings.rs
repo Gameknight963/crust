@@ -17,6 +17,7 @@ pub struct Options {
     pub functions: Vec<String>,
     pub variables: Vec<String>,
     pub enums: Vec<String>,
+    pub typedefs: Vec<String>,
 }
 
 fn identifier(name: &str) -> bool {
@@ -158,10 +159,11 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .functions
         .iter()
         .chain(&options.variables)
+        .chain(&options.typedefs)
         .cloned()
         .collect();
     if names.is_empty() && options.enums.is_empty() {
-        return Err("select at least one C function, variable, or enum".to_owned());
+        return Err("select at least one C function, variable, enum, or typedef".to_owned());
     }
     let mut selected = HashSet::new();
     for name in &names {
@@ -205,8 +207,21 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let mut imported = HashSet::new();
     for (index, name) in names.iter().enumerate() {
         let function = index < options.functions.len();
-        let expected = if function { "FunctionDecl" } else { "VarDecl" };
-        let label = if function { "function" } else { "variable" };
+        let alias = index >= options.functions.len() + options.variables.len();
+        let expected = if function {
+            "FunctionDecl"
+        } else if alias {
+            "TypedefDecl"
+        } else {
+            "VarDecl"
+        };
+        let label = if function {
+            "function"
+        } else if alias {
+            "typedef"
+        } else {
+            "variable"
+        };
         let matches: Vec<_> = declarations
             .iter()
             .filter(|node| kind(node) == expected && node["name"] == *name)
@@ -282,6 +297,8 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
     let mut variable_checks = Vec::new();
+    let mut typedef_checks = Vec::new();
+    let mut typedef_globals = Vec::new();
     let mut locals = String::new();
     for (index, native) in names.iter().enumerate() {
         let probe = probes
@@ -291,6 +308,17 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         let node = type_children(probe)
             .next()
             .ok_or("Clang omitted a declaration type")?;
+        if index >= options.functions.len() + options.variables.len() {
+            let name = renderer.typedef_name(native);
+            let (ty, sized) = renderer
+                .alias_type(node)
+                .map_err(|error| format!("C typedef '{native}': {error}"))?;
+            declarations.push(format!("typedef {ty} {name};"));
+            let check_name = renderer.check_name(index);
+            typedef_globals.push(format!("extern {name}* {check_name};"));
+            typedef_checks.push((check_name, native, sized));
+            continue;
+        }
         let name = renderer.binding_name(native);
         let link = if name == *native {
             String::new()
@@ -348,9 +376,10 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         String::new()
     };
     let checked_source = format!(
-        "{header_declaration}{}\n{}\nint main() {{ {locals} return 0; }}\n",
+        "{header_declaration}{}\n{}\n{}\nint main() {{ {locals} return 0; }}\n",
         renderer.declarations(false),
-        declarations.join("\n")
+        declarations.join("\n"),
+        typedef_globals.join("\n")
     );
     let program = crate::parser::parse(
         crate::lexer::tokenize(&checked_source).map_err(|error| error.to_string())?,
@@ -359,6 +388,9 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let checked =
         crate::check::check(program).map_err(|error| format!("generated C bindings: {error}"))?;
     let mut verification = format!("{undefines}{}", crate::emit_c::generate(&checked));
+    // Native enum emission includes the header again. Its macros must not
+    // replace selected typedef names in the checks appended below.
+    verification.push_str(&undefines);
     let analysis = &checked.analyses["main"];
     for (name, native) in checks {
         let (span, _) = analysis
@@ -383,6 +415,23 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             .ok_or("missing variable validation type")?;
         let ty = crate::emit_c::c_type(global.ty);
         verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__({native}), {ty}), \"unsupported C ABI for {native}\");\n"));
+    }
+    for (name, native, sized) in typedef_checks {
+        let global = checked
+            .program
+            .globals
+            .iter()
+            .find(|global| global.name == name)
+            .ok_or("missing typedef validation type")?;
+        let ty = crate::emit_c::c_type(global.ty);
+        verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p({native}*, {ty}), \"unsupported C ABI for typedef {native}\");\n"));
+        if sized {
+            let crate::ast::Type::Pointer(pointer) = global.ty else {
+                unreachable!();
+            };
+            let inner = crate::emit_c::c_type(checked.types.pointers[pointer].pointee);
+            verification.push_str(&format!("_Static_assert(sizeof({native}) == sizeof({inner}) && _Alignof({native}) == _Alignof({inner}), \"unsupported C typedef layout for {native}\");\n"));
+        }
     }
     invoke_clang(
         &header,
