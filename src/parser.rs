@@ -1156,6 +1156,12 @@ impl Parser {
         )?;
         function.requires_unsafe = requires_unsafe;
         function.dll_import = dll_import;
+        if dll_import && !function.external {
+            return Err(Diagnostic::new(
+                start,
+                "a DLL import cannot have a function body",
+            ));
+        }
         function.calling_convention = Self::signature_convention(
             convention.unwrap_or(CallingConvention::C),
             function.variadic,
@@ -1166,6 +1172,12 @@ impl Parser {
 
     fn external_link_name(&mut self, name: &str) -> Result<String, Diagnostic> {
         if !self.consume(&Token::Equal) {
+            if !valid_c_symbol(name) {
+                return Err(Diagnostic::new(
+                    self.current().span,
+                    "C symbol name is not usable as a C identifier",
+                ));
+            }
             return Ok(name.to_owned());
         }
         let token = self.advance();
@@ -1300,10 +1312,17 @@ impl Parser {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
         );
-        let body = if prototype {
-            if external {
-                link_name = Some(self.external_link_name(&name)?);
-            }
+        if external {
+            link_name = Some(self.external_link_name(&name)?);
+        }
+        let defined_export = external && self.at(&Token::LeftBrace);
+        if defined_export && (variadic || parameters.iter().any(|parameter| parameter.synthetic)) {
+            return Err(Diagnostic::new(
+                start,
+                "C exports require named parameters and a fixed parameter list",
+            ));
+        }
+        let body = if prototype && !defined_export {
             let span = self.expect(Token::Semicolon, "expected ';' after function declaration")?;
             Block {
                 statements: Vec::new(),
@@ -1321,7 +1340,7 @@ impl Parser {
             link_name,
             variadic,
             requires_unsafe: external,
-            external,
+            external: external && !defined_export,
             name,
             return_type,
             parameters,

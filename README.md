@@ -43,6 +43,7 @@ The [header example](examples/header_project/) imports C declarations with
 `crust import-c` and wraps an opaque handle in a Crust owner.
 The [C algorithms example](examples/c_algorithms.cr) sorts and searches arrays
 with C standard library callbacks.
+The [export project](examples/export_project/) calls a named Crust function from C.
 On Windows x86 and x64, the [calling-convention project](examples/calling_convention_project/)
 passes `__vectorcall` callbacks between Crust and C.
 

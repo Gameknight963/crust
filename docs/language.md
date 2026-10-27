@@ -666,6 +666,30 @@ Safe interface requirements require safe implementations. An unsafe requirement
 accepts either a safe or unsafe method. Calls use the concrete method's contract.
 The entry point has a safe signature.
 
+### C exports
+
+An `extern` function with a body defines a named C symbol. An optional alias
+chooses its C name, using the same syntax as imports.
+
+```c
+extern int add(int left, int right) = "example_add" {
+    BoxInt saved = box_int(left);
+    return *saved + right;
+}
+```
+
+C code can declare `int32_t example_add(int32_t left, int32_t right);` and call
+it directly. Local owners receive normal automatic cleanup before the function
+returns. See [the export project](../examples/export_project/) for a separate C
+source file calling a Crust definition.
+
+- Export parameters are named and use a fixed parameter list
+- Parameters and results follow the C import rules for copyable values and raw pointers
+- Compatible prototypes and renamed imports can refer to the same definition
+- Each C symbol has one definition, with matching signatures and calling conventions across aliases
+- `extern` establishes an unsafe boundary, including calls from Crust and raw-pointer operations in the body
+- Rename preserves the exported C name through an explicit alias
+
 ## Raw storage
 
 `init(pointer, value)` initializes storage through a mutable raw pointer, transferring

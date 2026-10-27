@@ -42,8 +42,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         external_names: program
             .functions
             .iter()
-            .filter(|function| function.external)
-            .map(|function| (function.name.clone(), function.link_name.clone().unwrap()))
+            .filter_map(|function| {
+                function
+                    .link_name
+                    .clone()
+                    .map(|name| (function.name.clone(), name))
+            })
             .collect(),
         function_values: &empty_analysis.function_values,
     };
@@ -251,11 +255,10 @@ fn header(function: &Function) -> String {
         } else {
             function.calling_convention.c_prefix()
         },
-        if function.external {
-            function.link_name.clone().unwrap()
-        } else {
-            function_name(&function.name)
-        }
+        function
+            .link_name
+            .clone()
+            .unwrap_or_else(|| function_name(&function.name))
     );
 }
 

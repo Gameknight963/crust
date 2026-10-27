@@ -189,6 +189,30 @@ fn native_macro_definitions_preserve_values_function_macros_and_per_target_confi
 }
 
 #[test]
+fn separate_native_sources_call_named_crust_exports() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "crust.toml",
+        include_str!("../examples/export_project/crust.toml"),
+    );
+    fixture.write(
+        "src/main.cr",
+        include_str!("../examples/export_project/src/main.cr"),
+    );
+    fixture.write(
+        "include/exports.h",
+        include_str!("../examples/export_project/include/exports.h"),
+    );
+    fixture.write(
+        "native/caller.c",
+        include_str!("../examples/export_project/native/caller.c"),
+    );
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+}
+
+#[test]
 fn opaque_c_handles_have_private_wrappers_and_destroy_once_after_a_move() {
     let fixture = Fixture::new();
     fixture.write(

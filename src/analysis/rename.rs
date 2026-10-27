@@ -21,21 +21,27 @@ pub(super) fn native_bindings(
         .program
         .functions
         .iter()
-        .filter(|function| function.external)
+        .filter(|function| function.link_name.is_some())
         .map(|function| {
             (
                 function.name_span,
-                function.span,
+                Span {
+                    end: function.body.span.start,
+                    ..function.span
+                },
                 function.link_name.as_ref().unwrap(),
             )
         })
-        .chain(
-            checked
-                .program
-                .globals
-                .iter()
-                .map(|global| (global.name_span, global.span, &global.link_name)),
-        );
+        .chain(checked.program.globals.iter().map(|global| {
+            (
+                global.name_span,
+                Span {
+                    end: global.span.end - 1,
+                    ..global.span
+                },
+                &global.link_name,
+            )
+        }));
     for (name, range, native) in declarations {
         let range = locate(range);
         let file_tokens = &tokens[range.file];
@@ -45,15 +51,14 @@ pub(super) fn native_bindings(
         let alias = if tokens.iter().any(|token| token.kind == Token::Equal) {
             None
         } else {
-            let semicolon = tokens
-                .iter()
-                .find(|token| token.kind == Token::Semicolon && token.span.end == range.span.end)
-                .unwrap();
+            let last = tokens.last().unwrap();
             Some(Location {
                 file: range.file,
                 span: Span {
-                    end: semicolon.span.start,
-                    ..semicolon.span
+                    start: last.span.end,
+                    end: last.span.end,
+                    column: last.span.column + last.span.end - last.span.start,
+                    ..last.span
                 },
             })
         };

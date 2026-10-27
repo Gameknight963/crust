@@ -17,6 +17,30 @@ fn apply(analysis: &Analysis, edits: &[TextEdit]) -> Vec<String> {
 }
 
 #[test]
+fn exported_function_rename_preserves_native_names_and_ignores_body_assignments() {
+    let source = "extern int calculate(int value) { int result = value; result = result + 1; return result; } extern int native_call(); int main() { unsafe { print(native_call()); print(calculate(1)); } return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("calculate(int").unwrap(), "increment")
+        .unwrap();
+    let updated = apply(&analysis, &edits).remove(0);
+    assert!(
+        updated.contains("increment(int value) = \"calculate\" {"),
+        "{updated}"
+    );
+    let c = format!(
+        "{}\nint32_t native_call(void) {{ return calculate(41); }}",
+        crust::compile(&updated).unwrap()
+    );
+    let output = common::tracked_generated_c(&c, false);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n2\n"
+    );
+}
+
+#[test]
 fn renames_only_the_selected_local_and_preserves_comments_strings_and_shadowing() {
     let source = "int main() { int value = 1; /* value */ { int value = 2; print(value); } print(\"value\"); value = value + 1; return value; }";
     let analysis = crust::analyze(source).unwrap();

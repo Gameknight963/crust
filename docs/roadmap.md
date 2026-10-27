@@ -40,6 +40,7 @@
 - Integer constant expressions in enum initializers, including imported enum dependencies and source references
 - Constant expressions for fixed array lengths in typedefs, fields, locals, and generic arguments
 - Renamed C imports with direct symbol linkage and cross-alias signature checks
+- Named C exports with compatible prototypes, native calling conventions, and automatic local cleanup
 - Explicit C and Windows calling conventions for native declarations, callbacks, functions, and methods
 - External C variables with const permissions, renamed imports, shared alias borrow roots, and source navigation
 - Clang-backed generation of selected C function bindings with native type compatibility checks

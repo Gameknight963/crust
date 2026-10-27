@@ -157,8 +157,15 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
     let mut analyses = HashMap::new();
     let mut signatures = HashMap::new();
     let mut native_signatures = HashMap::new();
+    let mut native_definitions = HashSet::new();
     let mut function_declarations = HashMap::new();
     for function in &program.functions {
+        if !function.external && function.dll_import {
+            return Err(Diagnostic::new(
+                function.span,
+                "a DLL import cannot have a function body",
+            ));
+        }
         function_declarations
             .entry(function.name.clone())
             .or_insert(function.name_span);
@@ -261,7 +268,7 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
                 "function values require complete object types. Use pointers for opaque structs",
             ));
         }
-        if function.external
+        if function.link_name.is_some()
             && (function.return_type.is_borrow()
                 || types.owns(function.return_type)
                 || matches!(function.return_type, Type::Array(_))
@@ -350,19 +357,38 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
                 .collect(),
         };
         if let Some(symbol) = &function.link_name {
+            if !function.external && symbol == "main" {
+                return Err(Diagnostic::new(
+                    function.span,
+                    "C export name 'main' is reserved for the program entry point",
+                ));
+            }
+            let mut native_signature = signature.clone();
+            native_signature.external = true;
             if let Some(previous) = native_signatures.get(symbol)
-                && previous != &signature
+                && previous != &native_signature
             {
                 return Err(Diagnostic::new(
                     function.span,
                     format!("conflicting declarations for C symbol '{symbol}'"),
                 ));
             }
-            native_signatures.insert(symbol.clone(), signature.clone());
+            native_signatures.insert(symbol.clone(), native_signature);
+            if !function.external && !native_definitions.insert(symbol.clone()) {
+                return Err(Diagnostic::new(
+                    function.span,
+                    format!("C symbol '{symbol}' has more than one definition"),
+                ));
+            }
         }
         if let Some(previous) = signatures.get(&function.name) {
-            if previous.external && signature.external {
-                if previous == &signature {
+            if previous.link_name.is_some() && signature.link_name.is_some() {
+                let mut compatible = previous.clone();
+                compatible.external = signature.external;
+                if compatible == signature {
+                    if previous.external && !signature.external {
+                        signatures.insert(function.name.clone(), signature);
+                    }
                     continue;
                 }
                 return Err(Diagnostic::new(

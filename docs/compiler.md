@@ -149,7 +149,7 @@ The CLI writes the generated UTF-8 file after validation. See
 - Raw pointer types use generated C typedefs, with struct and array tags declared before pointer typedefs
 - Struct values use generated aliases, and opaque aliases preserve their native C tags
 - Union types share the aggregate type registry and generate native C unions, including opaque union tags
-- External declarations and calls retain their C symbol names
+- C imports and exports retain their native symbol names in declarations, definitions, calls, and function pointers
 - Renamed imports keep separate Crust and C names, and declarations sharing a C symbol are checked for compatible signatures
 - External variables emit native object declarations, retain const permissions, and share borrow roots across aliases of one C symbol
 - Windows DLL imports preserve native storage attributes across compatible declarations and native-symbol aliases

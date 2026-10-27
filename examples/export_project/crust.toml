@@ -1,0 +1,11 @@
+[project]
+name = "c-exports"
+
+[[targets]]
+name = "c-exports"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["native/caller.c"]
+include-dirs = ["include"]
