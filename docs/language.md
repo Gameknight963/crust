@@ -670,7 +670,8 @@ The entry point has a safe signature.
 
 `volatile` qualifies external C objects, raw pointer targets, and borrowed
 pointees. Accesses retain the C compiler's volatile semantics through field
-access, array indexing, reborrows, and returned borrows.
+access, array indexing, reborrows, and returned borrows. `print` reads volatile
+byte-array views one byte at a time, stopping at a zero byte or the array bound.
 
 ```c
 extern volatile int status;

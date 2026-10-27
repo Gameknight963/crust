@@ -20,6 +20,31 @@ fn run(source: &str, native: &str, expected: &str) {
 }
 
 #[test]
+fn printing_volatile_byte_array_views_reads_bounded_text_and_utf8() {
+    run(
+        r#"
+        typedef char Text[4];
+        int main() {
+            Text text = "é";
+            uint8_t bytes[3] = { 65, 66, 67 };
+            uint8_t terminated[3] = { 65, 0, 67 };
+            unsafe {
+                volatile Text* view = &text;
+                volatile uint8_t[3]* full = &bytes;
+                volatile uint8_t[3]* short_text = &terminated;
+                print(^const *view);
+                print(^const *full);
+                print(^const *short_text);
+            }
+            return 0;
+        }
+    "#,
+        "",
+        "é\nABC\nA\n",
+    );
+}
+
+#[test]
 fn volatile_globals_aliases_addresses_and_borrowed_views_keep_their_qualifiers() {
     run(
         r#"

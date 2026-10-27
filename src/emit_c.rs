@@ -1029,8 +1029,14 @@ impl Emitter<'_> {
                     if let Some(length) = self.types.byte_array_length(argument_type) {
                         let value = &values[0];
                         let member = if argument_type.is_borrow() { "->" } else { "." };
+                        let function =
+                            if matches!(argument_type, Type::Borrow { volatile: true, .. }) {
+                                "crust_rt_print_volatile_bytes"
+                            } else {
+                                "crust_rt_print_bytes"
+                            };
                         self.line(&format!(
-                            "crust_rt_print_bytes(({value}){member}crust_elements, {length});"
+                            "{function}(({value}){member}crust_elements, {length});"
                         ));
                         return None;
                     }

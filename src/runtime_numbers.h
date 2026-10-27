@@ -43,6 +43,17 @@ static inline void crust_rt_print_bytes(const void *text, size_t capacity)
     fputc('\n', stdout);
 }
 
+static inline void crust_rt_print_volatile_bytes(const volatile void *text, size_t capacity)
+{
+    const volatile uint8_t *bytes = (const volatile uint8_t *)text;
+    for (size_t index = 0; index < capacity; ++index) {
+        uint8_t value = bytes[index];
+        if (value == 0) { break; }
+        fputc(value, stdout);
+    }
+    fputc('\n', stdout);
+}
+
 static inline size_t crust_rt_index_unsigned(uint64_t index, size_t length, size_t line, size_t column)
 {
     if (index >= length) { crust_rt_fail("array index out of bounds", line, column); }
