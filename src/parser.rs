@@ -1856,6 +1856,18 @@ impl Parser {
 
     fn unary_inner(&mut self) -> Result<Expression, Diagnostic> {
         let start = self.current().span;
+        if matches!(self.current().kind, Token::PlusPlus | Token::MinusMinus) {
+            let increment = self.advance().kind == Token::PlusPlus;
+            let target = self.unary()?;
+            return Ok(Expression {
+                span: start.through(target.span),
+                kind: ExpressionKind::Update {
+                    target: Box::new(target),
+                    increment,
+                    prefix: true,
+                },
+            });
+        }
         if self.consume(&Token::Alignof) {
             self.expect(Token::LeftParen, "expected '(' after alignof")?;
             let ty = self.type_name()?;
@@ -1932,6 +1944,18 @@ impl Parser {
         let mut expression = self.primary()?;
         loop {
             limits::expression(&expression)?;
+            if matches!(self.current().kind, Token::PlusPlus | Token::MinusMinus) {
+                let token = self.advance();
+                expression = Expression {
+                    span: expression.span.through(token.span),
+                    kind: ExpressionKind::Update {
+                        target: Box::new(expression),
+                        increment: token.kind == Token::PlusPlus,
+                        prefix: false,
+                    },
+                };
+                continue;
+            }
             if self.consume(&Token::LeftParen) {
                 let (arguments, end) = self.arguments()?;
                 expression = Expression {

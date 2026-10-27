@@ -64,6 +64,7 @@ pub(super) fn expression(root: &Expression) -> Result<(), Diagnostic> {
         }
         let mut child = |expression| pending.push((expression, depth + 1));
         match &expression.kind {
+            ExpressionKind::Update { target, .. } => child(target),
             ExpressionKind::Conditional {
                 condition,
                 then_value,

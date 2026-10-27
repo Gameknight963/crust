@@ -15,6 +15,10 @@ fn optimized_borrowed_and_projected_accesses_keep_volatile_loads_and_stores() {
             target->values[0] += increment;
         }
         extern void show(volatile Text* target) { print(^const *target); }
+        extern int update(volatile int* target) {
+            int previous = (*target)++;
+            return previous + ++*target;
+        }
     "#;
     let generated = crate::compile_with_kind(source, crate::ProgramKind::Library).unwrap();
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -48,14 +52,14 @@ fn optimized_borrowed_and_projected_accesses_keep_volatile_loads_and_stores() {
         ir.lines()
             .filter(|line| line.contains("load ") && line.contains("volatile i32"))
             .count(),
-        4,
+        6,
         "{ir}"
     );
     assert_eq!(
         ir.lines()
             .filter(|line| line.contains("store ") && line.contains("volatile i32"))
             .count(),
-        2,
+        4,
         "{ir}"
     );
 }

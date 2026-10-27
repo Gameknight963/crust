@@ -576,6 +576,11 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Update {
+        target: Box<Expression>,
+        increment: bool,
+        prefix: bool,
+    },
     Conditional {
         condition: Box<Expression>,
         then_value: Box<Expression>,

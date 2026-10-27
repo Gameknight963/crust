@@ -27,6 +27,7 @@ and file-based commands report errors with the original filename and location.
 - `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
 - Loop control destroys locals in the scopes being exited
 - Compound assignments: `+= -= *= /= %= &= |= ^= <<= >>=`
+- Prefix and postfix `++` and `--` update mutable integers or raw pointers
 - Non-void functions must return a value on every path
 - Operands and call arguments evaluate left to right
 - `&&` and `||` short-circuit
@@ -70,6 +71,19 @@ See [the do-while example](../examples/do_while.cr).
 Compound assignments capture their destination before evaluating the right side.
 The right side can read the destination, while mutation or moves of its parent
 are rejected until assignment completes.
+
+Increment and decrement evaluate their destination once. Prefix forms return
+the updated value, and postfix forms return the previous value. Integer updates
+use the same arithmetic and conversion checks as compound assignments.
+Raw pointer updates require `unsafe` and a complete object type.
+
+```c
+int value = 40;
+print(value++); // 40
+print(++value); // 42
+```
+
+See [the increment and decrement example](../examples/updates.cr).
 
 Conditional expressions bind below binary operators and associate to the right.
 Integer branches use the usual common integer type. Other branches require the
@@ -972,12 +986,12 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Characters use ASCII or byte escapes, including `\xFF`, up to three octal digits, and the standard C single-character escapes
 - The lexer accepts magnitudes through `18446744073709551615`
 - Signed minimum literals such as `-2147483648` and `-9223372036854775808` are supported
-- Operators: `= + - * / % ! < > & | ^ << >> == != <= >= && || ? : -> ::`
+- Operators: `= + - ++ -- * / % ! < > & | ^ << >> == != <= >= && || ? : -> ::`
 - `~` complements integer bits in expressions and introduces destructor declarations
 - `...` marks the variable argument tail in C declarations and function pointer types
 - Comments use `//` or non-nesting `/* ... */`
 - Whitespace supports LF, CRLF, and CR line endings
 - Unicode is accepted in comments and UTF-8 string literals
 
-Unsupported literal forms and compound operators produce diagnostics. Examples
-include `42u`, floating-point literals, and `++`.
+Unsupported literal forms produce diagnostics. Examples include `42u` and
+floating-point literals.

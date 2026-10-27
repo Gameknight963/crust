@@ -1008,6 +1008,26 @@ impl FunctionChecker<'_> {
             return Ok(Type::Integer(kind));
         }
         match &expression.kind {
+            ExpressionKind::Update { target, .. } => {
+                let place = self.checked_place(target)?;
+                if !place.mutable || !matches!(place.ty, Type::Integer(_) | Type::Pointer(_)) {
+                    return Err(Diagnostic::new(
+                        target.span,
+                        "increment and decrement require a mutable integer or raw pointer place",
+                    ));
+                }
+                if let Type::Pointer(id) = place.ty {
+                    self.require_unsafe(expression.span, "raw pointer increment or decrement")?;
+                    if !self.types.is_sized(self.types.pointers[id].pointee) {
+                        return Err(Diagnostic::new(
+                            target.span,
+                            "pointer increment and decrement require a complete object type",
+                        ));
+                    }
+                }
+                self.access(&place.root, &place.fields, true, place.via, target.span)?;
+                return Ok(place.ty);
+            }
             ExpressionKind::Conditional {
                 condition,
                 then_value,
@@ -2177,6 +2197,7 @@ impl FunctionChecker<'_> {
             }));
         }
         match &expression.kind {
+            ExpressionKind::Update { target, .. } => return self.receiver_type(target),
             ExpressionKind::Conditional {
                 then_value,
                 else_value,

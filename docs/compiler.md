@@ -44,6 +44,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
 | `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
 | `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
+| `src/lsp/watch.rs` | Client file-watcher registration and disk-change event validation |
 | `src/lsp/rename.rs` | Project-wide rename and affected-target validation |
 | `src/lsp/signature.rs` | Signature-help responses and active parameters |
 | `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
@@ -127,7 +128,8 @@ for review and application.
 Source discovery combines projects above open files with explicit workspace roots.
 Diagnostics and semantic requests select importing targets that contain an open
 file, including dependencies outside the project directory. Workspace-folder
-changes recheck open files and request semantic-token refresh when supported.
+and watched-file changes recheck open files and request semantic-token refresh
+when supported. Invalid project configurations produce diagnostics on the manifest.
 
 `Analysis::completions_at` returns visible declarations at a source position.
 Block scopes retain local declaration boundaries, parameters belong to their

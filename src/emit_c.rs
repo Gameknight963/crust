@@ -859,6 +859,35 @@ impl Emitter<'_> {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::Update {
+                target,
+                increment,
+                prefix,
+            } => {
+                let ty = self.expression_type(expression);
+                let place = self.place(target);
+                let address =
+                    self.temporary(self.address_type(target, true), &format!("&({place})"));
+                let old = self.temporary(ty, &format!("*{address}"));
+                let value = if matches!(ty, Type::Pointer(_)) {
+                    let operator = if *increment { "+" } else { "-" };
+                    self.temporary(ty, &format!("{old} {operator} 1"))
+                } else {
+                    let kind = ty.integer().unwrap().promoted();
+                    let promoted =
+                        self.convert_value(old.clone(), ty, Type::Integer(kind), expression.span);
+                    let operator = if *increment {
+                        BinaryOperator::Add
+                    } else {
+                        BinaryOperator::Subtract
+                    };
+                    let operation = self.operation(operator, kind, &promoted, "1", expression.span);
+                    let value = self.temporary(Type::Integer(kind), &operation);
+                    self.convert_value(value, Type::Integer(kind), ty, expression.span)
+                };
+                self.line(&format!("*{address} = {value};"));
+                return Some(if *prefix { value } else { old });
+            }
             ExpressionKind::Conditional {
                 condition,
                 then_value,

@@ -79,6 +79,8 @@ pub enum Token {
     CaretEqual,
     Plus,
     Minus,
+    PlusPlus,
+    MinusMinus,
     Star,
     Slash,
     Percent,
@@ -389,20 +391,6 @@ impl Lexer<'_> {
             return Err(self.error(start, "floating-point literals are not supported yet"));
         }
 
-        // Even unsupported C operators must stay distinct from spaced tokens:
-        // x++ is not the same token sequence as x + +y.
-        for operator in ["++", "--"] {
-            if self.source[self.offset..].starts_with(operator) {
-                for _ in operator.chars() {
-                    self.advance();
-                }
-                return Err(self.error(
-                    start,
-                    &format!("operator {operator:?} is not supported yet"),
-                ));
-            }
-        }
-
         for (operator, token) in [
             ("<<=", Token::LessLessEqual),
             (">>=", Token::GreaterGreaterEqual),
@@ -416,6 +404,8 @@ impl Lexer<'_> {
         }
         // Try longer operators first, so == becomes one token instead of two.
         let pair = match (self.peek(), self.peek_next()) {
+            (Some('+'), Some('+')) => Some(Token::PlusPlus),
+            (Some('-'), Some('-')) => Some(Token::MinusMinus),
             (Some('='), Some('=')) => Some(Token::EqualEqual),
             (Some('!'), Some('=')) => Some(Token::BangEqual),
             (Some('<'), Some('=')) => Some(Token::LessEqual),
@@ -814,11 +804,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_compound_operators_without_confusing_spaced_ones() {
-        for source in ["x++", "x--"] {
-            let error = tokenize(source).unwrap_err();
-            assert!(error.message.contains("not supported yet"));
-        }
+    fn distinguishes_update_operators_from_spaced_signs() {
+        assert_eq!(
+            kinds("x+++y--"),
+            vec![
+                Token::Identifier("x".into()),
+                Token::PlusPlus,
+                Token::Plus,
+                Token::Identifier("y".into()),
+                Token::MinusMinus,
+                Token::EndOfFile
+            ]
+        );
 
         assert_eq!(
             kinds("x + +y"),
