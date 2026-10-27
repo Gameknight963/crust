@@ -110,7 +110,13 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             info.name.clone()
         };
         let kind = if info.is_union { "union" } else { "struct" };
+        if !info.complete {
+            emitter.line(&format!("#pragma push_macro(\"{tag}\")\n#undef {tag}"));
+        }
         emitter.line(&format!("typedef {kind} {tag} crust_type_{id};"));
+        if !info.complete {
+            emitter.line(&format!("#pragma pop_macro(\"{tag}\")"));
+        }
     }
     for id in 0..checked.types.arrays.len() {
         emitter.line(&format!("struct crust_array_{id};"));

@@ -60,6 +60,7 @@
 - Bounded parser recursion, expression trees, and composed types, with consistent frontend worker stacks
 - TOML project loading and named executable targets
 - Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
+- C header generation for scalar, enum, opaque-pointer, and callback exports
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 

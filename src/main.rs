@@ -12,6 +12,7 @@ enum Mode {
     Run,
     Build,
     EmitC,
+    EmitHeader,
     Check,
     Tokens,
 }
@@ -46,7 +47,9 @@ fn run() -> Result<ExitCode, String> {
         .iter()
         .any(|argument| argument == "--help" || argument == "-h")
     {
-        println!("Usage: crust [run|build|emit-c|check|tokens] [file.cr|crust.toml|directory]");
+        println!(
+            "Usage: crust [run|build|emit-c|emit-header|check|tokens] [file.cr|crust.toml|directory]"
+        );
         println!("       crust [command] [--project <path>] [--target <name>]");
         println!(
             "       crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>]"
@@ -105,6 +108,7 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
             "run" => Some(Mode::Run),
             "build" => Some(Mode::Build),
             "emit-c" => Some(Mode::EmitC),
+            "emit-header" => Some(Mode::EmitHeader),
             "check" => Some(Mode::Check),
             "tokens" => Some(Mode::Tokens),
             _ => None,
@@ -144,7 +148,10 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
 }
 
 fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> {
-    let single = matches!(options.mode, Mode::Run | Mode::EmitC | Mode::Tokens);
+    let single = matches!(
+        options.mode,
+        Mode::Run | Mode::EmitC | Mode::EmitHeader | Mode::Tokens
+    );
     let targets = project.select(options.target.as_deref(), single)?;
     let mut protected: Vec<_> = project
         .targets
@@ -228,6 +235,13 @@ fn process_source(
         _ => {}
     }
     let sources = crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
+    if mode == Mode::EmitHeader {
+        let header = sources
+            .emit_header(kind.program_kind())
+            .map_err(|error| error.to_string())?;
+        print!("{header}");
+        return Ok(ExitCode::SUCCESS);
+    }
     let generated = sources
         .compile_with_kind(kind.program_kind())
         .map_err(|error| error.to_string())?;

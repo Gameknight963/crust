@@ -32,6 +32,7 @@ ownership checking, C generation, and native compilation.
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
 | `src/emit_c.rs` | Generated C and cleanup |
+| `src/header.rs` | C export prototypes, callback declarations, and native tag preservation |
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
@@ -71,6 +72,12 @@ Static-library builds compile each C source separately and copy explicit native
 objects under distinct staging names. The archiver writes a fresh archive before
 replacing the destination. Staging cleanup removes the files created for that
 build, including partial outputs after a tool failure.
+
+`emit_header` checks an executable or library entry and renders its named C
+exports. Callback aliases are allocated within each exported symbol's prefix,
+with names reserved against other native symbols. Pointer qualifiers are rendered
+at each indirection level. Native tags and exported names use macro guards, and
+native enum dependencies retain the source program's C headers.
 
 Frontend APIs run parsing, checking, analysis, and emission on a scoped worker
 with a 16 MiB stack. This gives command-line and editor clients the same stack

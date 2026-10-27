@@ -78,6 +78,7 @@ directory containing `crust.toml`:
 | `build` | Build an executable or static library |
 | `check` | Check names, types, ownership, and borrows |
 | `emit-c` | Write generated C to stdout |
+| `emit-header` | Write C declarations for named exports to stdout |
 | `tokens` | Print tokens and source locations |
 
 Passing a source filename directly also compiles and runs it:

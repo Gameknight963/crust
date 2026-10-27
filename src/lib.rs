@@ -2,6 +2,7 @@ mod ast;
 mod check;
 mod emit_c;
 mod frontend;
+mod header;
 mod parser;
 mod types;
 
@@ -89,6 +90,14 @@ pub fn compile(source: &str) -> Result<String, Diagnostic> {
 
 pub fn compile_with_kind(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
     return frontend::run(|| compile_inner(source, kind))?;
+}
+
+pub fn emit_header(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
+    return frontend::run(|| {
+        let program = parser::parse(lexer::tokenize(source)?)?;
+        let checked = check::check_with_kind(program, kind)?;
+        return header::generate(&checked);
+    })?;
 }
 
 fn compile_inner(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {

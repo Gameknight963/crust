@@ -189,6 +189,53 @@ fn native_macro_definitions_preserve_values_function_macros_and_per_target_confi
 }
 
 #[test]
+fn emit_header_uses_library_target_settings_without_invoking_a_c_compiler() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n");
+    fixture.write("library.cr", "import \"helper.cr\"; extern int add(int left, int right) = \"native_add\" { return sum(left, right); }");
+    fixture.write(
+        "helper.cr",
+        "int sum(int left, int right) { return left + right; }",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("emit-header")
+        .current_dir(&fixture.directory)
+        .env("CC", "missing-crust-test-compiler")
+        .output()
+        .unwrap();
+    success(&output);
+    let header = text(&output);
+    assert!(header.starts_with("#pragma once"));
+    fixture.write("public.h", &header);
+    success(&fixture.invoke(&["build"]));
+    fixture.write("consumer.c", "#include \"public.h\"\n#include <stdio.h>\nint main(void) { printf(\"%d\\n\", (int)native_add(20, 22)); return 0; }\n");
+    let archive = fixture
+        .directory
+        .join("target/crust/library")
+        .join(if cfg!(windows) {
+            "library.lib"
+        } else {
+            "liblibrary.a"
+        });
+    let consumer = fixture
+        .directory
+        .join("consumer")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    crust::native::compile_file_with_options(
+        &fixture.directory.join("consumer.c"),
+        &consumer,
+        &crust::native::Options {
+            link_inputs: vec![archive],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let output = Command::new(consumer).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+}
+
+#[test]
 fn static_libraries_keep_explicit_objects_with_the_same_basename() {
     let fixture = Fixture::new();
     fixture.write("one/input.c", "int native_first(void) { return 20; }");

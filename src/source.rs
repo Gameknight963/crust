@@ -125,6 +125,17 @@ impl SourceSet {
         return self.compile_with_kind(crate::ProgramKind::Executable);
     }
 
+    pub fn emit_header(&self, kind: crate::ProgramKind) -> Result<String, SourceError> {
+        return crate::frontend::run(|| {
+            let program =
+                crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
+            let checked =
+                crate::check::check_with_kind(program, kind).map_err(|error| self.locate(error))?;
+            return crate::header::generate(&checked).map_err(|error| self.locate(error));
+        })
+        .map_err(|error| self.locate(error))?;
+    }
+
     pub fn compile_with_kind(&self, kind: crate::ProgramKind) -> Result<String, SourceError> {
         return crate::frontend::run(|| self.compile_inner(kind))
             .map_err(|error| self.locate(error))?;

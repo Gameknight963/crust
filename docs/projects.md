@@ -32,7 +32,7 @@ crust build --project path/to/crust.toml
 - A manifest path or project directory can also be passed as the input
 - `build` and `check` process all targets by default
 - `--target name` selects one target
-- `run`, `emit-c`, and `tokens` select the sole target automatically, or require `--target` for multi-target projects
+- `run`, `emit-c`, `emit-header`, and `tokens` select the sole target automatically, or require `--target` for multi-target projects
 - Single-file commands continue to accept a source path directly
 - Each executable's output goes to `<project>/target/crust/<target>/`
 - Static libraries use the same output directory, named `<target>.lib` on Windows and `lib<target>.a` on Unix
@@ -95,6 +95,27 @@ clang examples/library_project/native/consumer.c -Iexamples/library_project/incl
 
 On Unix, link `examples/library_project/target/crust/math/libmath.a` instead.
 
+### C headers
+
+`crust emit-header --target math` writes declarations for the target's named C
+exports to stdout. It checks the source and imports through the compiler frontend.
+The output includes C++ linkage guards, callback declarations, const pointer
+levels, and native calling conventions.
+
+- Integer and boolean exports use their native C representations
+- Ordinary Crust enums use their integer representations
+- Native enums retain their C tag identity and include their source C headers
+- Opaque struct and union pointers retain their native tags
+- Complete Crust aggregate and array layouts require a wrapper API using scalars or native opaque tags
+- Private helpers and C imports are omitted
+
+The header matches the compiler host's ABI. Generate it alongside the archive
+when signatures change. For example:
+
+```powershell
+cargo run -- emit-header --project examples/library_project | Set-Content -Encoding utf8 target/library_public.h
+```
+
 ## Native C code
 
 Each target can compile C sources and link libraries:
@@ -125,7 +146,7 @@ link-inputs = ["native/extra.o"]
 - `link-inputs` pass explicit object or library files to the driver
 - Each target has its own native configuration
 - Macro names are validated and each name appears once per target
-- `check`, `tokens`, and `emit-c` validate configuration without invoking a C compiler
+- `check`, `tokens`, `emit-c`, and `emit-header` validate configuration without invoking a C compiler
 
 `extern header "path/to/native.h";` resolves relative to its Crust source file.
 Build commands protect referenced native headers, imported Crust sources, and
