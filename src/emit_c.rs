@@ -145,7 +145,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         );
     }
     for function in &program.functions {
-        emitter.line(&format!("{};", header(function)));
+        emitter.line(&format!("{};", header(function, checked.kind)));
     }
     emitter.drop_functions();
     for function in &program.functions {
@@ -159,7 +159,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         emitter.constants = &analysis.constants;
         emitter.function_values = &analysis.function_values;
         emitter.line("");
-        emitter.line(&header(function));
+        emitter.line(&header(function, checked.kind));
         let mut scope = Scope::default();
         for (index, parameter) in function.parameters.iter().enumerate() {
             scope.insert(
@@ -223,7 +223,7 @@ pub(crate) fn c_type(ty: Type) -> String {
     };
 }
 
-fn header(function: &Function) -> String {
+fn header(function: &Function, kind: crate::ProgramKind) -> String {
     let result = if function.name == "main" {
         String::from("int")
     } else {
@@ -245,7 +245,9 @@ fn header(function: &Function) -> String {
     }
     return format!(
         "{}{result} {}{}({parameters})",
-        if function.dll_import {
+        if kind == crate::ProgramKind::Library && function.link_name.is_none() {
+            "static "
+        } else if function.dll_import {
             "__declspec(dllimport) "
         } else {
             ""

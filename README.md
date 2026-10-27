@@ -3,7 +3,7 @@ Crust (C-Rust get it) is to Rust (the language) as Crust is to Rust (the game)
 # Crust
 
 A C-like language with ownership checking, written in Rust. The compiler generates
-C and builds native executables.
+C and builds native executables and static libraries.
 
 ## Goals
 
@@ -28,24 +28,23 @@ Crust supports structs, typedefs, static and instance methods, shared and exclus
 
 Fixed-size arrays support checked indexing and resource cleanup. String literals
 use UTF-8 byte arrays.
-The [C owner example](examples/c_owner.cr) wraps C allocation with private fields,
-checked borrows, and a destructor.
-The [generic buffer example](examples/generic_buffer.cr) uses the same container
-with integers, characters, and structs.
-The [sorting example](examples/sorting.cr) combines a comparison interface with
-a vector of heap owners.
-The [generic box](examples/generic_box.cr) owns heap values, including other owners.
-The [container project](examples/container_project/) uses buffers, boxes, and
-growable vectors from separate files through `import "buffer.cr";`.
-The [vector edit example](examples/vector_edits.cr) inserts, removes, and clears
-heap owners.
-The [header example](examples/header_project/) imports C declarations with
-`crust import-c` and wraps an opaque handle in a Crust owner.
-The [C algorithms example](examples/c_algorithms.cr) sorts and searches arrays
-with C standard library callbacks.
-The [export project](examples/export_project/) calls a named Crust function from C.
-On Windows x86 and x64, the [calling-convention project](examples/calling_convention_project/)
-passes `__vectorcall` callbacks between Crust and C.
+
+### Ownership and containers
+
+- [C allocation](examples/c_owner.cr): private storage, checked borrows, and a destructor
+- [Generic buffer](examples/generic_buffer.cr): one container for integers, characters, and structs
+- [Generic box](examples/generic_box.cr): heap values, including other owners
+- [Container project](examples/container_project/): buffers, boxes, and vectors across imported files
+- [Vector edits](examples/vector_edits.cr): insertion, removal, and cleanup
+- [Sorting](examples/sorting.cr): a comparison interface and a vector of heap owners
+
+### C integration
+
+- [Headers](examples/header_project/): generated bindings and an opaque handle wrapper
+- [C algorithms](examples/c_algorithms.cr): sorting and searching through standard library callbacks
+- [Exports](examples/export_project/): a C source file calling a named Crust function
+- [Static library](examples/library_project/): a native archive linked into a C consumer
+- [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64
 
 ## Getting started
 
@@ -76,7 +75,7 @@ directory containing `crust.toml`:
 | Command | Action |
 | --- | --- |
 | `run` | Compile and run |
-| `build` | Build a native executable |
+| `build` | Build an executable or static library |
 | `check` | Check names, types, ownership, and borrows |
 | `emit-c` | Write generated C to stdout |
 | `tokens` | Print tokens and source locations |

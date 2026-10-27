@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use crust::project::Project;
+use crust::project::{Project, TargetKind};
 mod cli_bindings;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,7 @@ fn run() -> Result<ExitCode, String> {
             &output,
             &[path.to_owned()],
             &crust::native::Options::default(),
+            TargetKind::Executable,
         );
     }
     let directory = env::current_dir().map_err(|error| error.to_string())?;
@@ -176,6 +177,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
             &output,
             &protected,
             &target.native,
+            target.kind,
         )?;
         if options.mode == Mode::Run {
             return Ok(code);
@@ -190,7 +192,13 @@ fn process_source(
     output: &Path,
     protected: &[PathBuf],
     native: &crust::native::Options,
+    kind: TargetKind,
 ) -> Result<ExitCode, String> {
+    if mode == Mode::Run && kind == TargetKind::StaticLibrary {
+        return Err(
+            "static libraries are built with 'crust build' and linked by a consumer".to_owned(),
+        );
+    }
     match mode {
         Mode::Tokens => {
             let source = fs::read_to_string(path)
@@ -211,14 +219,18 @@ fn process_source(
         Mode::Check => {
             let sources =
                 crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
-            sources.check().map_err(|error| error.to_string())?;
+            sources
+                .check_with_kind(kind.program_kind())
+                .map_err(|error| error.to_string())?;
             println!("{}: OK", path.display());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
     }
     let sources = crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
-    let generated = sources.compile().map_err(|error| error.to_string())?;
+    let generated = sources
+        .compile_with_kind(kind.program_kind())
+        .map_err(|error| error.to_string())?;
     if mode == Mode::EmitC {
         print!("{generated}");
         return Ok(ExitCode::SUCCESS);
@@ -229,7 +241,7 @@ fn process_source(
         .chain(sources.files().iter().map(|file| file.path.clone()))
         .chain(sources.native_headers().iter().cloned())
         .collect();
-    let executable = build(&generated, output, &protected, native)?;
+    let executable = build(&generated, output, &protected, native, kind)?;
     if mode == Mode::Build {
         println!("Built {}", executable.display());
         return Ok(ExitCode::SUCCESS);
@@ -245,12 +257,27 @@ fn build(
     output: &Path,
     protected: &[PathBuf],
     native: &crust::native::Options,
+    kind: TargetKind,
 ) -> Result<PathBuf, String> {
     let directory = output.parent().ok_or("output path needs a directory")?;
     fs::create_dir_all(directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let c_path = output.with_extension("c");
-    let executable = output.with_extension(env::consts::EXE_EXTENSION);
+    let executable = if kind == TargetKind::StaticLibrary {
+        if cfg!(windows) {
+            output.with_extension("lib")
+        } else {
+            output.with_file_name(format!(
+                "lib{}.a",
+                output
+                    .file_name()
+                    .ok_or("output needs a filename")?
+                    .to_string_lossy()
+            ))
+        }
+    } else {
+        output.with_extension(env::consts::EXE_EXTENSION)
+    };
     for destination in [&c_path, &executable] {
         let resolved = if destination.exists() {
             destination
@@ -278,6 +305,10 @@ fn build(
     }
     fs::write(&c_path, generated)
         .map_err(|error| format!("could not write {}: {error}", c_path.display()))?;
-    crust::native::compile_file_with_options(&c_path, &executable, native)?;
+    if kind == TargetKind::StaticLibrary {
+        crust::native::compile_static_library(&c_path, &executable, native)?;
+    } else {
+        crust::native::compile_file_with_options(&c_path, &executable, native)?;
+    }
     return Ok(executable);
 }

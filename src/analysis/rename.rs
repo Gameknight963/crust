@@ -256,10 +256,11 @@ impl Analysis {
             })
             .map_err(|error| format!("rename failed: {error}"))?;
             sources
-                .analyze()
+                .analyze_with_kind(self.kind)
                 .map_err(|error| format!("rename failed: {error}"))?
         } else {
-            crate::analyze(&texts[0]).map_err(|error| format!("rename failed: {error}"))?
+            crate::analyze_with_kind(&texts[0], self.kind)
+                .map_err(|error| format!("rename failed: {error}"))?
         };
         if self
             .files

@@ -59,12 +59,13 @@
 - Semantic highlighting from resolved bindings, declaration and built-in modifiers, and dependency refresh requests
 - Bounded parser recursion, expression trees, and composed types, with consistent frontend worker stacks
 - TOML project loading and named executable targets
+- Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 
 ## Compiler work
 
-1. Add module namespaces, visibility, project dependencies, and library targets
+1. Add module namespaces, visibility, project dependencies, and shared-library targets
 2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
 3. Extend C header importing and ABI coverage to layout attributes and further C declarations
 

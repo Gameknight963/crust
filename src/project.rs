@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -26,10 +26,20 @@ pub struct Target {
     pub native: crate::native::Options,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetKind {
     Executable,
+    StaticLibrary,
+}
+
+impl TargetKind {
+    pub fn program_kind(self) -> crate::ProgramKind {
+        return match self {
+            Self::Executable => crate::ProgramKind::Executable,
+            Self::StaticLibrary => crate::ProgramKind::Library,
+        };
+    }
 }
 
 #[derive(Debug)]
@@ -87,8 +97,14 @@ impl Project {
             ));
         }
         let mut names = HashSet::new();
+        let mut entry_kinds = HashMap::new();
         let mut targets = parsed.targets;
         for target in &mut targets {
+            if target.kind == TargetKind::StaticLibrary {
+                crate::native::validate_archive_options(&target.native).map_err(|error| {
+                    format!("{}: target '{}': {error}", manifest.display(), target.name)
+                })?;
+            }
             crate::native::validate_defines(&target.native.defines).map_err(|error| {
                 format!("{}: target '{}': {error}", manifest.display(), target.name)
             })?;
@@ -128,6 +144,15 @@ impl Project {
                     "{}: target '{}' entry must be a file",
                     manifest.display(),
                     target.name
+                ));
+            }
+            if let Some(previous) = entry_kinds.insert(target.entry.clone(), target.kind)
+                && previous != target.kind
+            {
+                return Err(format!(
+                    "{}: entry {} is used by incompatible target kinds",
+                    manifest.display(),
+                    target.entry.display()
                 ));
             }
             let mut inputs = HashSet::new();

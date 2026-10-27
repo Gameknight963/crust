@@ -304,7 +304,7 @@ struct Sources {
     paths: HashMap<PathBuf, String>,
     graphs: Vec<crate::source::SourceSet>,
     errors: Vec<crate::source::SourceError>,
-    targets: HashSet<PathBuf>,
+    targets: HashMap<PathBuf, crate::ProgramKind>,
 }
 
 fn source_text(
@@ -328,6 +328,7 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
     };
     let mut graphs = Vec::new();
     let mut errors = Vec::new();
+    let mut targets = HashMap::new();
     for uri in documents.keys() {
         if let Some(path) = uri_path(uri) {
             match crate::source::SourceSet::load_with(&path, read) {
@@ -355,6 +356,7 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
             continue;
         };
         for target in project.targets {
+            targets.insert(target.entry.clone(), target.kind.program_kind());
             if graphs
                 .iter()
                 .any(|sources| sources.files()[0].path == target.entry)
@@ -382,7 +384,7 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
         paths,
         graphs,
         errors,
-        targets: HashSet::new(),
+        targets,
     };
 }
 
@@ -397,7 +399,7 @@ fn publish_all(
         paths,
         graphs,
         errors,
-        ..
+        targets,
     } = load_sources(documents, roots);
     let mut diagnostics: HashMap<String, Vec<Value>> = documents
         .keys()
@@ -427,11 +429,13 @@ fn publish_all(
     }
     let mut covered = HashSet::new();
     for sources in graphs {
-        if covered.contains(&sources.files()[0].path) {
+        let entry = &sources.files()[0].path;
+        if covered.contains(entry) && !targets.contains_key(entry) {
             continue;
         }
         covered.extend(sources.files().iter().map(|file| file.path.clone()));
-        if let Err(error) = sources.check() {
+        let kind = targets.get(entry).copied().unwrap_or_default();
+        if let Err(error) = sources.check_with_kind(kind) {
             let target = paths
                 .get(&error.path)
                 .cloned()

@@ -1,6 +1,38 @@
 mod common;
 
 #[test]
+fn library_frontend_omits_main_and_preserves_rename_contracts() {
+    let source = "int helper(int value) { return value + 1; } extern int exported(int value) { BoxInt saved = box_int(value); return helper(*saved); }";
+    let kind = crust::ProgramKind::Library;
+    crust::check_with_kind(source, kind).unwrap();
+    assert!(crust::check(source).is_err());
+    assert!(crust::check_with_kind("int main() { return 0; }", kind).is_err());
+    let analysis = crust::analyze_with_kind(source, kind).unwrap();
+    let edits = analysis
+        .rename(0, source.find("exported(int").unwrap(), "renamed")
+        .unwrap();
+    let mut updated = source.to_owned();
+    for edit in edits.iter().rev() {
+        updated.replace_range(
+            edit.location.span.start..edit.location.span.end,
+            &edit.new_text,
+        );
+    }
+    let generated = crust::compile_with_kind(&updated, kind).unwrap();
+    let c = format!(
+        "{generated}\nint main(void) {{ printf(\"%d\\n\", (int)exported(41)); return 0; }}"
+    );
+    let output = common::tracked_generated_c(&c, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "drop:41");
+}
+
+#[test]
 fn native_names_prototypes_aliases_recursion_and_callbacks_reach_defined_exports() {
     let source = r#"
         typedef int (*Callback)(int);

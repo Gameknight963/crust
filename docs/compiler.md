@@ -34,6 +34,7 @@ ownership checking, C generation, and native compilation.
 | `src/emit_c.rs` | Generated C and cleanup |
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
+| `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
@@ -60,6 +61,16 @@ protection, and generated C includes those paths directly.
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.
+
+The `check_with_kind`, `compile_with_kind`, and `analyze_with_kind` APIs accept
+`ProgramKind::Library` for entries without `main`. Checked snapshots retain that
+kind through editor analysis and rename validation. Library emission gives
+ordinary Crust functions internal linkage and preserves named C exports.
+
+Static-library builds compile each C source separately and copy explicit native
+objects under distinct staging names. The archiver writes a fresh archive before
+replacing the destination. Staging cleanup removes the files created for that
+build, including partial outputs after a tool failure.
 
 Frontend APIs run parsing, checking, analysis, and emission on a scoped worker
 with a 16 MiB stack. This gives command-line and editor clients the same stack

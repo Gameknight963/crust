@@ -24,6 +24,7 @@ impl std::ops::Deref for CheckedProgram {
 }
 
 pub(crate) struct AnalyzedProgram {
+    pub kind: crate::ProgramKind,
     pub program: Program,
     pub types: Types,
     pub analyses: HashMap<String, FunctionAnalysis>,
@@ -110,16 +111,30 @@ struct LoopContext {
 }
 
 pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
+    return check_with_kind(program, crate::ProgramKind::Executable);
+}
+
+pub(crate) fn check_with_kind(
+    program: Program,
+    kind: crate::ProgramKind,
+) -> Result<CheckedProgram, Diagnostic> {
     return Ok(CheckedProgram {
-        analysis: analyze(program, false)?,
+        analysis: analyze(program, false, kind)?,
     });
 }
 
-pub(crate) fn analyze_completion(program: Program) -> Result<AnalyzedProgram, Diagnostic> {
-    return analyze(program, true);
+pub(crate) fn analyze_completion_with_kind(
+    program: Program,
+    kind: crate::ProgramKind,
+) -> Result<AnalyzedProgram, Diagnostic> {
+    return analyze(program, true, kind);
 }
 
-fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Diagnostic> {
+fn analyze(
+    mut program: Program,
+    completion: bool,
+    kind: crate::ProgramKind,
+) -> Result<AnalyzedProgram, Diagnostic> {
     if program.native_headers.is_empty()
         && let Some(definition) = program
             .enums
@@ -432,34 +447,47 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
         }
     }
 
-    match signatures.get("main") {
-        Some(signature)
-            if signature.return_type == Type::Integer(IntType::I32)
-                && !signature.external
-                && !signature.requires_unsafe
-                && signature.calling_convention == CallingConvention::C
-                && signature.parameters.is_empty() => {}
-        Some(_) => {
-            let function = program
-                .functions
-                .iter()
-                .find(|function| function.name == "main")
-                .unwrap();
+    if kind == crate::ProgramKind::Library {
+        if let Some(function) = program
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+        {
             return Err(Diagnostic::new(
                 function.span,
-                "entry point must be 'int main(void)' or 'int main()'",
+                "library targets cannot define main",
             ));
         }
-        None => {
-            return Err(Diagnostic::new(
-                Span {
-                    start: 0,
-                    end: 0,
-                    line: 1,
-                    column: 1,
-                },
-                "program needs an 'int main(void)' entry point",
-            ));
+    } else {
+        match signatures.get("main") {
+            Some(signature)
+                if signature.return_type == Type::Integer(IntType::I32)
+                    && !signature.external
+                    && !signature.requires_unsafe
+                    && signature.calling_convention == CallingConvention::C
+                    && signature.parameters.is_empty() => {}
+            Some(_) => {
+                let function = program
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "main")
+                    .unwrap();
+                return Err(Diagnostic::new(
+                    function.span,
+                    "entry point must be 'int main(void)' or 'int main()'",
+                ));
+            }
+            None => {
+                return Err(Diagnostic::new(
+                    Span {
+                        start: 0,
+                        end: 0,
+                        line: 1,
+                        column: 1,
+                    },
+                    "program needs an 'int main(void)' entry point",
+                ));
+            }
         }
     }
 
@@ -547,6 +575,7 @@ fn analyze(mut program: Program, completion: bool) -> Result<AnalyzedProgram, Di
     }
 
     return Ok(AnalyzedProgram {
+        kind,
         program,
         types,
         analyses,

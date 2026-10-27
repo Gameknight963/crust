@@ -189,6 +189,235 @@ fn native_macro_definitions_preserve_values_function_macros_and_per_target_confi
 }
 
 #[test]
+fn static_libraries_keep_explicit_objects_with_the_same_basename() {
+    let fixture = Fixture::new();
+    fixture.write("one/input.c", "int native_first(void) { return 20; }");
+    fixture.write("two/input.c", "int native_second(void) { return 22; }");
+    let compiler = std::env::var_os("CC").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "clang".into()
+        } else {
+            "cc".into()
+        }
+    });
+    for directory in ["one", "two"] {
+        let output = Command::new(&compiler)
+            .args(["-std=c11", "-c"])
+            .arg(fixture.directory.join(directory).join("input.c"))
+            .arg("-o")
+            .arg(fixture.directory.join(directory).join("input.o"))
+            .output()
+            .unwrap();
+        success(&output);
+    }
+    fixture.manifest("[[targets]]\nname='objects'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-inputs=['one/input.o', 'two/input.o']\n");
+    fixture.write("library.cr", "extern int native_first(); extern int native_second(); extern int answer() { return native_first() + native_second(); }");
+    success(&fixture.invoke(&["build"]));
+    let artifact = fixture
+        .directory
+        .join("target/crust/objects")
+        .join(if cfg!(windows) {
+            "objects.lib"
+        } else {
+            "libobjects.a"
+        });
+    fixture.write("consumer.c", "#include <stdint.h>\n#include <stdio.h>\nint32_t answer(void); int main(void) { printf(\"%d\\n\", (int)answer()); return 0; }\n");
+    let consumer = fixture
+        .directory
+        .join("consumer")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    crust::native::compile_file_with_options(
+        &fixture.directory.join("consumer.c"),
+        &consumer,
+        &crust::native::Options {
+            link_inputs: vec![artifact],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let output = Command::new(consumer).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+}
+
+#[test]
+fn library_rebuilds_drop_removed_members_and_helpers_do_not_collide_between_archives() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='first'\nkind='static-library'\nentry='first.cr'\n[targets.native]\nsources=['removed.c']\n[[targets]]\nname='second'\nkind='static-library'\nentry='second.cr'\n");
+    fixture.write("first.cr", "int helper(int value) { return value + 1; } extern int first(int value) { return helper(value); }");
+    fixture.write("second.cr", "int helper(int value) { return value * 2; } extern int second(int value) { return helper(value); }");
+    fixture.write("removed.c", "int removed_symbol(void) { return 99; }");
+    success(&fixture.invoke(&["build"]));
+    let artifact = |name: &str| {
+        fixture
+            .directory
+            .join("target/crust")
+            .join(name)
+            .join(if cfg!(windows) {
+                format!("{name}.lib")
+            } else {
+                format!("lib{name}.a")
+            })
+    };
+    let archiver = std::env::var_os("AR").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "llvm-ar".into()
+        } else {
+            "ar".into()
+        }
+    });
+    let members = Command::new(&archiver)
+        .arg("t")
+        .arg(artifact("first"))
+        .output()
+        .unwrap();
+    success(&members);
+    assert_eq!(text(&members).lines().count(), 2);
+    fixture.manifest("[[targets]]\nname='first'\nkind='static-library'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='static-library'\nentry='second.cr'\n");
+    success(&fixture.invoke(&["build"]));
+    let members = Command::new(&archiver)
+        .arg("t")
+        .arg(artifact("first"))
+        .output()
+        .unwrap();
+    success(&members);
+    assert_eq!(text(&members).lines().count(), 1);
+    fixture.write("consumer.c", "#include <stdint.h>\n#include <stdio.h>\nint32_t first(int32_t); int32_t second(int32_t); int main(void) { printf(\"%d\\n\", (int)(first(20) + second(10))); return 0; }\n");
+    let consumer = fixture
+        .directory
+        .join("consumer")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    crust::native::compile_file_with_options(
+        &fixture.directory.join("consumer.c"),
+        &consumer,
+        &crust::native::Options {
+            link_inputs: vec![artifact("first"), artifact("second")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let output = Command::new(consumer).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "41\n");
+}
+
+#[test]
+fn static_library_configuration_and_outputs_preserve_inputs() {
+    let fixture = Fixture::new();
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    for native in [
+        "libraries=['other']",
+        "library-dirs=['.']",
+        "link-inputs=['other.a']",
+    ] {
+        fixture.write("other.a", "preserved");
+        fixture.manifest(&format!("[[targets]]\nname='app'\nkind='static-library'\nentry='library.cr'\n[targets.native]\n{native}\n"));
+        let output = fixture.invoke(&["check"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("static-library"));
+    }
+    fixture.manifest("[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n[[targets]]\nname='app'\nkind='executable'\nentry='library.cr'\n");
+    let output = fixture.invoke(&["check"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("incompatible target kinds"));
+    let filename = if cfg!(windows) {
+        "library.lib"
+    } else {
+        "liblibrary.a"
+    };
+    let entry = format!("target/crust/library/{filename}");
+    let source = "extern int answer() { return 42; }";
+    fixture.write(&entry, source);
+    fixture.manifest(&format!(
+        "[[targets]]\nname='library'\nkind='static-library'\nentry='{entry}'\n"
+    ));
+    let output = fixture.invoke(&["build"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("overwrite an input"));
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join(entry)).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn static_library_targets_archive_native_sources_and_link_from_a_c_consumer() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "crust.toml",
+        include_str!("../examples/library_project/crust.toml"),
+    );
+    fixture.write(
+        "src/library.cr",
+        include_str!("../examples/library_project/src/library.cr"),
+    );
+    fixture.write(
+        "include/math.h",
+        include_str!("../examples/library_project/include/math.h"),
+    );
+    fixture.write(
+        "native/increment.c",
+        include_str!("../examples/library_project/native/increment.c"),
+    );
+    fixture.write(
+        "native/consumer.c",
+        include_str!("../examples/library_project/native/consumer.c"),
+    );
+    let output = fixture.invoke(&["check"]);
+    success(&output);
+    let output = fixture.invoke(&["build"]);
+    success(&output);
+    let artifact = fixture
+        .directory
+        .join("target/crust/math")
+        .join(if cfg!(windows) {
+            "math.lib"
+        } else {
+            "libmath.a"
+        });
+    assert!(artifact.is_file(), "{}", text(&output));
+    let consumer = fixture
+        .directory
+        .join("consumer")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    crust::native::compile_file_with_options(
+        &fixture.directory.join("native/consumer.c"),
+        &consumer,
+        &crust::native::Options {
+            include_dirs: vec![fixture.directory.join("include")],
+            link_inputs: vec![artifact.clone()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let output = Command::new(consumer).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let previous = fs::read(&artifact).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("build")
+        .current_dir(&fixture.directory)
+        .env("AR", "missing-crust-test-archiver")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("could not start archiver"));
+    assert_eq!(fs::read(&artifact).unwrap(), previous);
+    assert!(
+        fs::read_dir(artifact.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("crust-build-"))
+    );
+    let output = fixture.invoke(&["run"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("static libraries"));
+}
+
+#[test]
 fn separate_native_sources_call_named_crust_exports() {
     let fixture = Fixture::new();
     fixture.write(

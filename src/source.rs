@@ -106,48 +106,76 @@ impl SourceSet {
     }
 
     pub fn check(&self) -> Result<(), SourceError> {
-        return crate::frontend::run(|| self.check_inner()).map_err(|error| self.locate(error))?;
+        return self.check_with_kind(crate::ProgramKind::Executable);
     }
 
-    fn check_inner(&self) -> Result<(), SourceError> {
+    pub fn check_with_kind(&self, kind: crate::ProgramKind) -> Result<(), SourceError> {
+        return crate::frontend::run(|| self.check_inner(kind))
+            .map_err(|error| self.locate(error))?;
+    }
+
+    fn check_inner(&self, kind: crate::ProgramKind) -> Result<(), SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
-        crate::check::check(program).map_err(|error| self.locate(error))?;
+        crate::check::check_with_kind(program, kind).map_err(|error| self.locate(error))?;
         return Ok(());
     }
 
     pub fn compile(&self) -> Result<String, SourceError> {
-        return crate::frontend::run(|| self.compile_inner())
+        return self.compile_with_kind(crate::ProgramKind::Executable);
+    }
+
+    pub fn compile_with_kind(&self, kind: crate::ProgramKind) -> Result<String, SourceError> {
+        return crate::frontend::run(|| self.compile_inner(kind))
             .map_err(|error| self.locate(error))?;
     }
 
-    fn compile_inner(&self) -> Result<String, SourceError> {
+    fn compile_inner(&self, kind: crate::ProgramKind) -> Result<String, SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
-        let checked = crate::check::check(program).map_err(|error| self.locate(error))?;
+        let checked =
+            crate::check::check_with_kind(program, kind).map_err(|error| self.locate(error))?;
         return Ok(crate::emit_c::generate(&checked));
     }
 
     pub fn analyze(&self) -> Result<crate::analysis::Analysis, SourceError> {
-        return self.analyze_inner(false);
+        return self.analyze_with_kind(crate::ProgramKind::Executable);
     }
 
-    pub(crate) fn analyze_completion(&self) -> Result<crate::analysis::Analysis, SourceError> {
-        return self.analyze_inner(true);
+    pub fn analyze_with_kind(
+        &self,
+        kind: crate::ProgramKind,
+    ) -> Result<crate::analysis::Analysis, SourceError> {
+        return self.analyze_inner(false, kind);
     }
 
-    fn analyze_inner(&self, completion: bool) -> Result<crate::analysis::Analysis, SourceError> {
-        return crate::frontend::run(|| self.analyze_snapshot(completion))
+    pub(crate) fn analyze_completion_with_kind(
+        &self,
+        kind: crate::ProgramKind,
+    ) -> Result<crate::analysis::Analysis, SourceError> {
+        return self.analyze_inner(true, kind);
+    }
+
+    fn analyze_inner(
+        &self,
+        completion: bool,
+        kind: crate::ProgramKind,
+    ) -> Result<crate::analysis::Analysis, SourceError> {
+        return crate::frontend::run(|| self.analyze_snapshot(completion, kind))
             .map_err(|error| self.locate(error))?;
     }
 
-    fn analyze_snapshot(&self, completion: bool) -> Result<crate::analysis::Analysis, SourceError> {
+    fn analyze_snapshot(
+        &self,
+        completion: bool,
+        kind: crate::ProgramKind,
+    ) -> Result<crate::analysis::Analysis, SourceError> {
         let program =
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
         let checked = if completion {
-            crate::check::analyze_completion(program)
+            crate::check::analyze_completion_with_kind(program, kind)
         } else {
-            crate::check::check(program).map(|checked| checked.into_analysis())
+            crate::check::check_with_kind(program, kind).map(|checked| checked.into_analysis())
         }
         .map_err(|error| self.locate(error))?;
         let files = self

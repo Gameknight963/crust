@@ -450,6 +450,63 @@ fn workspace_roots_supply_target_context_for_external_unsaved_dependencies() {
 }
 
 #[test]
+fn library_targets_support_unsaved_dependency_analysis_navigation_and_rename_without_main() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-library")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname='library'\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n").unwrap();
+    let library = "import \"helper.cr\"; extern int answer(int value) { return helper(value); }";
+    let helper = "int helper(int value) { return value + 1; }";
+    std::fs::write(root.join("library.cr"), library).unwrap();
+    std::fs::write(
+        root.join("helper.cr"),
+        "int helper(int value) { return missing_on_disk; }",
+    )
+    .unwrap();
+    let uri = file_uri(&root.join("library.cr"));
+    let helper_uri = file_uri(&root.join("helper.cr"));
+    let mut server =
+        Server::start_with_params(json!({"capabilities": {}, "rootUri": file_uri(&root)}));
+    assert_eq!(
+        server.open(&helper_uri, 1, helper)["diagnostics"],
+        json!([])
+    );
+    let renamed = server.request("textDocument/rename", json!({"textDocument": {"uri": helper_uri}, "position": point(helper, "helper(int"), "newName": "compute"}));
+    assert!(renamed.error.is_none(), "{:?}", renamed.error);
+    let changes = renamed.result.unwrap()["changes"].clone();
+    assert_eq!(changes[&uri][0]["newText"], "compute");
+    assert_eq!(changes[&helper_uri][0]["newText"], "compute");
+    assert_eq!(workspace_symbols(&mut server, "answer").len(), 1);
+    assert_eq!(server.open(&uri, 1, library)["diagnostics"], json!([]));
+    let definition = server
+        .request(
+            "textDocument/definition",
+            json!({"textDocument": {"uri": uri}, "position": point(library, "helper(value)")}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(definition[0]["uri"], helper_uri);
+    assert!(!semantic_tokens(&mut server, &uri).is_empty());
+    assert!(
+        complete(&mut server, &uri, point(library, "helper(value)"))
+            .iter()
+            .any(|item| item["label"] == "helper")
+    );
+    let help = server.request("textDocument/signatureHelp", json!({"textDocument": {"uri": uri}, "position": at(library, library.find("helper(").unwrap() + "helper(".len())})).result.unwrap();
+    assert_eq!(help["signatures"][0]["label"], "int helper(int value)");
+    server.change(&uri, 2, &format!("{library} int main() {{ return 0; }}"));
+    let result = server.diagnostics();
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("library targets cannot define main")
+    );
+    server.stop();
+}
+
+#[test]
 fn excessive_nesting_reports_diagnostics_and_the_server_recovers() {
     let uri = "untitled:deep.cr";
     let mut server = Server::start();

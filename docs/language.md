@@ -18,7 +18,7 @@ and file-based commands report errors with the original filename and location.
 
 - Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names
 - Functions support named parameters, forward calls, and recursion
-- The entry point is `int main()` or `int main(void)`
+- Executable targets use `int main()` or `int main(void)` as their entry point
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
 - `if`, `else`, `while`, `do`, and `for` bodies use braces

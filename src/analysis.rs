@@ -71,6 +71,7 @@ pub struct TypeInfo {
 
 #[derive(Debug)]
 pub struct Analysis {
+    pub(crate) kind: crate::ProgramKind,
     pub files: Vec<File>,
     pub symbols: Vec<Symbol>,
     pub references: Vec<Reference>,
@@ -266,6 +267,7 @@ pub(crate) fn build(
     let mut builder = Builder {
         seen: HashSet::new(),
         analysis: Analysis {
+            kind: checked.kind,
             files,
             symbols: Vec::new(),
             references: Vec::new(),

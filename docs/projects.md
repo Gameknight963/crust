@@ -1,6 +1,6 @@
 # Projects
 
-A `crust.toml` file defines a project and its executable targets:
+A `crust.toml` file defines a project and its executable or static-library targets:
 
 ```toml
 [project]
@@ -35,6 +35,7 @@ crust build --project path/to/crust.toml
 - `run`, `emit-c`, and `tokens` select the sole target automatically, or require `--target` for multi-target projects
 - Single-file commands continue to accept a source path directly
 - Each executable's output goes to `<project>/target/crust/<target>/`
+- Static libraries use the same output directory, named `<target>.lib` on Windows and `lib<target>.a` on Unix
 - Generated files are checked against the manifest and all entry files before writing
 - Native source files and explicit link inputs are also protected from output collisions
 - Imported source files from every target are protected before build output is written
@@ -59,6 +60,40 @@ heap owners, growable vectors, and their caller in separate files. Run it with:
 ```powershell
 cargo run -- run --project examples/container_project
 ```
+
+## Static libraries
+
+```toml
+[[targets]]
+name = "math"
+kind = "static-library"
+entry = "src/library.cr"
+```
+
+Build with `crust build --target math`. A library entry contains functions and
+imports, with no `main`. Named C exports form its public native API. Ordinary
+Crust functions have internal linkage, so libraries can reuse helper names.
+
+The build compiles generated C and native sources into objects, then creates a
+fresh archive. Rebuilding removes obsolete members. Failed compilation or
+archiving preserves the previous archive.
+
+- `CC` selects the C compiler
+- `AR` selects an ar-compatible executable, defaulting to `llvm-ar` on Windows and `ar` on Unix
+- Native `sources`, `include-dirs`, and `defines` apply to object compilation
+- Native `link-inputs` can include `.o` or `.obj` files, including matching basenames in different directories
+- Consumers supply any further libraries needed by the archive
+
+See [the library project](../examples/library_project/). Its C consumer links
+against the built archive. For example, from PowerShell in this checkout:
+
+```powershell
+cargo run -- build --project examples/library_project
+clang examples/library_project/native/consumer.c -Iexamples/library_project/include examples/library_project/target/crust/math/math.lib -o target/library-consumer.exe
+./target/library-consumer.exe
+```
+
+On Unix, link `examples/library_project/target/crust/math/libmath.a` instead.
 
 ## Native C code
 
@@ -114,7 +149,7 @@ cargo run -- run --project examples/native_project
 
 - Module namespaces and visibility
 - Path dependencies between Crust projects
-- Static and shared library targets
+- Shared library targets
 - Build profiles and platform-specific settings
 - Workspaces containing related projects
 

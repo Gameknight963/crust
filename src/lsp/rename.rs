@@ -68,11 +68,12 @@ pub(super) fn global_edits(
     for graph in sources.graphs {
         let entry = &graph.files()[0].path;
         if initial.analysis.files[0].path.as_ref() == Some(entry)
-            || (covered.contains(entry) && !sources.targets.contains(entry))
+            || (covered.contains(entry) && !sources.targets.contains_key(entry))
         {
             continue;
         }
-        match graph.analyze() {
+        let kind = sources.targets.get(entry).copied().unwrap_or_default();
+        match graph.analyze_with_kind(kind) {
             Ok(analysis) => {
                 covered.extend(graph.files().iter().map(|file| file.path.clone()));
                 contexts.push(Context {

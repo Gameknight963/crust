@@ -70,7 +70,12 @@ pub(super) fn symbols(
     let sources = source_graphs(documents, roots, false).map_err(RequestError::failed)?;
     let mut contexts = Vec::new();
     for graph in sources.graphs {
-        if let Ok(analysis) = graph.analyze() {
+        let kind = sources
+            .targets
+            .get(&graph.files()[0].path)
+            .copied()
+            .unwrap_or_default();
+        if let Ok(analysis) = graph.analyze_with_kind(kind) {
             contexts.push(Context {
                 analysis,
                 file: 0,
@@ -165,7 +170,9 @@ pub(super) fn source_graphs(
             Err(_) => continue,
         };
         for target in project.targets {
-            sources.targets.insert(target.entry.clone());
+            sources
+                .targets
+                .insert(target.entry.clone(), target.kind.program_kind());
             if !entries.insert(target.entry.clone()) {
                 continue;
             }

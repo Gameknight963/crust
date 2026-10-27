@@ -16,25 +16,47 @@ pub mod source;
 
 use diagnostic::Diagnostic;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProgramKind {
+    #[default]
+    Executable,
+    Library,
+}
+
 pub fn analyze(source: &str) -> Result<analysis::Analysis, Diagnostic> {
-    return analyze_inner(source, false);
+    return analyze_with_kind(source, ProgramKind::Executable);
+}
+
+pub fn analyze_with_kind(
+    source: &str,
+    kind: ProgramKind,
+) -> Result<analysis::Analysis, Diagnostic> {
+    return analyze_inner(source, false, kind);
 }
 
 pub(crate) fn analyze_completion(source: &str) -> Result<analysis::Analysis, Diagnostic> {
-    return analyze_inner(source, true);
+    return analyze_inner(source, true, ProgramKind::Executable);
 }
 
-fn analyze_inner(source: &str, completion: bool) -> Result<analysis::Analysis, Diagnostic> {
-    return frontend::run(|| analyze_snapshot(source, completion))?;
+fn analyze_inner(
+    source: &str,
+    completion: bool,
+    kind: ProgramKind,
+) -> Result<analysis::Analysis, Diagnostic> {
+    return frontend::run(|| analyze_snapshot(source, completion, kind))?;
 }
 
-fn analyze_snapshot(source: &str, completion: bool) -> Result<analysis::Analysis, Diagnostic> {
+fn analyze_snapshot(
+    source: &str,
+    completion: bool,
+    kind: ProgramKind,
+) -> Result<analysis::Analysis, Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     let checked = if completion {
-        check::analyze_completion(program)?
+        check::analyze_completion_with_kind(program, kind)?
     } else {
-        check::check(program)?.into_analysis()
+        check::check_with_kind(program, kind)?.into_analysis()
     };
     return Ok(analysis::build(
         &checked,
@@ -47,24 +69,32 @@ fn analyze_snapshot(source: &str, completion: bool) -> Result<analysis::Analysis
 }
 
 pub fn check(source: &str) -> Result<(), Diagnostic> {
-    return frontend::run(|| check_inner(source))?;
+    return check_with_kind(source, ProgramKind::Executable);
 }
 
-fn check_inner(source: &str) -> Result<(), Diagnostic> {
+pub fn check_with_kind(source: &str, kind: ProgramKind) -> Result<(), Diagnostic> {
+    return frontend::run(|| check_inner(source, kind))?;
+}
+
+fn check_inner(source: &str, kind: ProgramKind) -> Result<(), Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
-    check::check(program)?;
+    check::check_with_kind(program, kind)?;
     return Ok(());
 }
 
 pub fn compile(source: &str) -> Result<String, Diagnostic> {
-    return frontend::run(|| compile_inner(source))?;
+    return compile_with_kind(source, ProgramKind::Executable);
 }
 
-fn compile_inner(source: &str) -> Result<String, Diagnostic> {
+pub fn compile_with_kind(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
+    return frontend::run(|| compile_inner(source, kind))?;
+}
+
+fn compile_inner(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
-    let checked = check::check(program)?;
+    let checked = check::check_with_kind(program, kind)?;
     return Ok(emit_c::generate(&checked));
 }
 

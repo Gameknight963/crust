@@ -111,11 +111,16 @@ impl Context {
         };
         let sources = load_sources(documents, roots);
         for graph in sources.graphs {
+            let kind = sources
+                .targets
+                .get(&graph.files()[0].path)
+                .copied()
+                .unwrap_or_default();
             let analyze = || {
                 if completion {
-                    graph.analyze_completion()
+                    graph.analyze_completion_with_kind(kind)
                 } else {
-                    graph.analyze()
+                    graph.analyze_with_kind(kind)
                 }
             };
             if let Some(file) = graph.files().iter().position(|file| file.path == path)

@@ -1,0 +1,11 @@
+[project]
+name = "library-example"
+
+[[targets]]
+name = "math"
+kind = "static-library"
+entry = "src/library.cr"
+
+[targets.native]
+sources = ["native/increment.c"]
+include-dirs = ["include"]

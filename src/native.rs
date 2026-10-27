@@ -3,6 +3,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod archive;
+pub use archive::compile_static_library;
+pub(crate) use archive::validate_options as validate_archive_options;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
