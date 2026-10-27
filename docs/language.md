@@ -533,6 +533,8 @@ struct Item {
 - A local binding retains the returned loan until its block ends
 - Unbound returned loans last through the expression statement or initializer
 - Condition temporaries end before entering an `if` or loop body
+- Temporary returned loans from the left operand of `&&` or `||` end before the right operand
+- Temporary returned loans from a `?:` condition end before either branch
 - Borrowed return contracts with multiple borrowed inputs require further lifetime syntax
 
 Returning a reference to a local or an owned value parameter produces a compiler

@@ -1727,9 +1727,11 @@ impl FunctionChecker<'_> {
                 left,
                 right,
             } => {
+                let before_left_loans = self.loans.len();
                 let left_type = self.expression(left)?;
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
                     self.scalar_condition(left_type, left.span)?;
+                    self.loans.truncate(before_left_loans);
                     let before_right = self.scopes.clone();
                     let right_type = self.expression(right)?;
                     self.scalar_condition(right_type, right.span)?;

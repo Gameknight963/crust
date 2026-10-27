@@ -27,6 +27,50 @@ fn borrowed_method_returns_keep_the_receiver_alive() {
 }
 
 #[test]
+fn short_circuit_sequence_points_release_left_operand_returned_loans() {
+    run(
+        r#"
+        int^ touch(int^ value) { *value += 1; return value; }
+        int main() {
+            int counter = 0;
+            print(*touch(^counter) && *touch(^counter));
+            print(counter);
+            print(*touch(^counter) || *touch(^counter));
+            print(counter);
+            print(*touch(^counter) ? *touch(^counter) : *touch(^counter));
+            print(counter);
+            {
+                int^ slot = ^counter;
+                print(*touch(^*slot) && *touch(^*slot));
+            }
+            print(counter);
+            return 0;
+        }
+    "#,
+        "1\n2\n1\n3\n5\n5\n1\n7\n",
+        "",
+    );
+}
+
+#[test]
+fn short_circuit_sequence_points_preserve_enclosing_argument_and_local_loans() {
+    let prelude = "int^ identity(int^ value) { return value; } int use(int^ first, int second) { return *first + second; }";
+    for body in [
+        "int value = 1; return use(identity(^value), 1 && *identity(^value));",
+        "int value = 1; return use(identity(^value), 0 || *identity(^value));",
+        "int value = 1; return use(identity(^value), 1 ? *identity(^value) : 0);",
+        "int value = 1; int other = 2; return use(identity(^value), *identity(^other) && *identity(^value));",
+        "int value = 1; int^ local = ^value; print(1 && *identity(^value)); return *local;",
+    ] {
+        let error = crust::check(&format!("{prelude} int main() {{ {body} }}")).unwrap_err();
+        assert!(
+            error.message.contains("conflicting access"),
+            "{body}: {error}"
+        );
+    }
+}
+
+#[test]
 fn forwards_returns_through_nested_calls_local_aliases_and_reborrows() {
     run(
         r#"
