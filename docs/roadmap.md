@@ -68,6 +68,7 @@
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
+- Visual Studio VSIX with a bundled server, shared grammar, and native semantic classifications
 
 ## Compiler work
 
@@ -82,7 +83,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 - Extend rename to structs, unions, enums, and type parameters
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
-- Build Visual Studio integration on the same language server
+- Add native build and launch commands to Visual Studio
 - Use `crust.toml` as the authoritative project configuration
 - Add optional MSBuild `.crproj` integration for Visual Studio
 - Add native source-level debugging through the generated C backend

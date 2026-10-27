@@ -2,6 +2,8 @@
 target/
 node_modules/
 *.vsix
+/editors/visualstudio/bin/
+/editors/visualstudio/obj/
 
 # Other generated output directories. Generated C belongs here, not beside source.
 /build/

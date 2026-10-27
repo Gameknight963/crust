@@ -1,6 +1,7 @@
 {
   "scopeName": "source.crust",
   "name": "Crust",
+  "fileTypes": ["cr"],
   "patterns": [
     { "name": "comment.line.double-slash.crust", "begin": "//", "end": "$" },
     { "name": "comment.block.crust", "begin": "/\\*", "end": "\\*/" },

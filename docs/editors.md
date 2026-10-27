@@ -84,6 +84,25 @@ text. Clients that support semantic-token refresh requests are refreshed after
 document changes, including dependency edits. A compiler error clears semantic
 tokens until the program checks successfully again.
 
+## Visual Studio
+
+The [Visual Studio extension](../editors/visualstudio/) bundles `crust-lsp`.
+
+```powershell
+./editors/visualstudio/build.ps1
+```
+
+Install `target/crust-visualstudio.vsix`, restart Visual Studio, and open a folder
+containing `crust.toml` and `.cr` files. The extension targets versions 17.14
+through 18.x on Windows x64. Build and run programs with the Crust CLI.
+
+The client uses Visual Studio's editing UI for compiler diagnostics, completion,
+navigation, references, rename, and semantic highlighting. Syntax highlighting
+and bracket configuration use the same files as the VS Code extension.
+
+Set `CRUST_LSP_PATH` to a development server's full path before starting Visual
+Studio to use that server. The default is the server bundled with the VSIX.
+
 ## VS Code
 
 The extension lives in [editors/vscode](../editors/vscode/).
@@ -125,4 +144,4 @@ to stderr.
 
 - Rename for structs, unions, enums, and type parameters
 - Semantic information across module namespaces and project dependencies
-- Visual Studio client and project-system integration
+- Visual Studio project-system integration and debugging

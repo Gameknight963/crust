@@ -287,9 +287,10 @@ pub(super) fn request(
     documents: &HashMap<String, Document>,
     document_changes: bool,
     workspace_roots: &[PathBuf],
+    visual_studio: bool,
 ) -> Result<Value, RequestError> {
     if method == "textDocument/semanticTokens/full" {
-        return super::semantic_tokens::request(params, documents, workspace_roots);
+        return super::semantic_tokens::request(params, documents, workspace_roots, visual_studio);
     }
     if method == "textDocument/signatureHelp" {
         return super::signature::request(params, documents, workspace_roots);

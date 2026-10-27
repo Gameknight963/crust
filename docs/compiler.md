@@ -51,6 +51,8 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/signature.rs` | Signature-help responses and active parameters |
 | `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
+| `editors/visualstudio/CrustLanguageClient.cs` | Visual Studio language client and server process lifetime |
+| `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
 ## Source loading
@@ -133,6 +135,11 @@ Diagnostics and semantic requests select importing targets that contain an open
 file, including dependencies outside the project directory. Workspace-folder
 and watched-file changes recheck open files and request semantic-token refresh
 when supported. Invalid project configurations produce diagnostics on the manifest.
+
+The Visual Studio client requests `visualStudioClassifications` in initialization
+options. The server supplies Visual Studio classification names in its semantic
+token legend and classifies built-in type keywords separately. Standard LSP
+clients use the standard token names.
 
 `Analysis::completions_at` returns visible declarations at a source position.
 Block scopes retain local declaration boundaries, parameters belong to their

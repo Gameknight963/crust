@@ -22,6 +22,7 @@ impl Server {
     }
 
     fn start_with_params(params: Value) -> Server {
+        let visual_studio = params["initializationOptions"]["visualStudioClassifications"] == true;
         let mut child = Command::new(env!("CARGO_BIN_EXE_crust-lsp"))
             .arg("--stdio")
             .env("CC", "missing-crust-test-compiler")
@@ -57,6 +58,40 @@ impl Server {
         assert_eq!(capabilities["documentSymbolProvider"], true);
         assert_eq!(capabilities["workspaceSymbolProvider"], true);
         assert_eq!(capabilities["semanticTokensProvider"]["full"], true);
+        let expected_types = if visual_studio {
+            json!([
+                "type",
+                "struct name",
+                "enum name",
+                "interface name",
+                "type parameter name",
+                "method name",
+                "method name",
+                "field name",
+                "enum member name",
+                "parameter name",
+                "local name",
+                "keyword"
+            ])
+        } else {
+            json!([
+                "type",
+                "struct",
+                "enum",
+                "interface",
+                "typeParameter",
+                "function",
+                "method",
+                "property",
+                "enumMember",
+                "parameter",
+                "variable"
+            ])
+        };
+        assert_eq!(
+            capabilities["semanticTokensProvider"]["legend"]["tokenTypes"],
+            expected_types
+        );
         assert_eq!(
             capabilities["semanticTokensProvider"]["legend"]["tokenModifiers"],
             json!(["declaration", "defaultLibrary"])
@@ -1638,6 +1673,37 @@ fn semantic_tokens_classify_bound_names_and_builtins_with_utf16_positions() {
         assert!(token[2] > 0);
     }
     server.stop();
+}
+
+#[test]
+fn visual_studio_semantic_tokens_use_native_classifications_for_builtins_and_source_types() {
+    let source = "typedef int Count; struct Item { int value; }; int main() { Count count = 1; Item item = { .value = count }; print(item.value); return 0; }";
+    for visual_studio in [false, true] {
+        let mut server =
+            Server::start_with_params(json!({"capabilities": {}, "initializationOptions": {
+                "visualStudioClassifications": visual_studio
+            }}));
+        let uri = "untitled:visualstudio.cr";
+        assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+        let tokens = semantic_tokens(&mut server, uri);
+        for (needle, expected) in [
+            ("int Count", if visual_studio { 11 } else { 0 }),
+            ("Count count", 0),
+            ("Item item", 1),
+            ("print(item", 5),
+        ] {
+            let position = point(source, needle);
+            let token = tokens
+                .iter()
+                .find(|token| {
+                    token[0] == position["line"].as_u64().unwrap()
+                        && token[1] == position["character"].as_u64().unwrap()
+                })
+                .unwrap();
+            assert_eq!(token[3], expected, "{needle}");
+        }
+        server.stop();
+    }
 }
 
 #[test]

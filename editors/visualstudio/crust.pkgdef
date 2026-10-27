@@ -1,0 +1,8 @@
+[$RootKey$\TextMate\Repositories]
+"crust"="$PackageFolder$\Grammars"
+
+[$RootKey$\TextMate\LanguageConfiguration\GrammarMapping]
+"source.crust"="$PackageFolder$\language-configuration.json"
+
+[$RootKey$\TextMate\LanguageConfiguration\ContentTypeMapping]
+"crust"="$PackageFolder$\language-configuration.json"

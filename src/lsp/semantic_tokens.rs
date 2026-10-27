@@ -20,6 +20,29 @@ pub(super) const TYPES: &[&str] = &[
 ];
 pub(super) const MODIFIERS: &[&str] = &["declaration", "defaultLibrary"];
 
+const VISUAL_STUDIO_TYPES: &[&str] = &[
+    "type",
+    "struct name",
+    "enum name",
+    "interface name",
+    "type parameter name",
+    "method name",
+    "method name",
+    "field name",
+    "enum member name",
+    "parameter name",
+    "local name",
+    "keyword",
+];
+
+pub(super) fn legend(visual_studio: bool) -> &'static [&'static str] {
+    return if visual_studio {
+        VISUAL_STUDIO_TYPES
+    } else {
+        TYPES
+    };
+}
+
 fn kind(kind: SymbolKind) -> usize {
     return match kind {
         SymbolKind::Alias => 0,
@@ -58,6 +81,7 @@ pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    visual_studio: bool,
 ) -> Result<Value, RequestError> {
     let params: DocumentParams = serde_json::from_value(params)?;
     let Some(context) = Context::load(&params.text_document.uri, documents, roots) else {
@@ -128,6 +152,11 @@ pub(super) fn request(
         };
         let Some((kind, modifiers)) = classification else {
             continue;
+        };
+        let kind = if visual_studio && kind == 0 && modifiers & 2 != 0 {
+            VISUAL_STUDIO_TYPES.len() - 1
+        } else {
+            kind
         };
         let length = text[token.span.start..token.span.end]
             .encode_utf16()

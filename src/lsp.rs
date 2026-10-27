@@ -68,6 +68,9 @@ struct DocumentId {
 pub fn serve(connection: &Connection) -> ServerResult<()> {
     let (id, params) = connection.initialize_start()?;
     let mut workspace_roots = workspace::roots(&params);
+    let visual_studio = params["initializationOptions"]["visualStudioClassifications"]
+        .as_bool()
+        .unwrap_or(false);
     let semantic_refresh = params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"]
         .as_bool()
         .unwrap_or(false);
@@ -88,7 +91,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "workspaceSymbolProvider": true,
                 "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
                 "semanticTokensProvider": {
-                    "legend": { "tokenTypes": semantic_tokens::TYPES, "tokenModifiers": semantic_tokens::MODIFIERS },
+                    "legend": { "tokenTypes": semantic_tokens::legend(visual_studio), "tokenModifiers": semantic_tokens::MODIFIERS },
                     "full": true
                 },
                 "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
@@ -142,6 +145,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         &documents,
                         document_changes,
                         &workspace_roots,
+                        visual_studio,
                     ) {
                         Ok(result) => Response::new_ok(request.id, result),
                         Err(error) => Response::new_err(request.id, error.code, error.message),
