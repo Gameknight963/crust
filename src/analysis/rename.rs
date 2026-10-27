@@ -84,9 +84,12 @@ impl Analysis {
             SymbolKind::Variable
                 | SymbolKind::Parameter
                 | SymbolKind::Function
+                | SymbolKind::Method
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
+            || (symbol.kind == SymbolKind::Method
+                && (symbol.name.starts_with('~') || symbol.detail.trim_start().starts_with('~')))
         {
             return None;
         }
@@ -116,7 +119,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, explicit parameter, function, or external variable to rename"
+                "select a local, explicit parameter, function, method, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -164,7 +167,10 @@ impl Analysis {
     }
 
     fn check_rename_coverage(&self, symbol: &Symbol, new_name: &str) -> Result<(), String> {
-        let global = matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global);
+        let global = matches!(
+            symbol.kind,
+            SymbolKind::Function | SymbolKind::Method | SymbolKind::Global
+        );
         let scope = self
             .symbols
             .iter()
@@ -198,7 +204,7 @@ impl Analysis {
                     file,
                     span: token.span,
                 };
-                if global
+                if matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global)
                     && index > 0
                     && matches!(
                         tokens[index - 1].kind,

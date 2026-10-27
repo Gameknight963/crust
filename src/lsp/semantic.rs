@@ -171,7 +171,10 @@ impl Context {
             .analysis
             .rename_target(self.file, offset)
             .is_some_and(|(symbol, _)| {
-                matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global)
+                matches!(
+                    symbol.kind,
+                    SymbolKind::Function | SymbolKind::Method | SymbolKind::Global
+                )
             });
         let changes = if global {
             super::rename::global_edits(self, offset, name, documents, workspace_roots)?

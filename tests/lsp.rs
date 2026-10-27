@@ -565,6 +565,47 @@ fn project_configuration_errors_are_published_on_the_manifest_and_clear_after_re
 }
 
 #[test]
+fn method_rename_updates_unopened_target_callers_and_keeps_other_receiver_bindings() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-method-rename")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname='example'\n[[targets]]\nname='first'\nkind='executable'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='executable'\nentry='second.cr'\n").unwrap();
+    let shared = "struct Item { int value; int read() const { return this->value; } };";
+    let first =
+        "import \"shared.cr\"; int main() { Item item = { .value = 1 }; return item.read(); }";
+    let second = "import \"shared.cr\"; struct Other { int value; int read() const { return this->value; } }; int main() { Item item = { .value = 2 }; Other other = { .value = 3 }; return item.read() + other.read(); }";
+    std::fs::write(root.join("shared.cr"), shared).unwrap();
+    std::fs::write(root.join("first.cr"), first).unwrap();
+    std::fs::write(root.join("second.cr"), second).unwrap();
+    let first_uri = file_uri(&root.join("first.cr"));
+    let second_uri = file_uri(&root.join("second.cr"));
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&first_uri, 1, first)["diagnostics"], json!([]));
+    let params =
+        json!({ "textDocument": { "uri": first_uri }, "position": point(first, "read()") });
+    let prepared = server.request("textDocument/prepareRename", params.clone());
+    assert_eq!(prepared.result.unwrap()["placeholder"], "read");
+    let mut params = params;
+    params["newName"] = json!("sample");
+    let result = server.request("textDocument/rename", params);
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let changes = result.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    for (uri, source, needle) in [
+        (&first_uri, first, "read()"),
+        (&second_uri, second, "read() +"),
+        (&shared_uri, shared, "read()"),
+    ] {
+        assert_eq!(changes[uri].as_array().unwrap().len(), 1);
+        assert_eq!(changes[uri][0]["newText"], "sample");
+        assert_eq!(changes[uri][0]["range"]["start"], point(source, needle));
+    }
+    server.stop();
+}
+
+#[test]
 fn invalid_workspace_configuration_diagnostics_clear_when_the_folder_is_removed() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-workspace-project-diagnostics")

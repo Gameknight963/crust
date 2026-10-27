@@ -41,6 +41,115 @@ fn exported_function_rename_preserves_native_names_and_ignores_body_assignments(
 }
 
 #[test]
+fn method_rename_follows_receivers_recursion_and_static_callback_addresses() {
+    let source = r#"
+        typedef int Callback(int);
+        struct Counter {
+            int value;
+            int read(int depth) const {
+                if (depth == 0) { return this->value; }
+                return this->read(depth - 1);
+            }
+            static int double_value(int value) { return value * 2; }
+        };
+        struct Other { int value; int read(int depth) const { return depth; } };
+        int read(int value) { return value; }
+        int main() {
+            Counter counter = { .value = 21 };
+            const Counter^ view = ^const counter;
+            Other other = { .value = 0 };
+            print(counter.read(1));
+            print(view->read(0));
+            print(other.read(7));
+            print(read(8));
+            Callback* callback = Counter::double_value;
+            unsafe { print(callback(21)); }
+            print(Counter::double_value(3));
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("read(int depth)").unwrap(), "sample")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("this->sample(depth - 1)"));
+    assert!(renamed.contains("counter.sample(1)"));
+    assert!(renamed.contains("view->sample(0)"));
+    assert!(renamed.contains("other.read(7)"));
+    assert!(renamed.contains("print(read(8))"));
+    let analysis = crust::analyze(&renamed).unwrap();
+    let edits = analysis
+        .rename(0, renamed.find("double_value(int").unwrap(), "twice")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("callback = Counter::twice"));
+    assert!(renamed.contains("Counter::twice(3)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "21\n21\n7\n8\n42\n6\n"
+    );
+}
+
+#[test]
+fn method_rename_covers_generic_instances_and_rejects_collisions_and_unresolved_calls() {
+    let source = "struct Item<T> { T value; T get() const { return this->value; } }; int main() { Item<int> first = { .value = 42 }; Item<char> second = { .value = 'a' }; print(first.get()); print(second.get()); return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("get()").unwrap(), "read")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("T read()"));
+    assert!(renamed.contains("first.read()"));
+    assert!(renamed.contains("second.read()"));
+    crust::check(&renamed).unwrap();
+
+    for source in [
+        "struct Item { int value; int get() const { return 1; } int read() const { return 2; } }; int main() { Item item = { .value = 0 }; return item.get(); }",
+        "struct Item { int value; int get() const { return 1; } }; int later<T>(const T^ value) { return value->get(); } int main() { Item item = { .value = 0 }; return item.get(); }",
+        "interface Readable { int get() const; }; struct Item { int value; int get() const { return 1; } }; int sample<T: Readable>(const T^ value) { return value->get(); } int main() { Item item = { .value = 0 }; return sample<Item>(^const item); }",
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        let start = source.find("struct Item").unwrap();
+        let offset = start + source[start..].find("get()").unwrap();
+        assert!(analysis.rename(0, offset, "read").is_err(), "{source}");
+    }
+    let source = "struct Item<T> { T value; ~Item() {} }; int main() { Item<int> item = { .value = 1 }; return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, source.find("~Item").unwrap() + 1)
+            .is_none()
+    );
+}
+
+#[test]
+fn renamed_consuming_methods_keep_owner_cleanup() {
+    let source = "struct Item { BoxInt value; int take(Self this) { return *this.value; } }; int main() { Item item = { .value = box_int(42) }; print(move(item).take()); return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("take(Self").unwrap(), "consume")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n"
+    );
+}
+
+#[test]
 fn renames_only_the_selected_local_and_preserves_comments_strings_and_shadowing() {
     let source = "int main() { int value = 1; /* value */ { int value = 2; print(value); } print(\"value\"); value = value + 1; return value; }";
     let analysis = crust::analyze(source).unwrap();
