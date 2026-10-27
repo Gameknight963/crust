@@ -36,9 +36,12 @@ internal static class ClientProbe
         string[] directories = {
             Path.Combine(ide, "CommonExtensions", "Microsoft", "LanguageServer"),
             Path.Combine(ide, "CommonExtensions", "Microsoft", "Editor"),
+            Path.Combine(ide, "CommonExtensions", "Microsoft", "Project"),
             Path.Combine(ide, "PublicAssemblies", "Microsoft.VisualStudio.Threading.17.x"),
             Path.Combine(ide, "PublicAssemblies"),
-            Path.Combine(ide, "PrivateAssemblies")
+            Path.Combine(ide, "PrivateAssemblies"),
+            Path.Combine(visualStudio, "MSBuild", "Current", "Bin"),
+            ide
         };
         AppDomain.CurrentDomain.AssemblyResolve += (_, eventArgs) =>
         {
@@ -51,6 +54,7 @@ internal static class ClientProbe
         };
         Environment.SetEnvironmentVariable("CRUST_LSP_PATH", null);
         var assembly = Assembly.LoadFrom(Path.Combine(package, "Crust.VisualStudio.dll"));
+        CheckProjectProperties(package, assembly);
         CheckProjectCommands(package, assembly);
         var type = assembly.GetType("Crust.VisualStudio.CrustLanguageClient", true);
         using (var client = (IDisposable)Activator.CreateInstance(type))
@@ -98,6 +102,27 @@ internal static class ClientProbe
             var closed = Task.Run(() => reader.ReadByte());
             Assert(closed.Wait(TimeSpan.FromSeconds(10)) && closed.Result == -1, "server shutdown");
         }
+    }
+
+    private static void CheckProjectProperties(string package, Assembly assembly)
+    {
+        var type = assembly.GetType("Crust.VisualStudio.CrustBuildProperties", true);
+        string escaped = (string)type.GetMethod("Escape", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { "C:\\sdk % & ; ' $(test)" });
+        Assert(escaped == "C:\\sdk %25 & %3B %27 %24%28test%29", "MSBuild property escaping");
+        var provider = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(type);
+        string old = Environment.GetEnvironmentVariable("CRUST_SDK_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("CRUST_SDK_PATH", null);
+            var properties = (System.Collections.IEnumerable)Await((Task)type.GetMethod("GetGlobalPropertiesAsync")
+                .Invoke(provider, new object[] { CancellationToken.None }));
+            var values = properties.Cast<object>().ToDictionary(
+                item => (string)item.GetType().GetProperty("Key").GetValue(item),
+                item => (string)item.GetType().GetProperty("Value").GetValue(item));
+            Assert(values["CrustSdkPath"] == Path.Combine(package, "Sdk"), "bundled MSBuild SDK property");
+        }
+        finally { Environment.SetEnvironmentVariable("CRUST_SDK_PATH", old); }
     }
 
     private static void CheckProjectCommands(string package, Assembly assembly)

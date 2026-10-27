@@ -4,6 +4,7 @@ node_modules/
 *.vsix
 /editors/visualstudio/bin/
 /editors/visualstudio/obj/
+/editors/msbuild/Tasks/obj/
 
 # Other generated output directories. Generated C belongs here, not beside source.
 /build/
@@ -40,6 +41,7 @@ rustc-ice-*.txt
 # Local IDE state. Keep shared VS Code tasks and extension/debug recommendations.
 .vs/
 .idea/
+*.crproj.user
 /.vscode/*
 !/.vscode/extensions.json
 !/.vscode/tasks.json

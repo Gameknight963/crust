@@ -1,0 +1,4 @@
+<Rule Name="None" DisplayName="File" PageTemplate="generic" ItemType="None" xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <Rule.DataSource><DataSource Persistence="ProjectFile" ItemType="None" HasConfigurationCondition="false" /></Rule.DataSource>
+  <StringProperty Name="Identity" DisplayName="Path" ReadOnly="true" />
+</Rule>

@@ -2,9 +2,10 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 
 namespace Crust.VisualStudio;
 
@@ -33,6 +34,17 @@ public sealed class ToolResult
 
 public static class ProjectTool
 {
+    public static string EscapeMsBuild(string value)
+    {
+        var escaped = new StringBuilder();
+        foreach (char character in value)
+        {
+            if ("%*$@();?'".IndexOf(character) >= 0) escaped.Append('%').Append(((int)character).ToString("X2"));
+            else escaped.Append(character);
+        }
+        return escaped.ToString();
+    }
+
     public static string? FindManifest(string filename)
     {
         for (var directory = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(filename))!);
@@ -116,10 +128,12 @@ public static class ProjectTool
         ProjectMetadata info;
         try
         {
-            info = new JavaScriptSerializer { MaxJsonLength = 16 * 1024 * 1024 }
-                .Deserialize<ProjectMetadata>(result.Output);
+            if (result.Output.Length > 16 * 1024 * 1024)
+                throw new SerializationException("Project metadata exceeds the size limit");
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(result.Output)))
+                info = (ProjectMetadata)new DataContractJsonSerializer(typeof(ProjectMetadata)).ReadObject(stream)!;
         }
-        catch (ArgumentException error)
+        catch (SerializationException error)
         { throw new InvalidOperationException("The Crust compiler returned invalid project metadata", error); }
         if (info == null || info.formatVersion != 1 || string.IsNullOrEmpty(info.name)
             || info.targets == null || info.targets.Any(target => target == null

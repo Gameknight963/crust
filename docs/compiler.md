@@ -57,6 +57,9 @@ ownership checking, C generation, and native compilation.
 | `editors/visualstudio/CrustLanguageClient.cs` | Visual Studio language client and server process lifetime |
 | `editors/visualstudio/CrustPackage.cs` | Visual Studio project commands, target selection, and build errors |
 | `editors/visualstudio/ProjectTool.cs` | Compiler process invocation and project metadata |
+| `editors/visualstudio/CrustBuildProperties.cs` | Bundled SDK and compiler defaults for Visual Studio projects |
+| `editors/msbuild/Crust.props`, `Crust.targets` | MSBuild project properties, source items, and build targets |
+| `editors/msbuild/Tasks/` | Compiler task invocation, metadata, and source diagnostics for both MSBuild hosts |
 | `editors/visualstudio/ConsoleRunner.cs` | Console input, output, and exit handling |
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |

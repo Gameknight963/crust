@@ -1,0 +1,21 @@
+<Project>
+  <Import Project="$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.props" />
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Default</Configuration>
+    <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
+    <CrustManifest Condition="'$(CrustManifest)' == ''">$(MSBuildProjectDirectory)/crust.toml</CrustManifest>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == '' and '$(CRUST_COMPILER_PATH)' != ''">$(CRUST_COMPILER_PATH)</CrustCompilerPath>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == '' and '$(CrustDefaultCompilerPath)' != ''">$(CrustDefaultCompilerPath)</CrustCompilerPath>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == '' and Exists('$(MSBuildThisFileDirectory)../Server/crust.exe')">$(MSBuildThisFileDirectory)../Server/crust.exe</CrustCompilerPath>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == '' and Exists('$(MSBuildThisFileDirectory)../../target/debug/crust.exe')">$(MSBuildThisFileDirectory)../../target/debug/crust.exe</CrustCompilerPath>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == '' and Exists('$(MSBuildThisFileDirectory)../../target/debug/crust')">$(MSBuildThisFileDirectory)../../target/debug/crust</CrustCompilerPath>
+    <CrustCompilerPath Condition="'$(CrustCompilerPath)' == ''">crust</CrustCompilerPath>
+    <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">true</EnableDefaultCompileItems>
+    <CrustDefaultExcludes>**/target/**;**/node_modules/**;**/bin/**;**/obj/**;**/.git/**;**/.vs/**;**/*.crproj.user</CrustDefaultExcludes>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="**/*.cr" Exclude="$(CrustDefaultExcludes)" Condition="'$(EnableDefaultCompileItems)' == 'true'" />
+    <None Include="**/*" Exclude="**/*.cr;**/*.crproj;$(CrustDefaultExcludes)" />
+  </ItemGroup>
+</Project>

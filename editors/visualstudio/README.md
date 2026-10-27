@@ -8,10 +8,11 @@ Language support through the bundled `crust-lsp` server:
 - Shared syntax highlighting and bracket configuration
 - Project build and check commands with Error List navigation
 - Executable target selection and console execution
+- MSBuild `.crproj` projects with source files and build properties
 
 ## Build and install
 
-Build on Windows x64 with Rust and Visual Studio MSBuild:
+Build on Windows x64 with Rust, the .NET 8 SDK or newer, and Visual Studio MSBuild:
 
 ```powershell
 ./editors/visualstudio/build.ps1
@@ -20,6 +21,10 @@ Build on Windows x64 with Rust and Visual Studio MSBuild:
 Install `target/crust-visualstudio.vsix`, restart Visual Studio, and open a
 folder containing `crust.toml` and `.cr` files. The extension targets Visual
 Studio versions 17.14 through 18.x.
+
+Open a `.crproj` as a project or add it to an existing solution for Solution
+Explorer and solution builds. See [MSBuild projects](../msbuild/) for the project
+file and command-line usage. The extension supplies its bundled SDK path.
 
 Use `-Offline` when the Cargo and NuGet dependencies are cached. A development
 server can be selected by setting `CRUST_LSP_PATH` to its full path before
@@ -59,3 +64,5 @@ Studio's runtime assemblies. It verifies activation, unsaved diagnostics,
 recovery after an edit, and server shutdown. It also checks command resources,
 project metadata, compiler diagnostics, native builds, and console input through
 the packaged tools using a project path containing Unicode, spaces, and `&`.
+It also tests the packaged MSBuild SDK with both MSBuild hosts, shared libraries,
+target selection, relative paths, and source diagnostics.

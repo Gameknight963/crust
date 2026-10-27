@@ -109,6 +109,11 @@ executable target and opens a console with input support. The console waits for
 a key after the program exits.
 Windows builds place dependency DLLs and their application manifest beside the executable.
 
+For solution-based work, open a `.crproj` file or add it through **Add > Existing
+Project**. The extension supplies the MSBuild SDK. Solution builds use the targets
+and native dependencies in `crust.toml`, and compiler errors appear in the Error
+List. See [MSBuild projects](../editors/msbuild/) for the file format and commands.
+
 The client uses Visual Studio's editing UI for compiler diagnostics, completion,
 navigation, references, rename, and semantic highlighting. Syntax highlighting
 and bracket configuration use the same files as the VS Code extension.

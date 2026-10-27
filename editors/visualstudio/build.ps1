@@ -24,6 +24,10 @@ if ($Offline) {
 }
 & cargo @crustCargoArgs
 if ($LASTEXITCODE -ne 0) { throw 'Language server build failed' }
+$crustTaskArgs = @('build', (Join-Path $PSScriptRoot '../msbuild/Tasks/Crust.Build.Tasks.csproj'), '-c', $Configuration, '-v:minimal', '-m:1', '-nr:false', '-p:UseSharedCompilation=false')
+if ($Offline) { $crustTaskArgs += '--source', $crustPackageCache, '-p:NuGetAudit=false' }
+& dotnet @crustTaskArgs
+if ($LASTEXITCODE -ne 0) { throw 'Crust MSBuild task build failed' }
 $crustConsoleDirectory = Join-Path $crustRepoRoot 'target/visualstudio-console'
 [IO.Directory]::CreateDirectory($crustConsoleDirectory) | Out-Null
 $crustCsc = Join-Path (Split-Path -Parent $MSBuild) 'Roslyn/csc.exe'

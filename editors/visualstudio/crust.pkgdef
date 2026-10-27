@@ -6,3 +6,18 @@
 
 [$RootKey$\TextMate\LanguageConfiguration\ContentTypeMapping]
 "crust"="$PackageFolder$\language-configuration.json"
+
+[$RootKey$\Projects\{419D914F-6B6D-4C61-8E53-AAB562A9C7D0}]
+@="ProjectFactory"
+"ProjectFactoryPackage"="{3347BEE8-D7A1-4082-95E4-38A439553CC2}"
+"Package"="{3347BEE8-D7A1-4082-95E4-38A439553CC2}"
+"DisplayName"="Crust"
+"DisplayProjectFileExtensions"="Crust Projects (*.crproj);*.crproj"
+"DefaultProjectExtension"="crproj"
+"PossibleProjectExtensions"="crproj"
+"Capabilities"="Crust;HandlesOwnReload;OpenProjectFile;UseFileGlobs"
+"DisableAsynchronousSolutionLoad"=dword:00000000
+"PrefetchFactory"="{3998970A-AEE1-4216-A54F-0A99D20A1FAB}"
+
+[$RootKey$\Editors\{FA3CD31E-987B-443A-9B81-186104E8DAC1}\Extensions]
+"crproj"=dword:00000020

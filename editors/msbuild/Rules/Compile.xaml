@@ -1,0 +1,4 @@
+<Rule Name="Compile" DisplayName="Crust source" PageTemplate="generic" ItemType="Compile" xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <Rule.DataSource><DataSource Persistence="ProjectFile" ItemType="Compile" HasConfigurationCondition="false" /></Rule.DataSource>
+  <StringProperty Name="Identity" DisplayName="Path" ReadOnly="true" />
+</Rule>

@@ -1,0 +1,6 @@
+<Rule Name="ConfigurationGeneral" DisplayName="General" PageTemplate="generic" xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <Rule.DataSource><DataSource Persistence="ProjectFile" HasConfigurationCondition="false" /></Rule.DataSource>
+  <StringProperty Name="CrustManifest" DisplayName="Project manifest" Description="Path to crust.toml." />
+  <StringProperty Name="CrustTarget" DisplayName="Target" Description="Target name from crust.toml. Leave empty to build all targets." />
+  <StringProperty Name="CrustCompilerPath" DisplayName="Compiler path" Description="Path to the Crust compiler executable." />
+</Rule>

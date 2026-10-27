@@ -18,6 +18,9 @@ Target names start with a letter or digit and use letters, digits, `_`, and `-`.
 Names are unique ignoring ASCII case, giving projects consistent names across
 Windows and Unix filesystems.
 
+An optional [`.crproj` file](../editors/msbuild/) adds MSBuild and Visual Studio
+solution integration alongside the manifest.
+
 ## Commands
 
 ```text

@@ -1,0 +1,9 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <CrustSdkPath Condition="'$(CrustSdkPath)' == '' and '$(CRUST_SDK_PATH)' != ''">$(CRUST_SDK_PATH)</CrustSdkPath>
+    <CrustSdkPath Condition="'$(CrustSdkPath)' == ''">../../editors/msbuild</CrustSdkPath>
+  </PropertyGroup>
+  <Import Project="$(CrustSdkPath)/Crust.props" />
+  <PropertyGroup><CrustTarget>files</CrustTarget></PropertyGroup>
+  <Import Project="$(CrustSdkPath)/Crust.targets" />
+</Project>

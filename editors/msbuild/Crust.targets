@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <_CrustTaskFramework Condition="'$(MSBuildRuntimeType)' == 'Full'">net472</_CrustTaskFramework>
+    <_CrustTaskFramework Condition="'$(_CrustTaskFramework)' == ''">net8.0</_CrustTaskFramework>
+    <CrustBuildTasksPath Condition="'$(CrustBuildTasksPath)' == '' and Exists('$(MSBuildThisFileDirectory)tasks/$(_CrustTaskFramework)/Crust.Build.Tasks.dll')">$(MSBuildThisFileDirectory)tasks/$(_CrustTaskFramework)/Crust.Build.Tasks.dll</CrustBuildTasksPath>
+    <CrustBuildTasksPath Condition="'$(CrustBuildTasksPath)' == ''">$(MSBuildThisFileDirectory)../../target/msbuild/tasks/$(_CrustTaskFramework)/Crust.Build.Tasks.dll</CrustBuildTasksPath>
+  </PropertyGroup>
+  <UsingTask TaskName="Crust.Build.CrustReadProject" AssemblyFile="$(CrustBuildTasksPath)" />
+  <UsingTask TaskName="Crust.Build.CrustCompile" AssemblyFile="$(CrustBuildTasksPath)" />
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Default|AnyCPU"><Configuration>Default</Configuration><Platform>AnyCPU</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectCapability Include="Crust;DeclaredSourceItems;UserSourceItems;UseFileGlobs;OpenProjectFile;HandlesOwnReload;ProjectConfigurationsDeclaredAsItems" />
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/ProjectItemsSchema.xaml" />
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/General.xaml"><Context>Project;BrowseObject</Context></PropertyPageSchema>
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/Compile.xaml;$(MSBuildThisFileDirectory)Rules/None.xaml;$(MSBuildThisFileDirectory)Rules/Folder.xaml"><Context>File;BrowseObject</Context></PropertyPageSchema>
+  </ItemGroup>
+  <Import Project="$(MSBuildProjectFullPath).user" Condition="Exists('$(MSBuildProjectFullPath).user')" />
+  <Target Name="_CrustReadProject">
+    <Error Condition="!Exists('$(CrustBuildTasksPath)')" Text="Crust build tasks are missing. Build editors/msbuild/Tasks/Crust.Build.Tasks.csproj or install the Visual Studio extension." />
+    <CrustReadProject CompilerPath="$(CrustCompilerPath)" Manifest="$(CrustManifest)" Target="$(CrustTarget)" ProjectDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ProjectName" PropertyName="CrustProjectName" />
+      <Output TaskParameter="Outputs" ItemName="CrustOutput" />
+    </CrustReadProject>
+  </Target>
+  <Target Name="Build" DependsOnTargets="_CrustReadProject" Returns="@(CrustOutput)">
+    <CrustCompile CompilerPath="$(CrustCompilerPath)" Manifest="$(CrustManifest)" Target="$(CrustTarget)" ProjectDirectory="$(MSBuildProjectDirectory)" Command="build" StandardOutputImportance="High" />
+  </Target>
+  <Target Name="Check" DependsOnTargets="_CrustReadProject">
+    <CrustCompile CompilerPath="$(CrustCompilerPath)" Manifest="$(CrustManifest)" Target="$(CrustTarget)" ProjectDirectory="$(MSBuildProjectDirectory)" Command="check" />
+  </Target>
+  <Target Name="Rebuild" DependsOnTargets="Build" Returns="@(CrustOutput)" />
+  <Target Name="GetTargetPath" DependsOnTargets="_CrustReadProject" Returns="@(CrustOutput)" />
+  <Target Name="BuiltProjectOutputGroup" DependsOnTargets="_CrustReadProject" Returns="@(CrustOutput)" />
+  <Target Name="CompileDesignTime" Returns="@(Compile)" />
+</Project>

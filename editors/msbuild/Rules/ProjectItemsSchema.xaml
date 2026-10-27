@@ -1,0 +1,11 @@
+<ProjectSchemaDefinitions xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <ContentType Name="Crust" DisplayName="Crust source" ItemType="Compile" />
+  <ContentType Name="Text" DisplayName="Text" ItemType="None" />
+  <ItemType Name="Compile" DisplayName="Crust source" />
+  <ItemType Name="None" DisplayName="File" />
+  <ItemType Name="Folder" DisplayName="Folder" />
+  <FileExtension Name=".cr" ContentType="Crust" />
+  <FileExtension Name=".toml" ContentType="Text" />
+  <FileExtension Name=".h" ContentType="Text" />
+  <FileExtension Name=".c" ContentType="Text" />
+</ProjectSchemaDefinitions>

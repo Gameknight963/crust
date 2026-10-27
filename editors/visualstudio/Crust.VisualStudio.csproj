@@ -24,6 +24,7 @@
     <ConsoleExecutable Condition="'$(ConsoleExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/visualstudio-console/Crust.Console.exe</ConsoleExecutable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.ProjectSystem.SDK" Version="17.9.380" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Client" Version="17.14.60" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.Shell.15.0" Version="17.14.40264" ExcludeAssets="runtime" />
     <PackageReference Include="envdte" Version="17.14.40260" ExcludeAssets="runtime" />
@@ -37,12 +38,15 @@
     <Reference Include="System.Core" />
     <Reference Include="System.ComponentModel.Composition" />
     <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Xml" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Design" />
     <Compile Include="CrustLanguageClient.cs" />
     <Compile Include="CrustPackage.cs" />
     <Compile Include="ProjectTool.cs" />
+    <Compile Include="CrustBuildProperties.cs" />
     <Compile Include="AssemblyInfo.cs" />
     <None Include="source.extension.vsixmanifest"><SubType>Designer</SubType></None>
     <Content Include="crust.pkgdef"><IncludeInVSIX>true</IncludeInVSIX></Content>
@@ -67,6 +71,18 @@
     </Content>
     <Content Include="$(ConsoleExecutable)">
       <Link>Tools/Crust.Console.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../msbuild/Crust.props;../msbuild/Crust.targets">
+      <Link>Sdk/%(Filename)%(Extension)</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../msbuild/Rules/*.xaml">
+      <Link>Sdk/Rules/%(Filename)%(Extension)</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../target/msbuild/tasks/net472/Crust.Build.Tasks.dll">
+      <Link>Sdk/tasks/net472/Crust.Build.Tasks.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../target/msbuild/tasks/net8.0/Crust.Build.Tasks.dll">
+      <Link>Sdk/tasks/net8.0/Crust.Build.Tasks.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
   <Target Name="RequireLanguageServer" BeforeTargets="BeforeBuild">

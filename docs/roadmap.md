@@ -77,6 +77,7 @@
 - VS Code project build, check, and run tasks with compiler error links
 - Visual Studio VSIX with a bundled server, shared grammar, and native semantic classifications
 - Visual Studio project build and check commands, Error List navigation, and executable console launch
+- Optional MSBuild `.crproj` projects with bundled Visual Studio SDK paths, source items, build properties, and native builds
 
 ## Compiler work
 
@@ -91,7 +92,6 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Use `crust.toml` as the authoritative project configuration
-- Add optional MSBuild `.crproj` integration for Visual Studio
 - Add native source-level debugging through the generated C backend
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
