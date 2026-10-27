@@ -37,6 +37,7 @@ use UTF-8 byte arrays.
 - [Container project](examples/container_project/): buffers, boxes, and vectors across imported files
 - [Vector edits](examples/vector_edits.cr): insertion, removal, and cleanup
 - [Sorting](examples/sorting.cr): a comparison interface and a vector of heap owners
+- [File resource](examples/file_project/): binary I/O, ownership transfer, and automatic closing
 
 ### C integration
 

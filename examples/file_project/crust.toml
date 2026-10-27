@@ -1,0 +1,10 @@
+[project]
+name = "files"
+
+[[targets]]
+name = "files"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["native/file.c"]
