@@ -1,5 +1,6 @@
 use super::*;
 use std::fs;
+use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_BUILD: AtomicUsize = AtomicUsize::new(0);
@@ -147,6 +148,21 @@ pub fn compile_static_library(
             archive.display(),
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    let mut signature = [0; 8];
+    fs::File::open(&temporary)
+        .and_then(|mut file| file.read_exact(&mut signature))
+        .map_err(|error| {
+            format!(
+                "archiver did not produce a regular archive for {}: {error}",
+                archive.display()
+            )
+        })?;
+    if &signature != b"!<arch>\n" {
+        return Err(format!(
+            "archiver did not produce a regular archive for {}",
+            archive.display()
         ));
     }
     if archive.exists() {

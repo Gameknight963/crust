@@ -450,6 +450,44 @@ fn static_library_targets_archive_native_sources_and_link_from_a_c_consumer() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("could not start archiver"));
     assert_eq!(fs::read(&artifact).unwrap(), previous);
+    for invalid in [false, true] {
+        let name = if cfg!(windows) {
+            "archiver.cmd"
+        } else {
+            "archiver.sh"
+        };
+        let script = if cfg!(windows) {
+            if invalid {
+                "@echo invalid archive>\"%~2\"\r\n@exit /b 0\r\n"
+            } else {
+                "@exit /b 0\r\n"
+            }
+        } else if invalid {
+            "#!/bin/sh\nprintf 'invalid archive' > \"$2\"\nexit 0\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        };
+        fixture.write(name, script);
+        let script_path = fixture.directory.join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg("build")
+            .current_dir(&fixture.directory)
+            .env("AR", script_path)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("regular archive"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(&artifact).unwrap(), previous);
+    }
     assert!(
         fs::read_dir(artifact.parent().unwrap())
             .unwrap()

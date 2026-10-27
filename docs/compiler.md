@@ -72,6 +72,9 @@ Static-library builds compile each C source separately and copy explicit native
 objects under distinct staging names. The archiver writes a fresh archive before
 replacing the destination. Staging cleanup removes the files created for that
 build, including partial outputs after a tool failure.
+The archive signature is checked before replacement, including when an archiver
+exits successfully. Missing, truncated, and thin archive outputs preserve the
+previous library.
 
 `emit_header` checks an executable or library entry and renders its named C
 exports. Callback aliases are allocated within each exported symbol's prefix,
