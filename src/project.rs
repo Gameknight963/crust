@@ -218,9 +218,15 @@ impl Project {
                 .into());
             }
             let mut inputs = HashSet::new();
+            let mut runtime_inputs = HashSet::new();
             for (kind, paths, is_directory) in [
                 ("source", &mut target.native.sources, false),
                 ("link input", &mut target.native.link_inputs, false),
+                (
+                    "runtime library",
+                    &mut target.native.runtime_libraries,
+                    false,
+                ),
                 ("include directory", &mut target.native.include_dirs, true),
                 ("library directory", &mut target.native.library_dirs, true),
             ] {
@@ -244,7 +250,12 @@ impl Project {
                         )
                         .into());
                     }
-                    if !is_directory && !inputs.insert(path.clone()) {
+                    let selected = if kind == "runtime library" {
+                        &mut runtime_inputs
+                    } else {
+                        &mut inputs
+                    };
+                    if !is_directory && !selected.insert(path.clone()) {
                         return Err(format!(
                             "{}: target '{}' repeats native input {}",
                             manifest.display(),

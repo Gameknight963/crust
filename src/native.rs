@@ -27,7 +27,6 @@ pub struct Options {
     pub link_targets: Vec<String>,
     #[serde(skip)]
     pub runtime_dirs: Vec<PathBuf>,
-    #[serde(skip)]
     pub runtime_libraries: Vec<PathBuf>,
 }
 

@@ -108,6 +108,10 @@ Windows builds deploy the exact dependency DLLs beside consumers. Executables
 also receive a side-by-side application manifest listing those DLLs, which
 supports application directories containing semicolons. Existing DLL copies and
 the manifest have backups until the executable links and validates successfully.
+Native `runtime-libraries` declarations join generated shared-library artifacts
+when resolving a target's transitive runtime files. Metadata reports the exact
+files and their unique parent directories. The project loader validates runtime
+inputs separately from link inputs so a Unix shared object can serve both roles.
 
 `emit_header` checks an executable or library entry and renders its named C
 exports. Callback aliases are allocated within each exported symbol's prefix,

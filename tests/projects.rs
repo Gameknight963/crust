@@ -534,6 +534,118 @@ fn native_target_links_build_dependencies_before_a_selected_executable() {
 }
 
 #[test]
+fn external_c_runtime_libraries_flow_through_static_dependencies_and_metadata() {
+    let fixture = Fixture::new();
+    fixture.write("vendor, data; files/vendor.c", "#if defined(_WIN32)\n__declspec(dllexport)\n#endif\nint vendor_answer(void) { return 42; }\n");
+    let base = fixture.directory.join("vendor, data; files/vendor");
+    let library = crust::project::TargetKind::SharedLibrary
+        .artifact_path(&base)
+        .unwrap();
+    crust::native::compile_shared_library(&base.with_extension("c"), &library, &Default::default())
+        .unwrap();
+    let relative = library
+        .strip_prefix(&fixture.directory)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    fixture.manifest(&format!("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge']\nlibrary-dirs=['vendor, data; files']\nlibraries=['vendor']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nruntime-libraries=['{relative}']\n"));
+    fixture.write(
+        "main.cr",
+        "extern int bridge(); int main() { unsafe { print(bridge()); } return 0; }",
+    );
+    fixture.write(
+        "bridge.cr",
+        "extern int vendor_answer(); extern int bridge() { return vendor_answer(); }",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("metadata")
+        .env("CC", "missing-runtime-test-compiler")
+        .current_dir(&fixture.directory)
+        .output()
+        .unwrap();
+    success(&output);
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for target in metadata["targets"].as_array().unwrap() {
+        assert_eq!(target["runtimeLibraries"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            PathBuf::from(target["runtimeLibraries"][0].as_str().unwrap()),
+            library.canonicalize().unwrap()
+        );
+        assert_eq!(target["runtimePaths"].as_array().unwrap().len(), 1);
+    }
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let output = Command::new(executable(&fixture)).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    if cfg!(windows) {
+        assert!(
+            executable(&fixture)
+                .parent()
+                .unwrap()
+                .join(library.file_name().unwrap())
+                .is_file()
+        );
+    }
+}
+
+#[test]
+fn runtime_library_configuration_validates_paths_and_allows_linking_the_same_file() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("vendor/library.bin", "native input placeholder");
+    for (paths, message) in [
+        ("['missing.dll']", "runtime library"),
+        ("['vendor']", "must be a file"),
+        (
+            "['vendor/library.bin', 'vendor/./library.bin']",
+            "repeats native input",
+        ),
+    ] {
+        fixture.manifest(&format!("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nruntime-libraries={paths}\n"));
+        let output = fixture.invoke(&["metadata"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-inputs=['vendor/library.bin']\nruntime-libraries=['vendor/library.bin']\n");
+    success(&fixture.invoke(&["check"]));
+    assert!(!fixture.directory.join("target").exists());
+}
+
+#[test]
+fn external_runtime_libraries_are_protected_from_other_targets_outputs() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    let project_base = fixture.directory.join("target/crust/producer/producer");
+    let library = crust::project::TargetKind::SharedLibrary
+        .artifact_path(&project_base)
+        .unwrap();
+    let relative = library
+        .strip_prefix(&fixture.directory)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    fixture.write(&relative, "external library input");
+    fixture.manifest(&format!("[[targets]]\nname='producer'\nkind='shared-library'\nentry='library.cr'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nruntime-libraries=['{relative}']\n"));
+    let output = fixture.invoke(&["build", "--target", "producer"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("output would overwrite an input file")
+    );
+    assert_eq!(
+        fs::read_to_string(library).unwrap(),
+        "external library input"
+    );
+    assert!(!project_base.with_extension("c").exists());
+}
+
+#[test]
 fn shared_library_targets_link_through_static_dependencies_and_report_runtime_paths() {
     let fixture = Fixture::new();
     fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge', 'widget']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nlink-targets=['widget']\n[[targets]]\nname='widget'\nkind='shared-library'\nentry='widget.cr'\n[targets.native]\nlink-targets=['base']\n[[targets]]\nname='base'\nkind='static-library'\nentry='base.cr'\n");

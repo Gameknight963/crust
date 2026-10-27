@@ -65,6 +65,7 @@ or missing imports. `--target name` filters the target list.
 | `targets[].entry`, `targets[].output` | Absolute entry and native artifact paths |
 | `targets[].linkTargets` | Names of native target dependencies |
 | `targets[].runtimePaths` | Shared-library dependency directories for launching the target |
+| `targets[].runtimeLibraries` | Runtime library files required by the target and its dependencies |
 
 Metadata preserves target order from the manifest. The command works before a
 build and requires project configuration. `Project::metadata` exposes the same
@@ -232,26 +233,46 @@ link-inputs = ["native/extra.o"]
 ```
 
 - Paths are relative to `crust.toml` and are resolved before invoking the compiler
-- Source and link input paths identify existing files
+- Source, link input, and runtime library paths identify existing files
 - Include and library paths identify existing directories
 - `sources` compile as C11 translation units alongside the generated C
 - `include-dirs` configure the native preprocessor's header search
 - `defines` pass object-like or function-like C macro definitions through `-D`
+- `runtime-libraries` lists existing shared-library files used when running the target
 - `library-dirs` configure the linker's library search
 - `libraries` pass names through the C driver's `-l` option
 - `link-inputs` pass explicit object or library files to the driver
-- `link-targets` build and link named static-library targets from this project
+- `link-targets` build and link named library targets from this project
 - Each target has its own native configuration
 - Macro names are validated and each name appears once per target
 - `check`, `tokens`, `emit-c`, and `emit-header` validate configuration without invoking a C compiler
 
 `extern header "path/to/native.h";` resolves relative to its Crust source file.
 Build commands protect referenced native headers, imported Crust sources, and
-native source and link inputs from being overwritten by generated output.
+native source, link input, and runtime library files from being overwritten by generated output.
 
 Crust calls native functions through matching `extern` declarations. Calls use an
 `unsafe` block. See [examples/native_project](../examples/native_project/) for a
 program linked with a C source file and header.
+
+### Runtime libraries
+
+For an existing C DLL, select its import library and runtime file separately:
+
+```toml
+[targets.native]
+link-inputs = ["vendor/widget.lib"]
+runtime-libraries = ["vendor/widget.dll"]
+```
+
+Windows builds deploy the DLL beside the executable and list it in the
+application manifest. On Unix, list a shared object such as `vendor/libwidget.so`
+and link through `link-inputs` or `library-dirs` and `libraries`. Its directory
+becomes a runtime search path.
+
+Runtime files propagate through `link-targets`, including static-library
+dependencies. Repeated dependencies share one runtime file and directory in
+metadata. `runtime-libraries` can name the same shared object as `link-inputs`.
 
 ## Example
 
@@ -267,7 +288,6 @@ cargo run -- run --project examples/native_project
 
 - Module namespaces and visibility
 - Path dependencies between Crust projects
-- Shared library targets
 - Build profiles and platform-specific settings
 - Workspaces containing related projects
 

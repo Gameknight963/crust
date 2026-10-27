@@ -106,26 +106,44 @@ impl Project {
                 }
             }
         }
-        native.runtime_dirs = self.runtime_paths(target)?;
-        native.runtime_libraries = self
-            .ordered_targets(&[target])?
-            .into_iter()
-            .filter(|dependency| {
-                dependency.kind == TargetKind::SharedLibrary && dependency.name != target.name
-            })
-            .map(|dependency| dependency.kind.artifact_path(&self.output_base(dependency)))
-            .collect::<Result<Vec<_>, _>>()?;
+        native.runtime_libraries = self.runtime_libraries(target)?;
+        native.runtime_dirs = runtime_directories(&native.runtime_libraries);
         return Ok(native);
     }
 
     pub fn runtime_paths(&self, target: &Target) -> Result<Vec<PathBuf>, String> {
-        return Ok(self
-            .ordered_targets(&[target])?
-            .into_iter()
-            .filter(|dependency| {
-                dependency.kind == TargetKind::SharedLibrary && dependency.name != target.name
-            })
-            .map(|dependency| self.output_base(dependency).parent().unwrap().to_owned())
-            .collect());
+        return Ok(runtime_directories(&self.runtime_libraries(target)?));
     }
+
+    pub fn runtime_libraries(&self, target: &Target) -> Result<Vec<PathBuf>, String> {
+        let mut libraries = Vec::new();
+        let mut seen = HashSet::new();
+        for dependency in self.ordered_targets(&[target])? {
+            let mut files = dependency.native.runtime_libraries.clone();
+            if dependency.kind == TargetKind::SharedLibrary && dependency.name != target.name {
+                files.push(
+                    dependency
+                        .kind
+                        .artifact_path(&self.output_base(dependency))?,
+                );
+            }
+            for file in files {
+                let file = crate::source::identity(&file).map_err(|error| error.to_string())?;
+                if seen.insert(file.clone()) {
+                    libraries.push(file);
+                }
+            }
+        }
+        return Ok(libraries);
+    }
+}
+
+pub(super) fn runtime_directories(libraries: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    return libraries
+        .iter()
+        .filter_map(|library| library.parent())
+        .filter(|directory| seen.insert(directory.to_path_buf()))
+        .map(Path::to_path_buf)
+        .collect();
 }

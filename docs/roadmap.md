@@ -67,6 +67,7 @@
 - C header generation for scalar, enum, opaque-pointer, and callback exports
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
+- Configured C runtime libraries with transitive deployment, input protection, and metadata
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links

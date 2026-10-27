@@ -19,19 +19,22 @@ pub struct TargetMetadata {
     pub output: PathBuf,
     pub link_targets: Vec<String>,
     pub runtime_paths: Vec<PathBuf>,
+    pub runtime_libraries: Vec<PathBuf>,
 }
 
 impl Project {
     pub fn metadata(&self) -> Result<ProjectMetadata, String> {
         let mut targets = Vec::new();
         for target in &self.targets {
+            let runtime_libraries = self.runtime_libraries(target)?;
             targets.push(TargetMetadata {
                 name: target.name.clone(),
                 kind: target.kind,
                 entry: target.entry.clone(),
                 output: target.kind.artifact_path(&self.output_base(target))?,
                 link_targets: target.native.link_targets.clone(),
-                runtime_paths: self.runtime_paths(target)?,
+                runtime_paths: super::links::runtime_directories(&runtime_libraries),
+                runtime_libraries,
             });
         }
         return Ok(ProjectMetadata {

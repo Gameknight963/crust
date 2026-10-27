@@ -192,6 +192,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
             std::iter::once(target.entry.clone())
                 .chain(target.native.sources.clone())
                 .chain(target.native.link_inputs.clone())
+                .chain(target.native.runtime_libraries.clone())
         })
         .chain(std::iter::once(project.manifest.clone()))
         .collect();

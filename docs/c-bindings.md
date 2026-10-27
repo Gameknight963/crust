@@ -103,3 +103,7 @@ Link the C implementation or library through the target's
 the header changes its API through preprocessor configuration.
 Generated declarations use the same unsafe-call
 rules as handwritten `extern` declarations.
+
+For an existing DLL, put its import library in `link-inputs` and its DLL in
+`runtime-libraries`. The build deploys the DLL beside the executable and creates
+its application manifest. Runtime files also propagate through linked targets.
