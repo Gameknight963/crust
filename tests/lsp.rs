@@ -661,6 +661,49 @@ fn typedef_rename_updates_unopened_project_types_and_supports_prepare_rename() {
 }
 
 #[test]
+fn interface_rename_updates_constraints_in_unopened_target_templates() {
+    let root = rename_project("interfaces");
+    let shared = "interface Readable { int read() const; }; struct Item { int value; int read() const { return this->value; } };";
+    let first = "import \"shared.cr\"; int sample<T: Readable>(const T^ value) { return value->read(); } int main() { Item item = { .value = 42 }; return sample<Item>(^const item); }";
+    let second = "import \"shared.cr\"; int future<T: Readable>(const T^ value) { return value->read(); } int main() { return 0; }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let first_uri = file_uri(&root.join("first.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&first_uri, 1, first)["diagnostics"], json!([]));
+    let mut params =
+        json!({ "textDocument": { "uri": first_uri }, "position": point(first, "Readable>") });
+    assert_eq!(
+        server
+            .request("textDocument/prepareRename", params.clone())
+            .result
+            .unwrap()["placeholder"],
+        "Readable"
+    );
+    params["newName"] = json!("Inspectable");
+    let response = server.request("textDocument/rename", params);
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    for (file, source, needle) in [
+        ("shared.cr", shared, "Readable {"),
+        ("first.cr", first, "Readable>"),
+        ("second.cr", second, "Readable>"),
+    ] {
+        let uri = file_uri(&root.join(file));
+        assert_eq!(changes[&uri].as_array().unwrap().len(), 1);
+        assert_eq!(changes[&uri][0]["newText"], "Inspectable");
+        assert_eq!(changes[&uri][0]["range"]["start"], point(source, needle));
+    }
+    server.stop();
+}
+
+#[test]
 fn invalid_workspace_configuration_diagnostics_clear_when_the_folder_is_removed() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-workspace-project-diagnostics")

@@ -86,6 +86,7 @@ impl Analysis {
                 | SymbolKind::Function
                 | SymbolKind::Method
                 | SymbolKind::Alias
+                | SymbolKind::Interface
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
@@ -103,6 +104,9 @@ impl Analysis {
                     .into_iter()
                     .find(|location| contains(*location, file, offset, true))
             })?;
+        if self.files[location.file].text[location.span.start..location.span.end] != symbol.name {
+            return None;
+        }
         return Some((symbol, location));
     }
 
@@ -120,7 +124,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, explicit parameter, function, method, typedef, or external variable to rename"
+                "select a local, parameter, function, method, typedef, interface, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -131,6 +135,11 @@ impl Analysis {
         let locations = self.references_at(file, offset, true);
         let mut edits = Vec::new();
         for location in locations {
+            if symbol.kind == SymbolKind::Interface
+                && &self.files[location.file].text[location.span.start..location.span.end] == "Self"
+            {
+                continue;
+            }
             if self.files[location.file].text[location.span.start..location.span.end] != symbol.name
             {
                 return Err("the selected binding has an ambiguous source spelling".to_owned());
@@ -170,7 +179,11 @@ impl Analysis {
     fn check_rename_coverage(&self, symbol: &Symbol, new_name: &str) -> Result<(), String> {
         let global = matches!(
             symbol.kind,
-            SymbolKind::Function | SymbolKind::Method | SymbolKind::Alias | SymbolKind::Global
+            SymbolKind::Function
+                | SymbolKind::Method
+                | SymbolKind::Alias
+                | SymbolKind::Interface
+                | SymbolKind::Global
         );
         let scope = self
             .symbols

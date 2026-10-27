@@ -27,7 +27,7 @@ The server also provides:
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 - Find All References for resolved bindings across the analyzed target's imports
 - Workspace symbol search across project targets and imported sources
-- Rename for locals, explicit parameters, functions, methods, typedefs, and external variables, with checks for name capture
+- Rename for locals, explicit parameters, functions, methods, typedefs, interfaces, and external variables, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
 - Signature help for functions, methods, callbacks, and built-in calls
@@ -46,7 +46,7 @@ Static-library targets use library analysis, including entries without `main`.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.
 Rename rechecks the edited source and preserves existing identifier bindings.
-Function, method, typedef, and external-variable rename includes unopened project targets.
+Project declaration rename includes unopened targets, including interface constraints.
 Native C names are preserved through explicit import aliases. Every affected target
 must check successfully, and unresolved uses in unused generic bodies can prevent a rename.
 Clients supporting versioned edits receive the current open-document version.
@@ -122,6 +122,6 @@ to stderr.
 
 ## Further work
 
-- Rename for structs, unions, enums, interfaces, and type parameters
+- Rename for structs, unions, enums, and type parameters
 - Semantic information across module namespaces and project dependencies
 - Visual Studio client and project-system integration

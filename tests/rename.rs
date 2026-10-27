@@ -237,6 +237,74 @@ fn typedef_rename_preserves_native_opaque_tags_and_function_symbols() {
 }
 
 #[test]
+fn interface_rename_updates_composed_constraints_and_keeps_implementing_methods() {
+    let source = r#"
+        interface Readable { int read() const; };
+        static interface Factory { Self create(int value); };
+        struct Item {
+            int value;
+            int read() const { return this->value; }
+            static Self create(int value) { return (Self){ .value = value }; }
+        };
+        struct Wrapper<T: Readable> { T item; };
+        int sample<T: Readable>(const T^ value) { return value->read(); }
+        int produce<T: Factory + Readable>(int value) {
+            T result = T::create(value);
+            return sample<T>(^const result);
+        }
+        int main() {
+            Wrapper<Item> wrapped = { .item = Item::create(7) };
+            print(sample<Item>(^const wrapped.item));
+            print(produce<Item>(42));
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, source.find("Self create").unwrap())
+            .is_none()
+    );
+    let edits = analysis
+        .rename(0, source.find("Readable {").unwrap(), "Inspectable")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(!renamed.contains("Readable"));
+    assert!(renamed.contains("int read() const"));
+    assert!(renamed.contains("value->read()"));
+    let analysis = crust::analyze(&renamed).unwrap();
+    let edits = analysis
+        .rename(0, renamed.find("Factory {").unwrap(), "Creator")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("static interface Creator"));
+    assert!(renamed.contains("T: Creator + Inspectable"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "7\n42\n"
+    );
+}
+
+#[test]
+fn interface_rename_rejects_existing_type_names_and_keeps_unused_constraint_references() {
+    let source = "interface Readable { int read() const; }; interface Other { int get() const; }; int future<T: Readable>(const T^ value) { return value->read(); } int main() { return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let offset = source.find("Readable {").unwrap();
+    assert!(analysis.rename(0, offset, "Other").is_err());
+    let edits = analysis.rename(0, offset, "Inspectable").unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("future<T: Inspectable>"));
+    assert!(renamed.contains("value->read()"));
+    crust::check(&renamed).unwrap();
+}
+
+#[test]
 fn renames_only_the_selected_local_and_preserves_comments_strings_and_shadowing() {
     let source = "int main() { int value = 1; /* value */ { int value = 2; print(value); } print(\"value\"); value = value + 1; return value; }";
     let analysis = crust::analyze(source).unwrap();

@@ -116,7 +116,7 @@ Symbols expose a canonical declaration location for compatible redeclarations.
 `Analysis::references_at` collects bound uses and optionally declarations, with
 duplicate locations from generic replay removed.
 `Analysis::rename` returns source edits for locals, explicit parameters, free
-functions, instance and static methods, typedefs, and external variables.
+functions, instance and static methods, typedefs, interfaces, and external variables.
 It reanalyzes edited snapshot text and compares
 translated reference targets to reject name capture. Native imports gain explicit
 aliases when needed to preserve their C names.
