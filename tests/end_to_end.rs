@@ -30,6 +30,50 @@ fn run(source: &str) -> Output {
     return invoke("run", &source_file(source));
 }
 
+#[test]
+fn native_main_receives_arguments_after_the_separator() {
+    let source = source_file(
+        "extern int puts(const char* text); int main(int argc, char** argv) { print(argc); unsafe { for (int i = 1; i < argc; i++) { puts(argv[i]); } print(argv[argc] == 0); } return 0; }",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("run")
+        .arg(&source)
+        .args(["--", "two words", "--help"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "3\ntwo words\n--help\n1\n"
+    );
+    assert!(
+        !Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg("check")
+            .arg(&source)
+            .args(["--", "ignored"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn main_rejects_incompatible_native_argument_types() {
+    for source in [
+        "int main(int argc, int** argv) { return argc; }",
+        "int main(int argc, const char** argv) { return argc; }",
+        "int main(size_t argc, char** argv) { return 0; }",
+    ] {
+        assert!(crust::compile(source).is_err(), "accepted {source}");
+    }
+}
+
 fn stdout(output: &Output) -> String {
     return String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
 }

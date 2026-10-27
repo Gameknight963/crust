@@ -51,6 +51,17 @@ crust build --project path/to/crust.toml
 crust metadata
 ```
 
+Pass program arguments after `--`:
+
+```text
+crust run --target example -- first "two words"
+crust run examples/arguments.cr -- hello
+```
+
+The executable receives them through `int main(int argc, char** argv)`.
+`argv[0]` names the executable, and `argv[argc]` is a null pointer. Reading the
+raw argument pointers requires `unsafe`.
+
 - Commands discover `crust.toml` in the current directory or its parents
 - A manifest path or project directory can also be passed as the input
 - `build` and `check` process all targets by default

@@ -4,6 +4,22 @@ use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
 
+fn native_main_parameters(parameters: &[Type], types: &Types) -> bool {
+    let [Type::Integer(IntType::I32), Type::Pointer(outer)] = parameters else {
+        return false;
+    };
+    let outer = types.pointers[*outer];
+    let Type::Pointer(inner) = outer.pointee else {
+        return false;
+    };
+    let inner = types.pointers[inner];
+    return outer.mutable
+        && inner.mutable
+        && !outer.volatile
+        && !inner.volatile
+        && inner.pointee == Type::Integer(IntType::Char);
+}
+
 // Code generation accepts only a program that has passed this checker.
 pub(crate) struct CheckedProgram {
     analysis: AnalyzedProgram,
@@ -478,7 +494,8 @@ fn analyze(
                     && !signature.external
                     && !signature.requires_unsafe
                     && signature.calling_convention == CallingConvention::C
-                    && signature.parameters.is_empty() => {}
+                    && (signature.parameters.is_empty()
+                        || native_main_parameters(&signature.parameters, &types)) => {}
             Some(_) => {
                 let function = program
                     .functions
@@ -487,7 +504,7 @@ fn analyze(
                     .unwrap();
                 return Err(Diagnostic::new(
                     function.span,
-                    "entry point must be 'int main(void)' or 'int main()'",
+                    "entry point must be int main(), int main(void), or int main(int argc, char** argv)",
                 ));
             }
             None => {
@@ -498,7 +515,7 @@ fn analyze(
                         line: 1,
                         column: 1,
                     },
-                    "program needs an 'int main(void)' entry point",
+                    "program needs an int main() entry point",
                 ));
             }
         }

@@ -87,6 +87,7 @@ See [the slice example](../examples/slices.cr).
 - Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names
 - Functions support named parameters, forward calls, and recursion
 - Executable targets use `int main()` or `int main(void)` as their entry point
+- `int main(int argc, char** argv)` receives native command-line arguments
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
 - `if`, `else`, `while`, `do`, and `for` bodies accept blocks or single statements

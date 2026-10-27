@@ -24,6 +24,7 @@ struct Options {
     input: Option<PathBuf>,
     project: Option<PathBuf>,
     target: Option<String>,
+    program_arguments: Vec<OsString>,
 }
 
 fn main() -> ExitCode {
@@ -47,6 +48,7 @@ fn run() -> Result<ExitCode, String> {
     }
     if arguments
         .iter()
+        .take_while(|argument| *argument != "--")
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
@@ -91,6 +93,7 @@ fn run() -> Result<ExitCode, String> {
             &[path.to_owned()],
             &crust::native::Options::default(),
             TargetKind::Executable,
+            &options.program_arguments,
         );
     }
     let directory = env::current_dir().map_err(|error| error.to_string())?;
@@ -104,6 +107,7 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
         input: None,
         project: None,
         target: None,
+        program_arguments: Vec::new(),
     };
     let mut arguments = arguments.into_iter().peekable();
     if let Some(mode) = arguments
@@ -124,7 +128,13 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
         arguments.next();
     }
     while let Some(argument) = arguments.next() {
-        if argument == "--project" {
+        if argument == "--" {
+            if result.mode != Mode::Run {
+                return Err("program arguments require run".to_owned());
+            }
+            result.program_arguments.extend(arguments);
+            break;
+        } else if argument == "--project" {
             let path = arguments.next().ok_or("--project needs a path")?;
             if result.project.replace(PathBuf::from(path)).is_some() {
                 return Err(String::from("--project can be specified once"));
@@ -219,6 +229,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
             &protected,
             &native,
             target.kind,
+            &options.program_arguments,
         )?;
         if mode == Mode::Run {
             return Ok(code);
@@ -234,6 +245,7 @@ fn process_source(
     protected: &[PathBuf],
     native: &crust::native::Options,
     kind: TargetKind,
+    program_arguments: &[OsString],
 ) -> Result<ExitCode, String> {
     if mode == Mode::Run && kind != TargetKind::Executable {
         return Err(format!(
@@ -303,6 +315,7 @@ fn process_source(
         return Ok(ExitCode::SUCCESS);
     }
     let mut command = Command::new(&executable);
+    command.args(program_arguments);
     if !cfg!(windows) && !native.runtime_dirs.is_empty() {
         let variable = if cfg!(windows) {
             "PATH"
