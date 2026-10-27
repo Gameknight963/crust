@@ -173,7 +173,10 @@ impl Context {
             .is_some_and(|(symbol, _)| {
                 matches!(
                     symbol.kind,
-                    SymbolKind::Function | SymbolKind::Method | SymbolKind::Global
+                    SymbolKind::Function
+                        | SymbolKind::Method
+                        | SymbolKind::Alias
+                        | SymbolKind::Global
                 )
             });
         let changes = if global {

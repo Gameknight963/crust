@@ -606,6 +606,61 @@ fn method_rename_updates_unopened_target_callers_and_keeps_other_receiver_bindin
 }
 
 #[test]
+fn typedef_rename_updates_unopened_project_types_and_supports_prepare_rename() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-typedef-rename")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname='example'\n[[targets]]\nname='first'\nkind='executable'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='executable'\nentry='second.cr'\n").unwrap();
+    let shared = "typedef int Count;";
+    let first = "import \"shared.cr\"; int main() { Count value = 1; return value; }";
+    let second = "import \"shared.cr\"; Count identity(Count value) { return value; } int main() { return identity(42); }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let first_uri = file_uri(&root.join("first.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&first_uri, 1, first)["diagnostics"], json!([]));
+    let mut params =
+        json!({ "textDocument": { "uri": first_uri }, "position": point(first, "Count value") });
+    let prepared = server.request("textDocument/prepareRename", params.clone());
+    assert_eq!(prepared.result.unwrap()["placeholder"], "Count");
+    params["newName"] = json!("Amount");
+    let result = server.request("textDocument/rename", params);
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let changes = result.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    assert_eq!(changes[&first_uri].as_array().unwrap().len(), 1);
+    assert_eq!(
+        changes[file_uri(&root.join("second.cr"))]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        changes[file_uri(&root.join("shared.cr"))]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        changes
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|edits| edits.as_array().unwrap())
+            .all(|edit| edit["newText"] == "Amount")
+    );
+    server.stop();
+}
+
+#[test]
 fn invalid_workspace_configuration_diagnostics_clear_when_the_folder_is_removed() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-workspace-project-diagnostics")

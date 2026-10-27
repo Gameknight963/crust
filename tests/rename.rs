@@ -150,6 +150,93 @@ fn renamed_consuming_methods_keep_owner_cleanup() {
 }
 
 #[test]
+fn typedef_rename_follows_redeclarations_callbacks_generics_and_type_expressions() {
+    let source = r#"
+        typedef int Count;
+        typedef int Count;
+        typedef Count Callback(Count);
+        struct Item { Count value; };
+        Count identity(Count value) { return value; }
+        T echo<T>(T value) { return value; }
+        Count sum(Count first, Count second) { return first + second; }
+        int main() {
+            Count values[2] = { 20, 22 };
+            Item item = { .value = sum(values[0], values[1]) };
+            Count value = echo<Count>(item.value);
+            print((Count)value);
+            print(sizeof(Count));
+            int Count = 7;
+            print(Count);
+            Callback* callback = identity;
+            unsafe { print(callback(value)); }
+            return 0;
+        }
+    "#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("Count;").unwrap(), "Amount")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("typedef int Amount;"));
+    assert!(renamed.contains("typedef Amount Callback(Amount)"));
+    assert!(renamed.contains("echo<Amount>"));
+    assert!(renamed.contains("int Count = 7;"));
+    assert!(renamed.contains("print(Count)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n4\n7\n42\n"
+    );
+}
+
+#[test]
+fn typedef_rename_rejects_type_capture_and_unresolved_template_uses() {
+    for source in [
+        "typedef int Count; typedef char Amount; int main() { Count value = 1; return value; }",
+        "typedef int Count; T later<T>(Count count, T value) { return value; } int main() { Count value = 1; return value; }",
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        assert!(
+            analysis
+                .rename(0, source.find("Count;").unwrap(), "Amount")
+                .is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn typedef_rename_preserves_native_opaque_tags_and_function_symbols() {
+    let source = "struct NativeHandle; typedef NativeHandle Handle; extern int native_read(const Handle*); int main() { unsafe { Handle* handle = 0; print(native_read(handle)); } return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find(" Handle;").unwrap() + 1, "Resource")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("struct NativeHandle;"));
+    assert!(renamed.contains("typedef NativeHandle Resource;"));
+    let c = format!(
+        "{}\nint native_read(const struct NativeHandle* handle) {{ return handle == NULL ? 42 : 0; }}",
+        crust::compile(&renamed).unwrap()
+    );
+    let output = common::tracked_generated_c(&c, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n"
+    );
+}
+
+#[test]
 fn renames_only_the_selected_local_and_preserves_comments_strings_and_shadowing() {
     let source = "int main() { int value = 1; /* value */ { int value = 2; print(value); } print(\"value\"); value = value + 1; return value; }";
     let analysis = crust::analyze(source).unwrap();

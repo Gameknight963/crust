@@ -85,6 +85,7 @@ impl Analysis {
                 | SymbolKind::Parameter
                 | SymbolKind::Function
                 | SymbolKind::Method
+                | SymbolKind::Alias
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
@@ -119,7 +120,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, explicit parameter, function, method, or external variable to rename"
+                "select a local, explicit parameter, function, method, typedef, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -169,7 +170,7 @@ impl Analysis {
     fn check_rename_coverage(&self, symbol: &Symbol, new_name: &str) -> Result<(), String> {
         let global = matches!(
             symbol.kind,
-            SymbolKind::Function | SymbolKind::Method | SymbolKind::Global
+            SymbolKind::Function | SymbolKind::Method | SymbolKind::Alias | SymbolKind::Global
         );
         let scope = self
             .symbols
