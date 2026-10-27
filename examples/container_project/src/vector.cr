@@ -81,6 +81,16 @@ struct Vector<T> {
         this->length = 0;
     }
 
+    void swap(size_t first, size_t second) {
+        if (first >= this->length || second >= this->length) { unsafe { abort(); } }
+        if (first == second) { return; }
+        unsafe {
+            T value = move(this->data[first]);
+            init(this->data + first, move(this->data[second]));
+            init(this->data + second, move(value));
+        }
+    }
+
     const T^ at(size_t index) const {
         if (index >= this->length) { unsafe { abort(); } }
         unsafe { return ^const this->data[index]; }

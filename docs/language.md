@@ -688,11 +688,18 @@ reverse order. Its methods use checked borrows.
 - `insert(index, value)` accepts positions from zero through `count()`, moves later elements to the right, and consumes an owning argument
 - `remove(index)` requires an existing element, moves it out, and closes the gap while preserving order
 - `clear()` destroys elements in reverse order and retains the allocation for reuse
+- `swap(first, second)` exchanges two existing elements through whole-value moves
 - Element borrows prevent insertion, removal, clearing, growth, and moves of the vector
 
 Insertion and removal take time proportional to the number of shifted elements.
 The [vector edit example](../examples/vector_edits.cr) uses these operations with
 heap owners.
+
+The [sorting example](../examples/sorting.cr) uses a generic stable insertion sort
+from [sort.cr](../examples/container_project/src/sort.cr). Its `Ordered` interface
+requires `int compare(const Self^ other) const`. The sort borrows vector elements
+for comparison and uses `swap` to exchange owners. It uses constant extra storage,
+takes quadratic time in the worst case, and runs in linear time on sorted input.
 
 `Box<T>::take(Self this)` consumes a box and returns its stored value.
 

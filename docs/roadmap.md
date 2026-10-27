@@ -31,6 +31,7 @@
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
 - Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
 - Ordered vector insertion and removal, allocation reuse after clearing, and cleanup for arrays of owners
+- Generic stable sorting through interfaces, with vector swaps that preserve ownership
 - Variadic C declarations and callbacks with default integer argument promotions
 - Native-layout unions, opaque union tags, generic unions, and overlapping field-borrow checks
 - Native C integer spellings and conversion ranks, plus compatible repeated typedefs and external declarations

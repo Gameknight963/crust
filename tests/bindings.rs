@@ -763,3 +763,65 @@ fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_ca
         "1\n7\n1\n2\n3\n5\n7\n9\n"
     );
 }
+
+#[test]
+fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
+    let path = header("#include <stdlib.h>\n");
+    let bindings = generate(&path, &options(&["qsort"])).unwrap();
+    let vector = include_str!("../examples/container_project/src/vector.cr").replace(
+        "import \"memory.cr\";",
+        include_str!("../examples/container_project/src/memory.cr"),
+    );
+    let source = format!(
+        r#"
+        {bindings}
+        {vector}
+        struct Resource {{ BoxInt value; ~Resource() {{ print(*this->value); }} }};
+        unsafe int compare(const void* left, const void* right) {{
+            int first = *((const Resource*)left)->value;
+            int second = *((const Resource*)right)->value;
+            return (first > second) - (first < second);
+        }}
+        int main() {{
+            Vector<Resource> values = Vector<Resource>::create(); values.reserve(3);
+            values.push((Resource){{ .value = box_int(3) }});
+            values.push((Resource){{ .value = box_int(1) }});
+            values.push((Resource){{ .value = box_int(2) }});
+            size_t count = values.count();
+            unsafe {{ qsort(&*values.at_mut(0), count, sizeof(Resource), compare); }}
+            for (size_t i = 0; i < count; i += 1) {{ print(*values.at(i)->value); }}
+            return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run_sizes(&source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n2\n3\n3\n2\n1\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        format!(
+            "drop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:{}\n",
+            std::mem::size_of::<usize>() * 3
+        )
+    );
+    for conflicting in [
+        source.replace(
+            "size_t count = values.count();",
+            "size_t count = values.count(); const Resource^ view = values.at(0);",
+        ),
+        source.replace(
+            "qsort(&*values.at_mut(0), count,",
+            "qsort(&*values.at_mut(0), values.count(),",
+        ),
+    ] {
+        let error = crust::check(&conflicting).unwrap_err();
+        assert!(error.message.contains("borrow"), "{}", error.message);
+    }
+}

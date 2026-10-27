@@ -32,6 +32,8 @@ The [C owner example](examples/c_owner.cr) wraps C allocation with private field
 checked borrows, and a destructor.
 The [generic buffer example](examples/generic_buffer.cr) uses the same container
 with integers, characters, and structs.
+The [sorting example](examples/sorting.cr) combines a comparison interface with
+a vector of heap owners.
 The [generic box](examples/generic_box.cr) owns heap values, including other owners.
 The [container project](examples/container_project/) uses buffers, boxes, and
 growable vectors from separate files through `import "buffer.cr";`.

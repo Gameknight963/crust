@@ -68,7 +68,7 @@ fn reallocation_moves_owners_without_destroying_them_and_drops_only_live_element
 }
 
 #[test]
-fn live_element_borrows_prevent_push_pop_reserve_and_whole_vector_moves() {
+fn live_element_borrows_prevent_mutation_and_whole_vector_moves() {
     let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
         "import \"memory.cr\";",
         include_str!("../examples/container_project/src/memory.cr"),
@@ -80,6 +80,7 @@ fn live_element_borrows_prevent_push_pop_reserve_and_whole_vector_moves() {
         "values.insert(0, 2);",
         "values.remove(0);",
         "values.clear();",
+        "values.swap(0, 0);",
         "Vector<int> other = move(values);",
     ] {
         let source = format!(
@@ -184,7 +185,8 @@ fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() 
             Pair first = { (Resource){ .value = box_int(1) }, (Resource){ .value = box_int(2) } };
             Pair second = { (Resource){ .value = box_int(3) }, (Resource){ .value = box_int(4) } };
             values.push(move(second)); values.insert(0, move(first));
-            Pair result = values.remove(1); print(*result[0].value); print(*result[1].value);
+            values.swap(0, 1); values.swap(1, 1);
+            Pair result = values.remove(0); print(*result[0].value); print(*result[1].value);
             values.clear(); values.clear();
             return 0;
         }
@@ -198,7 +200,7 @@ fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() 
 }
 
 #[test]
-fn invalid_insertion_and_removal_stop_before_allocation_or_element_access() {
+fn invalid_vector_edits_stop_before_allocation_or_element_access() {
     let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
         "import \"memory.cr\";",
         include_str!("../examples/container_project/src/memory.cr"),
@@ -207,6 +209,10 @@ fn invalid_insertion_and_removal_stop_before_allocation_or_element_access() {
         ("values.insert(1, 10);", 0),
         ("values.insert(~(size_t)0, 10);", 0),
         ("values.remove(0);", 0),
+        ("values.swap(0, 0);", 0),
+        ("values.push(1); values.swap(0, 1);", 1),
+        ("values.push(1); values.swap(1, 0);", 1),
+        ("values.push(1); values.swap(1, 1);", 1),
         ("values.push(1); values.insert(2, 10);", 1),
         ("values.push(1); values.remove(1);", 1),
         ("values.push(1); values.clear(); values.remove(0);", 1),
