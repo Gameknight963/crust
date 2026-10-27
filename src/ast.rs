@@ -638,6 +638,10 @@ pub enum ExpressionKind {
         arguments: Vec<Expression>,
     },
     Integer(u64),
+    TypedInteger {
+        value: u64,
+        kind: IntType,
+    },
     Variable {
         name: String,
         name_span: Span,

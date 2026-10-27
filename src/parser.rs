@@ -2204,6 +2204,17 @@ impl Parser {
                     span: token.span,
                 });
             }
+            Token::SuffixedIntegerLiteral {
+                value,
+                suffix,
+                decimal,
+            } => {
+                let kind = integers::literal_type(value, suffix, decimal, token.span)?;
+                return Ok(Expression {
+                    kind: ExpressionKind::TypedInteger { value, kind },
+                    span: token.span,
+                });
+            }
             Token::Identifier(name) => {
                 let mut generic_type = None;
                 if self.next_generic_function(&name) {

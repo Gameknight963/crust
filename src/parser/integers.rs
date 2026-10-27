@@ -1,5 +1,35 @@
 use super::*;
 
+pub(super) fn literal_type(
+    value: u64,
+    suffix: crate::lexer::IntegerSuffix,
+    decimal: bool,
+    span: Span,
+) -> Result<IntType, Diagnostic> {
+    use crate::lexer::IntegerSuffix;
+    let long = IntType::native_long();
+    let wide = IntType::native_long_long();
+    let candidates: &[IntType] = match suffix {
+        IntegerSuffix::Unsigned => &[IntType::U32, long.unsigned(), wide.unsigned()],
+        IntegerSuffix::Long if decimal => &[long, wide],
+        IntegerSuffix::Long => &[long, long.unsigned(), wide, wide.unsigned()],
+        IntegerSuffix::UnsignedLong => &[long.unsigned(), wide.unsigned()],
+        IntegerSuffix::LongLong if decimal => &[wide],
+        IntegerSuffix::LongLong => &[wide, wide.unsigned()],
+        IntegerSuffix::UnsignedLongLong => &[wide.unsigned()],
+    };
+    return candidates
+        .iter()
+        .copied()
+        .find(|kind| kind.fits(i128::from(value)))
+        .ok_or_else(|| {
+            Diagnostic::new(
+                span,
+                "integer literal does not fit any C type allowed by its suffix and base",
+            )
+        });
+}
+
 impl Parser {
     pub(super) fn integer_type(
         &mut self,

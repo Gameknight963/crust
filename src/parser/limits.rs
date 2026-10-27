@@ -131,6 +131,7 @@ pub(super) fn expression(root: &Expression) -> Result<(), Diagnostic> {
             | ExpressionKind::Alignof(_)
             | ExpressionKind::Boolean(_)
             | ExpressionKind::Integer(_)
+            | ExpressionKind::TypedInteger { .. }
             | ExpressionKind::Variable { .. } => {}
         }
     }

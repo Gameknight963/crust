@@ -202,6 +202,7 @@ for a struct satisfying both instance and static requirements.
 | `ptrdiff_t`, `intptr_t` | Signed pointer-sized integer |
 
 - Unsuffixed integer literals use `int`, then `int64_t`, then `uint64_t`, according to their value
+- C suffixes `u`, `l`, `ll`, `ul`, and `ull` select a native integer type before conversion to a destination
 - A literal assigned or passed directly to an integer type must fit that type
 - Boolean and 8- or 16-bit operands promote to `int` before arithmetic
 - Integer conversion ranks follow C: `int`, then `long`, then `long long`, with fixed-width names using their native typedef's rank
@@ -216,6 +217,23 @@ for a struct satisfying both instance and static requirements.
 - Signed right shifts extend the sign, rounding negative values down
 - `<<=` and `>>=` evaluate the destination once and check the result when converting back to its type
 - Compound assignments check conversion of the result back to the destination type
+
+Suffixes accept uppercase letters and either order, such as `42UL` or `42lu`.
+The long-long suffix uses `ll` or `LL`. Each literal takes the first type in the
+following list that can hold its value:
+
+| Suffix | Decimal | Hexadecimal, octal, or binary |
+|---|---|---|
+| `u` | `unsigned int`, `unsigned long`, `unsigned long long` | Same |
+| `l` | `long`, `long long` | `long`, `unsigned long`, `long long`, `unsigned long long` |
+| `ul` | `unsigned long`, `unsigned long long` | Same |
+| `ll` | `long long` | `long long`, `unsigned long long` |
+| `ull` | `unsigned long long` | Same |
+
+For example, `42L` keeps its native `long` type in a variadic C call.
+`0xffffffffffffffffLL` has type `unsigned long long`. The decimal form
+`18446744073709551615LL` exceeds its allowed signed type and is rejected.
+Write the signed 64-bit minimum as `-9223372036854775807LL - 1LL`.
 
 ```c
 uint64_t count = 18446744073709551615;

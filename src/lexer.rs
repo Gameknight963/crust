@@ -3,6 +3,15 @@ pub use crate::diagnostic::Span;
 
 pub type LexError = Diagnostic;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegerSuffix {
+    Unsigned,
+    Long,
+    UnsignedLong,
+    LongLong,
+    UnsignedLongLong,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     // Keywords.
@@ -50,6 +59,11 @@ pub enum Token {
     // Tokens carrying data.
     Identifier(String),
     IntegerLiteral(u64),
+    SuffixedIntegerLiteral {
+        value: u64,
+        suffix: IntegerSuffix,
+        decimal: bool,
+    },
     StringLiteral(Vec<u8>),
 
     // Punctuation.
@@ -261,22 +275,41 @@ impl Lexer<'_> {
             self.advance();
         }
 
-        // Keep malformed literals together rather than splitting off a name.
-        if self.peek().is_some_and(|character| {
+        let digits_end = self.offset;
+        while self.peek().is_some_and(|character| {
             character.is_ascii_alphanumeric() || character == '_' || character == '.'
         }) {
-            return Err(self.error(start, "invalid integer digit or unsupported literal suffix"));
+            self.advance();
         }
-
-        let text = &self.source[digits_start..self.offset];
+        let suffix = match &self.source[digits_end..self.offset] {
+            "" => None,
+            "u" | "U" => Some(IntegerSuffix::Unsigned),
+            "l" | "L" => Some(IntegerSuffix::Long),
+            "ul" | "uL" | "Ul" | "UL" | "lu" | "lU" | "Lu" | "LU" => {
+                Some(IntegerSuffix::UnsignedLong)
+            }
+            "ll" | "LL" => Some(IntegerSuffix::LongLong),
+            "ull" | "uLL" | "Ull" | "ULL" | "llu" | "llU" | "LLu" | "LLU" => {
+                Some(IntegerSuffix::UnsignedLongLong)
+            }
+            _ => return Err(self.error(start, "invalid integer digit or literal suffix")),
+        };
+        let text = &self.source[digits_start..digits_end];
         if text.is_empty() {
             return Err(self.error(start, "expected digits after integer base prefix"));
         }
 
-        return match u64::from_str_radix(text, radix) {
-            Ok(value) => Ok(Token::IntegerLiteral(value)),
-            Err(_) => Err(self.error(start, "integer literal exceeds the unsigned 64-bit range")),
-        };
+        let value = u64::from_str_radix(text, radix)
+            .map_err(|_| self.error(start, "integer literal exceeds the unsigned 64-bit range"))?;
+        return Ok(if let Some(suffix) = suffix {
+            Token::SuffixedIntegerLiteral {
+                value,
+                suffix,
+                decimal: radix == 10,
+            }
+        } else {
+            Token::IntegerLiteral(value)
+        });
     }
 
     fn character(&mut self, start: Span) -> Result<Token, LexError> {
@@ -547,7 +580,7 @@ impl Lexer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Span, Token, tokenize};
+    use super::{IntegerSuffix, Span, Token, tokenize};
 
     fn kinds(source: &str) -> Vec<Token> {
         return tokenize(source)
@@ -739,6 +772,74 @@ mod tests {
     }
 
     #[test]
+    fn integer_suffixes_keep_the_base_and_cover_the_full_token_span() {
+        for (spellings, suffix) in [
+            (vec!["u", "U"], IntegerSuffix::Unsigned),
+            (vec!["l", "L"], IntegerSuffix::Long),
+            (
+                vec!["ul", "uL", "Ul", "UL", "lu", "lU", "Lu", "LU"],
+                IntegerSuffix::UnsignedLong,
+            ),
+            (vec!["ll", "LL"], IntegerSuffix::LongLong),
+            (
+                vec!["ull", "uLL", "Ull", "ULL", "llu", "llU", "LLu", "LLU"],
+                IntegerSuffix::UnsignedLongLong,
+            ),
+        ] {
+            for suffix_text in spellings {
+                for (digits, value, decimal) in [
+                    ("42", 42, true),
+                    ("0xff", 255, false),
+                    ("077", 63, false),
+                    ("0b11", 3, false),
+                ] {
+                    let source = format!("\n  {digits}{suffix_text} + 1");
+                    let tokens = tokenize(&source).unwrap();
+                    assert_eq!(
+                        tokens[0].kind,
+                        Token::SuffixedIntegerLiteral {
+                            value,
+                            suffix,
+                            decimal
+                        },
+                        "{source}"
+                    );
+                    assert_eq!(
+                        (tokens[0].span.start, tokens[0].span.end),
+                        (3, 3 + digits.len() + suffix_text.len())
+                    );
+                    assert_eq!((tokens[0].span.line, tokens[0].span.column), (2, 3));
+                    assert_eq!(tokens[1].kind, Token::Plus);
+                }
+            }
+        }
+        for text in [
+            "1uu",
+            "1uU",
+            "1lll",
+            "1lL",
+            "1Ll",
+            "1uLl",
+            "1lLu",
+            "1ulU",
+            "1lUl",
+            "1uint",
+            "1ULL0",
+            "0xULL",
+            "0bU",
+            "09u",
+            "0b102u",
+            "1.0u",
+            "1u.foo",
+            "1_u",
+            "18446744073709551616ULL",
+        ] {
+            let error = tokenize(&format!("\n  {text}")).unwrap_err();
+            assert_eq!((error.span.line, error.span.column), (2, 3), "{text}");
+        }
+    }
+
+    #[test]
     fn strings_keep_utf8_bytes_escapes_and_source_locations() {
         let tokens = tokenize("\"é\\n\"\r\n\"x\"").unwrap();
         assert_eq!(tokens[0].kind, Token::StringLiteral(vec![195, 169, 10]));
@@ -753,7 +854,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_number_syntax_instead_of_splitting_it() {
         for source in [
-            "0x", "0b", "0xg", "0b102", "09", "42u", "1_000", "1.5", ".5", "1e3",
+            "0x", "0b", "0xg", "0b102", "09", "1_000", "1.5", ".5", "1e3",
         ] {
             assert!(tokenize(source).is_err(), "should reject {source}");
         }

@@ -14,6 +14,7 @@
 - Boolean values, scalar conversions, and a common borrow representation
 - Fixed-width and pointer-sized integers, checked conversions, casts, and size/alignment queries
 - ASCII character literals and hexadecimal, binary, octal, and decimal integers
+- C integer literal suffixes with native types, constant expressions, and exact variadic argument types
 - Fixed-size arrays, nested initializers, checked indexing, array borrows, and owning-element cleanup
 - UTF-8 byte-array string literals, literal concatenation, and bounded text output
 - Local references with lexical lifetimes, nested reborrows, and scope-based loan release

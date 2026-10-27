@@ -279,6 +279,12 @@ impl Parser {
             ExpressionKind::Integer(value) => {
                 return Ok(IntegerConstant::literal(i128::from(*value)));
             }
+            ExpressionKind::TypedInteger { value, kind } => {
+                return Ok(IntegerConstant {
+                    value: i128::from(*value),
+                    kind: *kind,
+                });
+            }
             ExpressionKind::Boolean(value) => {
                 return Ok(IntegerConstant::literal(i128::from(*value)));
             }

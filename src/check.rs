@@ -991,8 +991,10 @@ impl FunctionChecker<'_> {
     }
 
     fn expression_inner(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
-        if let Some(value) = constant_integer(expression) {
-            let kind = if IntType::I32.fits(value) {
+        if let Some((value, explicit_kind)) = integer_literal(expression) {
+            let kind = if let Some(kind) = explicit_kind {
+                kind
+            } else if IntType::I32.fits(value) {
                 IntType::I32
             } else if IntType::I64.fits(value) {
                 IntType::I64
@@ -1385,7 +1387,9 @@ impl FunctionChecker<'_> {
                 }
                 return Ok(place.ty);
             }
-            ExpressionKind::Integer(_) => unreachable!("literal handled above"),
+            ExpressionKind::Integer(_) | ExpressionKind::TypedInteger { .. } => {
+                unreachable!("literal handled above")
+            }
             ExpressionKind::Variable { name, name_span } => {
                 if !self
                     .scopes
@@ -1908,7 +1912,7 @@ impl FunctionChecker<'_> {
             return Ok(());
         }
         if let Type::Integer(kind) = expected
-            && let Some(value) = constant_integer(expression)
+            && let Some((value, explicit_kind)) = integer_literal(expression)
         {
             if !kind.fits(value) {
                 return Err(Diagnostic::new(
@@ -1923,6 +1927,10 @@ impl FunctionChecker<'_> {
                         }
                     ),
                 ));
+            }
+            if explicit_kind.is_some() {
+                let actual = self.expression(expression)?;
+                return self.convert(expression, actual, expected);
             }
             self.constants.insert(expression.span, value);
             self.expression_types.insert(expression.span, expected);
@@ -2187,8 +2195,10 @@ impl FunctionChecker<'_> {
     }
 
     fn probe_receiver_type(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
-        if let Some(value) = constant_integer(expression) {
-            return Ok(Type::Integer(if IntType::I32.fits(value) {
+        if let Some((value, explicit_kind)) = integer_literal(expression) {
+            return Ok(Type::Integer(if let Some(kind) = explicit_kind {
+                kind
+            } else if IntType::I32.fits(value) {
                 IntType::I32
             } else if IntType::I64.fits(value) {
                 IntType::I64
@@ -2962,20 +2972,31 @@ impl FunctionChecker<'_> {
 }
 
 fn constant_integer(expression: &Expression) -> Option<i128> {
+    return integer_literal(expression).map(|(value, _)| value);
+}
+
+// Unsuffixed literals can adopt their destination type. A suffix fixes the
+// source type, including its native C rank, before any checked conversion.
+fn integer_literal(expression: &Expression) -> Option<(i128, Option<IntType>)> {
     return match &expression.kind {
-        ExpressionKind::Integer(value) => Some(i128::from(*value)),
+        ExpressionKind::Integer(value) => Some((i128::from(*value), None)),
+        ExpressionKind::TypedInteger { value, kind } => Some((i128::from(*value), Some(*kind))),
         ExpressionKind::Unary {
-            operator: UnaryOperator::Plus,
+            operator: operator @ (UnaryOperator::Plus | UnaryOperator::Negate),
             operand,
         } => match operand.kind {
-            ExpressionKind::Integer(value) => Some(i128::from(value)),
-            _ => None,
-        },
-        ExpressionKind::Unary {
-            operator: UnaryOperator::Negate,
-            operand,
-        } => match operand.kind {
-            ExpressionKind::Integer(value) => Some(-i128::from(value)),
+            ExpressionKind::Integer(_) | ExpressionKind::TypedInteger { .. } => {
+                let (mut value, kind) = integer_literal(operand)?;
+                if *operator == UnaryOperator::Negate {
+                    value = -value;
+                    if let Some(kind) = kind
+                        && !kind.signed()
+                    {
+                        value &= kind.maximum();
+                    }
+                }
+                Some((value, kind))
+            }
             _ => None,
         },
         _ => None,

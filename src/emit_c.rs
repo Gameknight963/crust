@@ -864,16 +864,28 @@ impl Emitter<'_> {
             .integer_representation(self.expression_type(expression))
             .unwrap();
         let bits = kind.bits();
-        if value < 0 {
+        let literal = if value < 0 {
             if value == kind.minimum() {
-                return format!("INT{bits}_MIN");
+                format!("INT{bits}_MIN")
+            } else {
+                format!("(-INT{bits}_C({}))", -value)
             }
-            return format!("(-INT{bits}_C({}))", -value);
-        }
-        return format!(
-            "{}INT{bits}_C({value})",
-            if kind.signed() { "" } else { "U" }
-        );
+        } else {
+            format!(
+                "{}INT{bits}_C({value})",
+                if kind.signed() { "" } else { "U" }
+            )
+        };
+        // Fixed-width macros can have a different native rank. For example,
+        // INT32_C produces int on Windows, while a long literal must stay long.
+        return if matches!(
+            kind,
+            IntType::Long | IntType::ULong | IntType::LongLong | IntType::ULongLong
+        ) {
+            format!("(({})({literal}))", kind.c_name())
+        } else {
+            literal
+        };
     }
 
     // An owning expression result has exactly one consumer: an initializer,
@@ -1078,7 +1090,9 @@ impl Emitter<'_> {
                 let place = self.place(expression);
                 return Some(self.temporary(self.expression_type(expression), &place));
             }
-            ExpressionKind::Integer(_) => unreachable!("checked literal has a constant value"),
+            ExpressionKind::Integer(_) | ExpressionKind::TypedInteger { .. } => {
+                unreachable!("checked literal has a constant value")
+            }
             ExpressionKind::Variable { name, .. } => {
                 let local = self.local(name);
                 let temporary = self.temporary(local.ty, &local.name);
