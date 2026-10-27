@@ -247,7 +247,8 @@ print(~byte);
 
 C-style casts convert between integer and boolean types using the same range
 checks as implicit conversions. A cast to `void` discards a value and destroys
-an owning result. Borrow types require exact matches.
+an owning result. Reference conversions preserve the pointee type and can reduce
+exclusive access to shared access.
 
 `sizeof(type)` and `sizeof(expression)` return the object's size in bytes.
 The expression is checked without being evaluated or moving its owners.
@@ -267,13 +268,13 @@ host ABI. Specifiers can use C ordering, such as `unsigned long int` or
 typedef int Row[3];
 
 int sum(const Row& values) {
-    return (values)[0] + (values)[1] + (values)[2];
+    return values[0] + values[1] + values[2];
 }
 
 int main() {
     int values[3] = { 10, 20, 30 };
     values[1] += 2;
-    print(sum(&const values));
+    print(sum(&values));
     return 0;
 }
 ```
@@ -307,7 +308,8 @@ typedef uint8_t Message[16];
 int main() {
     Message text = "Hello, Crust!";
     text[0] = 'h';
-    print(&const text);
+    const Message& view = &text;
+    print(view);
     print("Adjacent " "literals");
     return 0;
 }
@@ -389,7 +391,7 @@ bool empty = false;
 - Arithmetic promotes boolean operands to `int`
 - Comparisons and logical operators produce the existing integer zero/one results
 - Boolean values support locals, parameters, returns, fields, typedefs, and borrows
-- Borrow types match exactly, including their pointee type and access permission
+- References preserve their pointee type. `bool&` and `int&` remain distinct
 
 ## Ownership
 
@@ -424,8 +426,9 @@ struct Item {
 int main() {
     struct Item first = { .id = 1, .value = box_int(42) };
     struct Item second = move(first);
-    print(second.id);
-    print(*second.value);
+    const Item& item = &second;
+    print(item.id);
+    print(*item.value);
     return 0;
 }
 ```
@@ -436,7 +439,7 @@ int main() {
 - By-value layouts must be acyclic
 - Named initializers specify every field exactly once and evaluate in written order
 - Nested brace initializers and `(struct Item){ ... }` compound literals are supported
-- `item.id` accesses a field, and `borrowed_item->id` accesses one through a borrow
+- Values and references use `item.id` to access a field. Raw pointers use `pointer->id`
 - Fields are public by default
 - `private` fields can be read, written, borrowed, and initialized by methods, static factories, and destructors of their own struct
 - Private fields protect the invariants used by safe wrappers around raw pointers
@@ -578,6 +581,12 @@ struct Item {
         return &*this.owner;
     }
 };
+
+int main() {
+    Item item = { .owner = box_int(42) };
+    print(item.value());
+    return 0;
+}
 ```
 
 - A function returning a borrow requires exactly one borrowed parameter
@@ -679,8 +688,9 @@ extern int puts(const char* text);
 
 int main() {
     char text[6] = "Crust";
+    const char* pointer = &text[0];
     unsafe {
-        puts(&text[0]);
+        puts(pointer);
     }
     return 0;
 }
@@ -710,7 +720,7 @@ Unsafe code is responsible for pointer validity, alignment, aliasing, and resour
 lifetimes. External declarations must match the linked C function's ABI.
 
 Pointer-slot borrows use the full pointer type, such as `Item*& slot = &pointer;`
-or `Item* const& view = &const pointer;`. The first can replace the pointer value.
+or `Item* const& view = &pointer;`. The first can replace the pointer value.
 The second shares access to it. Dereferencing the stored raw pointer requires
 `unsafe`.
 

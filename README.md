@@ -15,9 +15,14 @@ C and builds native executables, static libraries, and shared libraries.
 ## Example
 
 ```c
+void increment(int& value) {
+    value += 1;
+}
+
 int main() {
     BoxInt first = box_int(42);
     BoxInt second = move(first);
+    increment(&*second);
     print(*second);
     return 0;
 }
