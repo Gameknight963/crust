@@ -526,10 +526,6 @@ fn project_configuration_errors_are_published_on_the_manifest_and_clear_after_re
             .unwrap()
             .is_empty()
     );
-    assert_eq!(
-        result["diagnostics"][0]["range"]["start"],
-        json!({"line": 0, "character": 0})
-    );
 
     std::fs::write(
         &manifest,
@@ -729,6 +725,59 @@ fn invalid_workspace_configuration_diagnostics_clear_when_the_folder_is_removed(
     let result = server.diagnostics();
     assert_eq!(result["uri"], file_uri(&root.join("crust.toml")));
     assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}
+
+#[test]
+fn project_toml_errors_use_precise_utf16_ranges_for_keys_and_values() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-project-ranges")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let manifest = root.join("crust.toml");
+    let manifest_uri = file_uri(&manifest);
+    let source = "project = { name = '🦀', unexpected = 1 }\r\n[[targets]]\r\nname = 'app'\r\nkind = 'executable'\r\nentry = 'main.cr'\r\n";
+    std::fs::write(&manifest, source).unwrap();
+    std::fs::write(root.join("main.cr"), "int main() { return 0; }").unwrap();
+    let mut server = Server::start();
+    assert_eq!(
+        server.open(
+            &file_uri(&root.join("main.cr")),
+            1,
+            "int main() { return 0; }"
+        )["diagnostics"],
+        json!([])
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], manifest_uri);
+    assert_eq!(
+        result["diagnostics"][0]["range"]["start"],
+        point(source, "unexpected")
+    );
+    assert_eq!(
+        result["diagnostics"][0]["range"]["end"],
+        point(source, " = 1")
+    );
+
+    let source = source
+        .replace(", unexpected = 1", "")
+        .replace("kind = 'executable'", "kind = 42");
+    std::fs::write(&manifest, &source).unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({ "changes": [
+        { "uri": manifest_uri, "type": 2 }
+    ] }),
+    );
+    let result = server.diagnostics();
+    assert_eq!(
+        result["diagnostics"][0]["range"]["start"],
+        point(&source, "42")
+    );
+    assert_eq!(
+        result["diagnostics"][0]["range"]["end"],
+        at(&source, source.find("42").unwrap() + 2)
+    );
     server.stop();
 }
 

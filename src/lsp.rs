@@ -359,19 +359,20 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
             .filter_map(|root| crate::project::Project::discover(root).ok()),
     );
     for manifest in manifests {
-        let project = match crate::project::Project::load(&manifest) {
+        let project = match crate::project::Project::load_diagnostic(&manifest) {
             Ok(project) => project,
-            Err(message) => {
+            Err(error) => {
+                let range = error.range.unwrap_or(0..0);
                 errors.push(crate::source::SourceError {
                     path: manifest,
                     diagnostic: crate::diagnostic::Diagnostic::new(
                         crate::diagnostic::Span {
-                            start: 0,
-                            end: 0,
+                            start: range.start,
+                            end: range.end,
                             line: 1,
                             column: 1,
                         },
-                        message,
+                        error.message,
                     ),
                 });
                 continue;

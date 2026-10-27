@@ -42,6 +42,7 @@ Clients supporting dynamic file-watcher registration watch `*.cr` and
 refresh semantic highlighting, using editor text for open files. Direct clients
 can also send `workspace/didChangeWatchedFiles` notifications.
 Project configuration errors appear on `crust.toml` and clear when repaired.
+TOML errors underline the offending key or value using UTF-16 editor positions.
 Static-library targets use library analysis, including entries without `main`.
 Reference searches include reads, writes, and calls. Compatible repeated
 declarations share a binding, and generic instantiations share their source locations.

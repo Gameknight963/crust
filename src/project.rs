@@ -65,6 +65,21 @@ pub struct Project {
     pub targets: Vec<Target>,
 }
 
+#[derive(Debug)]
+pub(crate) struct LoadError {
+    pub message: String,
+    pub range: Option<std::ops::Range<usize>>,
+}
+
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        return Self {
+            message,
+            range: None,
+        };
+    }
+}
+
 impl Project {
     pub fn discover(start: &Path) -> Result<PathBuf, String> {
         let start = start
@@ -83,6 +98,10 @@ impl Project {
     }
 
     pub fn load(path: &Path) -> Result<Project, String> {
+        return Self::load_diagnostic(path).map_err(|error| error.message);
+    }
+
+    pub(crate) fn load_diagnostic(path: &Path) -> Result<Project, LoadError> {
         let path = if path.is_dir() {
             path.join("crust.toml")
         } else {
@@ -94,22 +113,23 @@ impl Project {
         let source = fs::read_to_string(&manifest)
             .map_err(|error| format!("{}: {error}", manifest.display()))?;
         let parsed: Manifest =
-            toml::from_str(&source).map_err(|error| format!("{}: {error}", manifest.display()))?;
+            toml::from_str(&source).map_err(|error: toml::de::Error| LoadError {
+                range: error.span(),
+                message: format!("{}: {error}", manifest.display()),
+            })?;
         let directory = manifest
             .parent()
             .expect("absolute manifest has a parent")
             .to_owned();
         if parsed.project.name.trim().is_empty() {
-            return Err(format!(
-                "{}: project.name must have a value",
-                manifest.display()
-            ));
+            return Err(format!("{}: project.name must have a value", manifest.display()).into());
         }
         if parsed.targets.is_empty() {
             return Err(format!(
                 "{}: define at least one [[targets]] entry",
                 manifest.display()
-            ));
+            )
+            .into());
         }
         let mut names = HashSet::new();
         let mut entry_kinds = HashMap::new();
@@ -136,14 +156,15 @@ impl Project {
                 return Err(format!(
                     "{}: target names must start with a letter or digit and contain letters, digits, '-' or '_'",
                     manifest.display()
-                ));
+                ).into());
             }
             if !names.insert(target.name.to_ascii_lowercase()) {
                 return Err(format!(
                     "{}: duplicate target name '{}'",
                     manifest.display(),
                     target.name
-                ));
+                )
+                .into());
             }
             let entry = directory.join(&target.entry);
             target.entry = entry.canonicalize().map_err(|error| {
@@ -159,7 +180,8 @@ impl Project {
                     "{}: target '{}' entry must be a file",
                     manifest.display(),
                     target.name
-                ));
+                )
+                .into());
             }
             if let Some(previous) = entry_kinds.insert(target.entry.clone(), target.kind)
                 && previous != target.kind
@@ -168,7 +190,8 @@ impl Project {
                     "{}: entry {} is used by incompatible target kinds",
                     manifest.display(),
                     target.entry.display()
-                ));
+                )
+                .into());
             }
             let mut inputs = HashSet::new();
             for (kind, paths, is_directory) in [
@@ -194,7 +217,8 @@ impl Project {
                             target.name,
                             path.display(),
                             if is_directory { "directory" } else { "file" }
-                        ));
+                        )
+                        .into());
                     }
                     if !is_directory && !inputs.insert(path.clone()) {
                         return Err(format!(
@@ -202,7 +226,8 @@ impl Project {
                             manifest.display(),
                             target.name,
                             path.display()
-                        ));
+                        )
+                        .into());
                     }
                 }
             }
@@ -212,7 +237,7 @@ impl Project {
                         "{}: target '{}' native library names must be nonempty names. Use link-inputs for paths",
                         manifest.display(),
                         target.name
-                    ));
+                    ).into());
                 }
             }
         }
