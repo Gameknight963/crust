@@ -67,30 +67,7 @@ pub(super) fn symbols(
 ) -> Result<Value, RequestError> {
     let params: SymbolParams = serde_json::from_value(params)?;
     let query = params.query.to_ascii_lowercase();
-    let mut sources = load_sources(documents);
-    let mut entries: HashSet<_> = sources
-        .graphs
-        .iter()
-        .map(|graph| graph.files()[0].path.clone())
-        .collect();
-    for root in roots {
-        let Ok(manifest) = crate::project::Project::discover(root) else {
-            continue;
-        };
-        let Ok(project) = crate::project::Project::load(&manifest) else {
-            continue;
-        };
-        for target in project.targets {
-            if !entries.insert(target.entry.clone()) {
-                continue;
-            }
-            if let Ok(graph) = crate::source::SourceSet::load_with(&target.entry, |path| {
-                source_text(path, &sources.paths, documents)
-            }) {
-                sources.graphs.push(graph);
-            }
-        }
-    }
+    let sources = source_graphs(documents, roots, false).map_err(RequestError::failed)?;
     let mut contexts = Vec::new();
     for graph in sources.graphs {
         if let Ok(analysis) = graph.analyze() {
@@ -144,16 +121,72 @@ pub(super) fn symbols(
             }
         }
     }
-    results.sort_by(|a, b| {
-        let key = |value: &Value| {
-            (
-                value["name"].as_str().unwrap().to_owned(),
-                value["location"]["uri"].as_str().unwrap().to_owned(),
-                value["location"]["range"]["start"]["line"].as_u64(),
-                value["location"]["range"]["start"]["character"].as_u64(),
-            )
-        };
-        return key(a).cmp(&key(b));
+    results.sort_by_cached_key(|value| {
+        (
+            value["name"].as_str().unwrap().to_owned(),
+            value["location"]["uri"].as_str().unwrap().to_owned(),
+            value["location"]["range"]["start"]["line"].as_u64(),
+            value["location"]["range"]["start"]["character"].as_u64(),
+        )
     });
     return Ok(Value::Array(results));
+}
+
+pub(super) fn source_graphs(
+    documents: &HashMap<String, Document>,
+    roots: &[PathBuf],
+    strict: bool,
+) -> Result<Sources, String> {
+    let mut sources = load_sources(documents);
+    let mut entries: HashSet<_> = sources
+        .graphs
+        .iter()
+        .map(|graph| graph.files()[0].path.clone())
+        .collect();
+    let mut manifests: HashSet<_> = sources
+        .paths
+        .keys()
+        .filter_map(|path| {
+            path.parent()?
+                .ancestors()
+                .map(|directory| directory.join("crust.toml"))
+                .find(|manifest| manifest.is_file())
+        })
+        .collect();
+    manifests.extend(
+        roots
+            .iter()
+            .filter_map(|root| crate::project::Project::discover(root).ok()),
+    );
+    for manifest in manifests {
+        let project = match crate::project::Project::load(&manifest) {
+            Ok(project) => project,
+            Err(error) if strict => return Err(error),
+            Err(_) => continue,
+        };
+        for target in project.targets {
+            sources.targets.insert(target.entry.clone());
+            if !entries.insert(target.entry.clone()) {
+                continue;
+            }
+            match crate::source::SourceSet::load_with(&target.entry, |path| {
+                source_text(path, &sources.paths, documents)
+            }) {
+                Ok(graph) => sources.graphs.push(graph),
+                Err(error) => sources.errors.push(error),
+            }
+        }
+    }
+    if strict && let Some(error) = sources.errors.first() {
+        return Err(format!(
+            "global rename requires readable project sources: {error}"
+        ));
+    }
+    sources.graphs.sort_by(|a, b| {
+        b.files()
+            .len()
+            .cmp(&a.files().len())
+            .then_with(|| a.files()[0].path.cmp(&b.files()[0].path))
+    });
+    return Ok(sources);
 }

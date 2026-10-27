@@ -49,7 +49,7 @@
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping
-- Local and parameter rename with source reanalysis, capture checks, and versioned LSP edits
+- Local, parameter, function, and external-variable rename with binding checks, preserved C names, and affected-target validation
 - Scope completion with shadowing, imported declarations, generic parameters, and partial-word recovery
 - Resolved member completion for fields, methods, and enums, including generic receivers and private-field visibility
 - Workspace symbol search across unopened project targets and shared imports, with unsaved source overlays and folder updates
@@ -70,7 +70,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 ## Editor support
 
-- Extend rename to additional symbol kinds
+- Extend rename to methods and types
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Build Visual Studio integration on the same language server
 - Use `crust.toml` as the authoritative project configuration
@@ -78,9 +78,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 - Add native source-level debugging through the generated C backend
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
-source outlines, reference searches, local rename, and scope and member completion.
-Signature help uses the same resolved call analysis. Broader rename support can
-extend the symbol index.
+source outlines, reference searches, rename, and scope and member completion.
+Signature help uses the same resolved call analysis.
 
 ## Further design
 

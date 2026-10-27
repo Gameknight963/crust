@@ -1,4 +1,5 @@
 use crust::analysis::{Analysis, TextEdit};
+mod common;
 
 fn apply(analysis: &Analysis, edits: &[TextEdit]) -> Vec<String> {
     let mut texts: Vec<_> = analysis
@@ -129,4 +130,141 @@ fn reanalyzes_imports_from_the_snapshot_with_unicode_and_no_disk_writes() {
     let result = apply(&analysis, &edits);
     assert_eq!(result[0], entry);
     assert_eq!(result[1], "// 🦀\r\nint answer(int n) { return (n); }");
+}
+
+#[test]
+fn renames_functions_calls_recursion_and_addresses_without_touching_shadowing_parameters() {
+    let source = "typedef int Callback(int); int helper(int value) { if (value == 0) { return 0; } return helper(value - 1); } int other(int helper) { return helper; } int main() { Callback* function = helper; unsafe { print(function(2)); } return helper(1); }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("helper(int").unwrap(), "calculate")
+        .unwrap();
+    let result = apply(&analysis, &edits).remove(0);
+    assert!(result.contains("int calculate(int value)"));
+    assert!(result.contains("return calculate(value - 1)"));
+    assert!(result.contains("function = calculate"));
+    assert!(result.contains("int other(int helper) { return helper; }"));
+    crust::check(&result).unwrap();
+}
+
+#[test]
+fn native_function_and_global_renames_keep_c_symbols_and_existing_aliases() {
+    let source = "extern int native(int); extern int native(int input) = \"native\"; extern const int native_value; extern const int alias = \"native_value\"; int main() { unsafe { print(native(native_value)); print(alias); } return 0; }";
+    for (selected, name) in [("native(int)", "call_native"), ("native_value;", "v")] {
+        let analysis = crust::analyze(source).unwrap();
+        let edits = analysis
+            .rename(0, source.find(selected).unwrap(), name)
+            .unwrap();
+        assert!(
+            edits
+                .iter()
+                .any(|edit| edit.location.span.start == edit.location.span.end)
+        );
+        let result = apply(&analysis, &edits).remove(0);
+        if name == "v" {
+            assert!(result.contains("extern const int v = \"native_value\";"));
+        } else {
+            assert!(result.contains("extern int call_native(int) = \"native\";"));
+        }
+        assert!(result.contains("extern const int alias = \"native_value\";"));
+        let mut c = crust::compile(&result).unwrap();
+        c.push_str("int native(int value) { return value + 1; } const int native_value = 41;");
+        let output = common::tracked_generated_c(&c, false);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "42\n41\n"
+        );
+    }
+}
+
+#[test]
+fn global_rename_rejects_callable_capture_and_unresolved_template_occurrences() {
+    let source = "typedef int Callback(int); int helper(int value) { return value; } int other(int value) { return value + 1; } int main() { Callback* target = other; unsafe { return helper(1); } }";
+    let analysis = crust::analyze(source).unwrap();
+    let error = analysis
+        .rename(0, source.find("helper(int").unwrap(), "target")
+        .unwrap_err();
+    assert!(error.contains("which declaration"), "{error}");
+    let source = "int helper(int value) { return value; } T future<T>(T value) { return helper(value); } int main() { return helper(1); }";
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename(0, source.find("helper(int").unwrap(), "calculate")
+            .unwrap_err()
+            .contains("cannot resolve")
+    );
+    let source = "T future<T>(T value) { return value; } int main() { return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename(0, source.find("value)").unwrap(), "input")
+            .is_err()
+    );
+}
+
+#[test]
+fn generic_function_rename_updates_every_instantiation_and_keeps_receiver_names_fixed() {
+    let source = "T identity<T>(T value) { return value; } int main() { print(identity<int>(1)); print(identity<char>('a')); return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("identity<T>").unwrap(), "echo")
+        .unwrap();
+    let result = apply(&analysis, &edits).remove(0);
+    assert!(result.contains("T echo<T>"));
+    assert!(result.contains("echo<int>(1)"));
+    assert!(result.contains("echo<char>('a')"));
+    let source = "struct Item { int value; int take(Self this) { return this.value; } }; int main() { return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, source.find("this)").unwrap())
+            .is_none()
+    );
+}
+
+#[test]
+fn function_rename_updates_imports_using_snapshot_text() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/virtual-function-rename");
+    let entry = "import \"helper.cr\"; int main() { return answer(42); }";
+    let helper = "// 🦀\r\nint answer(int input) { return input; }";
+    let sources = crust::source::SourceSet::load_with(&root.join("main.cr"), |path| {
+        return Ok(if path.ends_with("main.cr") {
+            entry.to_owned()
+        } else {
+            helper.to_owned()
+        });
+    })
+    .unwrap();
+    let analysis = sources.analyze().unwrap();
+    let edits = analysis
+        .rename(0, entry.find("answer(42)").unwrap(), "calculate")
+        .unwrap();
+    let result = apply(&analysis, &edits);
+    assert_eq!(
+        result[0],
+        "import \"helper.cr\"; int main() { return calculate(42); }"
+    );
+    assert_eq!(
+        result[1],
+        "// 🦀\r\nint calculate(int input) { return input; }"
+    );
+}
+
+#[test]
+fn function_rename_keeps_independent_qualified_members_in_unused_templates() {
+    let source = "int helper() { return 1; } interface Uses { int helper() const; }; int later<T: Uses>(const T^ input) { return input->helper(); } int main() { return helper(); }";
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("helper()").unwrap(), "compute")
+        .unwrap();
+    let result = apply(&analysis, &edits).remove(0);
+    assert!(result.contains("int compute()"));
+    assert!(result.contains("return compute();"));
+    assert!(result.contains("return input->helper();"));
 }

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
+mod rename;
 mod semantic;
 mod semantic_tokens;
 mod signature;
@@ -279,6 +280,7 @@ struct Sources {
     paths: HashMap<PathBuf, String>,
     graphs: Vec<crate::source::SourceSet>,
     errors: Vec<crate::source::SourceError>,
+    targets: HashSet<PathBuf>,
 }
 
 fn source_text(
@@ -351,6 +353,7 @@ fn load_sources(documents: &HashMap<String, Document>) -> Sources {
         paths,
         graphs,
         errors,
+        targets: HashSet::new(),
     };
 }
 
@@ -364,6 +367,7 @@ fn publish_all(
         paths,
         graphs,
         errors,
+        ..
     } = load_sources(documents);
     let mut diagnostics: HashMap<String, Vec<Value>> = documents
         .keys()

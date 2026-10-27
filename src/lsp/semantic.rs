@@ -16,7 +16,7 @@ impl From<serde_json::Error> for RequestError {
 }
 
 impl RequestError {
-    fn failed(message: impl Into<String>) -> Self {
+    pub(super) fn failed(message: impl Into<String>) -> Self {
         return Self {
             code: -32803,
             message: message.into(),
@@ -126,12 +126,12 @@ impl Context {
         return None;
     }
 
-    fn range(&self, location: Location) -> Value {
+    pub(super) fn range(&self, location: Location) -> Value {
         let text = &self.analysis.files[location.file].text;
         return json!({ "start": position(text, location.span.start), "end": position(text, location.span.end) });
     }
 
-    fn uri(&self, file: usize) -> String {
+    pub(super) fn uri(&self, file: usize) -> String {
         return self.analysis.files[file]
             .path
             .as_ref()
@@ -154,19 +154,31 @@ impl Context {
         name: &str,
         documents: &HashMap<String, Document>,
         document_changes: bool,
+        workspace_roots: &[PathBuf],
     ) -> Result<Value, RequestError> {
-        let edits = self
+        let global = self
             .analysis
-            .rename(self.file, offset, name)
-            .map_err(RequestError::failed)?;
-        let mut changes: std::collections::BTreeMap<String, Vec<Value>> =
-            std::collections::BTreeMap::new();
-        for edit in edits {
+            .rename_target(self.file, offset)
+            .is_some_and(|(symbol, _)| {
+                matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global)
+            });
+        let changes = if global {
+            super::rename::global_edits(self, offset, name, documents, workspace_roots)?
+        } else {
+            let edits = self
+                .analysis
+                .rename(self.file, offset, name)
+                .map_err(RequestError::failed)?;
+            let mut changes: std::collections::BTreeMap<String, Vec<Value>> =
+                std::collections::BTreeMap::new();
+            for edit in edits {
+                changes
+                    .entry(self.uri(edit.location.file))
+                    .or_default()
+                    .push(json!({ "range": self.range(edit.location), "newText": edit.new_text }));
+            }
             changes
-                .entry(self.uri(edit.location.file))
-                .or_default()
-                .push(json!({ "range": self.range(edit.location), "newText": edit.new_text }));
-        }
+        };
         if document_changes {
             let changes: Vec<_> = changes.into_iter().map(|(uri, edits)| {
                 let version = documents.get(&uri).map(|document| document.version);
@@ -310,7 +322,7 @@ pub(super) fn request(
             .unwrap_or(Value::Null));
     }
     if let Some(name) = new_name {
-        return context.rename(offset, &name, documents, document_changes);
+        return context.rename(offset, &name, documents, document_changes, workspace_roots);
     }
     if let Some(include_declarations) = include_declarations {
         return Ok(Value::Array(

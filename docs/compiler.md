@@ -12,7 +12,7 @@ ownership checking, C generation, and native compilation.
 | `src/lexer.rs` | Tokens and scanning |
 | `src/diagnostic.rs` | Source locations and diagnostics |
 | `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
-| `src/analysis/rename.rs` | Local and parameter rename with binding validation |
+| `src/analysis/rename.rs` | Rename edits, native-name preservation, and binding validation |
 | `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
 | `src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
 | `src/analysis/signatures.rs` | Resolved call signatures, argument boundaries, and parameter label ranges |
@@ -38,6 +38,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
 | `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
 | `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
+| `src/lsp/rename.rs` | Project-wide rename and affected-target validation |
 | `src/lsp/signature.rs` | Signature-help responses and active parameters |
 | `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
@@ -67,9 +68,14 @@ types have no source declaration.
 Symbols expose a canonical declaration location for compatible redeclarations.
 `Analysis::references_at` collects bound uses and optionally declarations, with
 duplicate locations from generic replay removed.
-`Analysis::rename` returns source edits for locals and explicit parameters. It
-reanalyzes edited snapshot text and compares translated reference targets to
-reject name capture. LSP clients receive a workspace edit for review and application.
+`Analysis::rename` returns source edits for locals, explicit parameters, free
+functions, and external variables. It reanalyzes edited snapshot text and compares
+translated reference targets to reject name capture. Native imports gain explicit
+aliases when needed to preserve their C names.
+
+The LSP loads project targets with unsaved source overlays, merges shared-file
+edits, and rechecks every affected target. LSP clients receive a workspace edit
+for review and application.
 
 `Analysis::completions_at` returns visible declarations at a source position.
 Block scopes retain local declaration boundaries, parameters belong to their

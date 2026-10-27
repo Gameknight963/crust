@@ -1523,3 +1523,171 @@ fn rename_uses_current_document_versions_and_rejects_capture_and_invalid_request
     assert_eq!(response.error.unwrap().code, -32803);
     server.stop();
 }
+
+#[test]
+fn function_and_external_variable_rename_return_native_alias_edits() {
+    let uri = "untitled:native-rename.cr";
+    let source = "/* 🦀 */ extern int native(int); extern const int native_value; int main() { unsafe { return native(native_value); } }";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    for (needle, new_name, native, semicolon) in [
+        (
+            "native(int)",
+            "call_native",
+            "native",
+            source.find(';').unwrap(),
+        ),
+        (
+            "native_value;",
+            "count",
+            "native_value",
+            source.find("native_value;").unwrap() + "native_value".len(),
+        ),
+    ] {
+        let result = server.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": {"uri": uri}, "position": point(source, needle), "newName": new_name
+            }),
+        );
+        assert!(result.error.is_none(), "{:?}", result.error);
+        let result = result.result.unwrap();
+        let edits = result["changes"][uri].as_array().unwrap();
+        assert_eq!(edits.len(), 3);
+        let alias = edits
+            .iter()
+            .find(|edit| edit["newText"] == format!(" = \"{native}\""))
+            .unwrap();
+        assert_eq!(alias["range"]["start"], at(source, semicolon));
+        assert_eq!(alias["range"]["end"], alias["range"]["start"]);
+    }
+    server.stop();
+}
+
+fn rename_project(name: &str) -> std::path::PathBuf {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-global-rename")
+        .join(std::process::id().to_string())
+        .join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname = 'rename'\n[[targets]]\nname = 'first'\nkind = 'executable'\nentry = 'first.cr'\n[[targets]]\nname = 'second'\nkind = 'executable'\nentry = 'second.cr'\n").unwrap();
+    return root;
+}
+
+#[test]
+fn global_rename_updates_unopened_target_callers_and_returns_versioned_shared_edits() {
+    let root = rename_project("shared ü");
+    let first = "import \"shared.cr\"; int main() { return answer(); }";
+    let second = "import \"shared.cr\"; int main() { return answer(); }";
+    let shared = "int answer() { return 42; } extern const int native_value;";
+    std::fs::write(root.join("first.cr"), first).unwrap();
+    std::fs::write(root.join("second.cr"), second).unwrap();
+    std::fs::write(root.join("shared.cr"), shared).unwrap();
+    let first_uri = file_uri(&root.join("first.cr"));
+    let second_uri = file_uri(&root.join("second.cr"));
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    let mut server = Server::start_with_capabilities(
+        json!({"workspace": {"workspaceEdit": {"documentChanges": true}}}),
+    );
+    assert_eq!(server.open(&first_uri, 7, first)["diagnostics"], json!([]));
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": first_uri}, "position": point(first, "answer()"), "newName": "calculate"
+    }));
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = response.result.unwrap();
+    let changes = result["documentChanges"].as_array().unwrap();
+    assert_eq!(changes.len(), 3);
+    for uri in [&first_uri, &second_uri, &shared_uri] {
+        let change = changes
+            .iter()
+            .find(|change| change["textDocument"]["uri"] == **uri)
+            .unwrap();
+        assert_eq!(change["edits"].as_array().unwrap().len(), 1);
+        assert_eq!(change["edits"][0]["newText"], "calculate");
+        if uri == &first_uri {
+            assert_eq!(change["textDocument"]["version"], 7);
+        } else {
+            assert!(change["textDocument"]["version"].is_null());
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("shared.cr")).unwrap(),
+        shared
+    );
+    server.open(&shared_uri, 3, shared);
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": shared_uri}, "position": point(shared, "native_value;"), "newName": "count"
+    }));
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = response.result.unwrap();
+    let changes = result["documentChanges"].as_array().unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["textDocument"]["version"], 3);
+    assert_eq!(changes[0]["edits"].as_array().unwrap().len(), 2);
+    server.stop();
+}
+
+#[test]
+fn global_rename_checks_unopened_targets_for_capture_and_affected_errors() {
+    let root = rename_project("capture");
+    let first = "import \"shared.cr\"; int main() { return answer(1); }";
+    std::fs::write(root.join("first.cr"), first).unwrap();
+    std::fs::write(
+        root.join("shared.cr"),
+        "int answer(int value) { return value; }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("second.cr"),
+        "import \"shared.cr\"; int main() { int calculate = 1; return answer(calculate); }",
+    )
+    .unwrap();
+    let uri = file_uri(&root.join("first.cr"));
+    let mut server = Server::start();
+    server.open(&uri, 1, first);
+    let params = json!({"textDocument": {"uri": uri}, "position": point(first, "answer(1)"), "newName": "calculate"});
+    let response = server.request("textDocument/rename", params.clone());
+    assert_eq!(response.error.unwrap().code, -32803);
+    std::fs::write(
+        root.join("second.cr"),
+        "import \"shared.cr\"; int main() { return missing; }",
+    )
+    .unwrap();
+    let response = server.request("textDocument/rename", params);
+    let error = response.error.unwrap();
+    assert_eq!(error.code, -32803);
+    assert!(
+        error.message.contains("affected targets"),
+        "{}",
+        error.message
+    );
+    std::fs::write(root.join("crust.toml"), "[project]\nname = 'rename'\n[[targets]]\nname = 'first'\nkind = 'executable'\nentry = 'first.cr'\n[[targets]]\nname = 'second'\nkind = 'executable'\nentry = 'shared.cr'\n").unwrap();
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": uri}, "position": point(first, "answer(1)"), "newName": "calculate"
+    }));
+    assert!(response.error.unwrap().message.contains("affected targets"));
+    server.stop();
+}
+
+#[test]
+fn global_rename_rejects_shared_calls_bound_to_different_target_definitions() {
+    let root = rename_project("different-bindings");
+    let first = "import \"shared.cr\"; int answer() { return 1; } int main() { return forward(); }";
+    std::fs::write(root.join("first.cr"), first).unwrap();
+    std::fs::write(root.join("shared.cr"), "int forward() { return answer(); }").unwrap();
+    std::fs::write(root.join("second.cr"), "import \"shared.cr\"; int answer() { return 2; } int calculate() { return 3; } int main() { return forward(); }").unwrap();
+    let uri = file_uri(&root.join("first.cr"));
+    let mut server = Server::start();
+    server.open(&uri, 1, first);
+    let response = server.request("textDocument/rename", json!({
+        "textDocument": {"uri": uri}, "position": point(first, "answer()"), "newName": "calculate"
+    }));
+    let error = response.error.unwrap();
+    assert_eq!(error.code, -32803);
+    assert!(
+        error.message.contains("which declaration"),
+        "{}",
+        error.message
+    );
+    server.stop();
+}

@@ -131,5 +131,21 @@ fn external_variable_redeclarations_and_uses_have_distinct_source_bindings() {
         analysis.definitions_at(0, offset)[0].kind,
         crust::analysis::SymbolKind::Global
     );
-    assert!(analysis.rename_target(0, offset).is_none());
+    assert!(analysis.rename_target(0, offset).is_some());
+    let edits = analysis.rename(0, offset, "renamed").unwrap();
+    assert_eq!(edits.len(), 5);
+    assert_eq!(
+        edits
+            .iter()
+            .filter(|edit| edit.new_text == "renamed")
+            .count(),
+        3
+    );
+    assert_eq!(
+        edits
+            .iter()
+            .filter(|edit| edit.new_text == " = \"value\"")
+            .count(),
+        2
+    );
 }

@@ -78,6 +78,7 @@ pub struct Analysis {
     completion_scopes: Vec<completion::Scope>,
     members: members::Index,
     signatures: signatures::Index,
+    native_bindings: HashMap<Location, rename::NativeBinding>,
 }
 
 fn contains(location: Location, file: usize, offset: usize, include_end: bool) -> bool {
@@ -260,6 +261,7 @@ pub(crate) fn build(
     locate: impl Fn(Span) -> Location,
 ) -> Analysis {
     let signatures = signatures::Index::build(checked, &files, &locate);
+    let native_bindings = rename::native_bindings(checked, &files, &locate);
     let mut builder = Builder {
         seen: HashSet::new(),
         analysis: Analysis {
@@ -270,6 +272,7 @@ pub(crate) fn build(
             completion_scopes: completion::scopes(checked, &locate),
             members: members::Index::build(checked, &locate),
             signatures,
+            native_bindings,
         },
         locate: &locate,
     };
