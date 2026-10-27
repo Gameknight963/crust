@@ -67,6 +67,19 @@ ownership checking, C generation, and native compilation.
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
+## Frontend mutation testing
+
+Run the repeatable mutation harness with an iteration count and a nonzero seed:
+
+```text
+cargo run --offline --example fuzz_frontend -- 10000 42
+```
+
+It mutates source examples and exercises compilation and semantic analysis.
+Rejected programs are expected. Compiler panics preserve the input in
+`target/fuzz-frontend/crash_<seed>_<iteration>.cr`. The latest input also stays
+in `target/fuzz-frontend/current.cr` to help investigate process aborts.
+
 ## Source loading
 
 `source::SourceSet` loads relative imports once and assigns each file a distinct
