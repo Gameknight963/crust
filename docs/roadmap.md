@@ -62,6 +62,7 @@
 - TOML project loading and named executable targets
 - Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
 - C header generation for scalar, enum, opaque-pointer, and callback exports
+- Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 

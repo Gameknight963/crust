@@ -38,6 +38,7 @@ ownership checking, C generation, and native compilation.
 | `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
+| `src/project/links.rs` | Native target dependency order and transitive archive inputs |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
 | `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
@@ -76,6 +77,12 @@ build, including partial outputs after a tool failure.
 The archive signature is checked before replacement, including when an archiver
 exits successfully. Missing, truncated, and thin archive outputs preserve the
 previous library.
+
+Native target links use an iterative depth-first traversal to validate cycles
+and order builds. Executable link inputs reverse that order so dependent
+archives precede their dependencies. Archive builds retain separate outputs
+for linked targets. The native drivers require target references to be resolved
+to file inputs before invocation.
 
 `emit_header` checks an executable or library entry and renders its named C
 exports. Callback aliases are allocated within each exported symbol's prefix,

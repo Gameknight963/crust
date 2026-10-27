@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod links;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -34,6 +36,19 @@ pub enum TargetKind {
 }
 
 impl TargetKind {
+    pub fn artifact_path(self, output: &Path) -> Result<PathBuf, String> {
+        return Ok(match self {
+            Self::Executable => output.with_extension(std::env::consts::EXE_EXTENSION),
+            Self::StaticLibrary if cfg!(windows) => output.with_extension("lib"),
+            Self::StaticLibrary => {
+                let mut name = std::ffi::OsString::from("lib");
+                name.push(output.file_name().ok_or("output needs a filename")?);
+                name.push(".a");
+                output.with_file_name(name)
+            }
+        });
+    }
+
     pub fn program_kind(self) -> crate::ProgramKind {
         return match self {
             Self::Executable => crate::ProgramKind::Executable,
@@ -201,12 +216,14 @@ impl Project {
                 }
             }
         }
-        return Ok(Project {
+        let project = Project {
             manifest,
             directory,
             name: parsed.project.name,
             targets,
-        });
+        };
+        project.ordered_targets(&project.targets.iter().collect::<Vec<_>>())?;
+        return Ok(project);
     }
 
     pub fn select(&self, name: Option<&str>, single: bool) -> Result<Vec<&Target>, String> {

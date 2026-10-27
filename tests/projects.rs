@@ -189,6 +189,170 @@ fn native_macro_definitions_preserve_values_function_macros_and_per_target_confi
 }
 
 #[test]
+fn native_target_link_planning_handles_long_chains_without_recursive_traversal() {
+    let fixture = Fixture::new();
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    let mut targets = String::new();
+    for index in 0..1200 {
+        targets.push_str(&format!(
+            "[[targets]]\nname='node_{index}'\nkind='static-library'\nentry='library.cr'\n"
+        ));
+        if index + 1 < 1200 {
+            targets.push_str(&format!(
+                "[targets.native]\nlink-targets=['node_{}']\n",
+                index + 1
+            ));
+        }
+    }
+    fixture.manifest(&targets);
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let root = project.select(Some("node_0"), true).unwrap()[0];
+    let order = project.ordered_targets(&[root]).unwrap();
+    assert_eq!(order.len(), 1200);
+    assert_eq!(order.first().unwrap().name, "node_1199");
+    assert_eq!(order.last().unwrap().name, "node_0");
+}
+
+#[test]
+fn native_drivers_require_project_target_links_to_be_resolved_before_compilation() {
+    let options = crust::native::Options {
+        link_targets: vec!["library".to_owned()],
+        ..Default::default()
+    };
+    for result in [
+        crust::native::compile_file_with_options(
+            Path::new("missing.c"),
+            Path::new("unused.exe"),
+            &options,
+        ),
+        crust::native::compile_static_library(
+            Path::new("missing.c"),
+            Path::new("unused.a"),
+            &options,
+        ),
+    ] {
+        assert!(result.unwrap_err().contains("resolved by a project build"));
+    }
+}
+
+#[test]
+fn native_target_links_build_dependencies_before_a_selected_executable() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "crust.toml",
+        include_str!("../examples/linked_project/crust.toml"),
+    );
+    fixture.write(
+        "src/main.cr",
+        include_str!("../examples/linked_project/src/main.cr"),
+    );
+    fixture.write(
+        "src/math.cr",
+        include_str!("../examples/linked_project/src/math.cr"),
+    );
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let archive = fixture
+        .directory
+        .join("target/crust/math")
+        .join(if cfg!(windows) {
+            "math.lib"
+        } else {
+            "libmath.a"
+        });
+    assert!(archive.is_file());
+    fixture.write(
+        "src/math.cr",
+        "extern int add(int left, int right) = \"linked_add\" { return missing; }",
+    );
+    let output = fixture.invoke(&["check", "--target", "app"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("missing"));
+}
+
+#[test]
+fn native_target_link_graphs_reject_unknown_repeated_executable_and_cyclic_dependencies() {
+    let fixture = Fixture::new();
+    fixture.write("library.cr", "extern int value() { return 0; }");
+    fixture.write("main.cr", "int main() { return 0; }");
+    for (targets, message) in [
+        (
+            "[[targets]]\nname='a'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-targets=['missing']\n",
+            "unknown target",
+        ),
+        (
+            "[[targets]]\nname='a'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-targets=['a']\n",
+            "a -> a",
+        ),
+        (
+            "[[targets]]\nname='a'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-targets=['b']\n[[targets]]\nname='b'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-targets=['a']\n",
+            "a -> b -> a",
+        ),
+        (
+            "[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['library', 'library']\n[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n",
+            "repeats linked target",
+        ),
+        (
+            "[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['app']\n",
+            "must be a static-library target",
+        ),
+    ] {
+        fixture.manifest(targets);
+        let output = fixture.invoke(&["check"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn native_target_link_order_deduplicates_shared_dependencies_and_keeps_them_after_consumers() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['left', 'right']\n[[targets]]\nname='left'\nkind='static-library'\nentry='left.cr'\n[targets.native]\nlink-targets=['base']\n[[targets]]\nname='right'\nkind='static-library'\nentry='right.cr'\n[targets.native]\nlink-targets=['base']\n[[targets]]\nname='base'\nkind='static-library'\nentry='base.cr'\n[targets.native]\nsources=['first.c', 'second.c']\n");
+    fixture.write("main.cr", "extern int left(); extern int right(); int main() { unsafe { print(left() + right()); } return 0; }");
+    fixture.write(
+        "left.cr",
+        "extern int base_first(); extern int left() { return base_first(); }",
+    );
+    fixture.write(
+        "right.cr",
+        "extern int base_second(); extern int right() { return base_second(); }",
+    );
+    fixture.write(
+        "base.cr",
+        "extern int base_first(); extern int base_second();",
+    );
+    fixture.write("first.c", "int base_first(void) { return 20; }");
+    fixture.write("second.c", "int base_second(void) { return 22; }");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let app = project.select(Some("app"), true).unwrap()[0];
+    let order = project.ordered_targets(&[app]).unwrap();
+    assert_eq!(
+        order.iter().filter(|target| target.name == "base").count(),
+        1
+    );
+    assert_eq!(order.first().unwrap().name, "base");
+    assert_eq!(order.last().unwrap().name, "app");
+    let inputs = project.resolved_native(app).unwrap().link_inputs;
+    assert_eq!(inputs.len(), 3);
+    assert_eq!(
+        inputs.last().unwrap().file_name().unwrap(),
+        if cfg!(windows) {
+            "base.lib"
+        } else {
+            "libbase.a"
+        }
+    );
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+}
+
+#[test]
 fn emit_header_uses_library_target_settings_without_invoking_a_c_compiler() {
     let fixture = Fixture::new();
     fixture.manifest("[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n");

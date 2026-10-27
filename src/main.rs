@@ -11,6 +11,7 @@ mod cli_bindings;
 enum Mode {
     Run,
     Build,
+    BuildDependency,
     EmitC,
     EmitHeader,
     Check,
@@ -153,6 +154,17 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
         Mode::Run | Mode::EmitC | Mode::EmitHeader | Mode::Tokens
     );
     let targets = project.select(options.target.as_deref(), single)?;
+    if options.mode == Mode::Run && targets[0].kind == TargetKind::StaticLibrary {
+        return Err(
+            "static libraries are built with 'crust build' and linked by a consumer".to_owned(),
+        );
+    }
+    let run_target = targets.first().map(|target| target.name.clone());
+    let targets = if matches!(options.mode, Mode::Build | Mode::Run | Mode::Check) {
+        project.ordered_targets(&targets)?
+    } else {
+        targets
+    };
     let mut protected: Vec<_> = project
         .targets
         .iter()
@@ -172,21 +184,22 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
         }
     }
     for target in targets {
-        let output = project
-            .directory
-            .join("target")
-            .join("crust")
-            .join(&target.name)
-            .join(&target.name);
+        let output = project.output_base(target);
+        let mode = if options.mode == Mode::Run && run_target.as_ref() != Some(&target.name) {
+            Mode::BuildDependency
+        } else {
+            options.mode
+        };
+        let native = project.resolved_native(target)?;
         let code = process_source(
             &target.entry,
-            options.mode,
+            mode,
             &output,
             &protected,
-            &target.native,
+            &native,
             target.kind,
         )?;
-        if options.mode == Mode::Run {
+        if mode == Mode::Run {
             return Ok(code);
         }
     }
@@ -256,8 +269,10 @@ fn process_source(
         .chain(sources.native_headers().iter().cloned())
         .collect();
     let executable = build(&generated, output, &protected, native, kind)?;
-    if mode == Mode::Build {
-        println!("Built {}", executable.display());
+    if matches!(mode, Mode::Build | Mode::BuildDependency) {
+        if mode == Mode::Build {
+            println!("Built {}", executable.display());
+        }
         return Ok(ExitCode::SUCCESS);
     }
     let status = Command::new(&executable)
@@ -277,21 +292,7 @@ fn build(
     fs::create_dir_all(directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let c_path = output.with_extension("c");
-    let executable = if kind == TargetKind::StaticLibrary {
-        if cfg!(windows) {
-            output.with_extension("lib")
-        } else {
-            output.with_file_name(format!(
-                "lib{}.a",
-                output
-                    .file_name()
-                    .ok_or("output needs a filename")?
-                    .to_string_lossy()
-            ))
-        }
-    } else {
-        output.with_extension(env::consts::EXE_EXTENSION)
-    };
+    let executable = kind.artifact_path(output)?;
     for destination in [&c_path, &executable] {
         let resolved = if destination.exists() {
             destination

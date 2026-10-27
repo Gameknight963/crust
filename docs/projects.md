@@ -116,6 +116,40 @@ when signatures change. For example:
 cargo run -- emit-header --project examples/library_project | Set-Content -Encoding utf8 target/library_public.h
 ```
 
+### Linked targets
+
+An executable or library can name other static-library targets in its native
+configuration:
+
+```toml
+[[targets]]
+name = "app"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+link-targets = ["math"]
+
+[[targets]]
+name = "math"
+kind = "static-library"
+entry = "src/math.cr"
+```
+
+`build`, `check`, and `run --target app` process linked targets before their
+consumers. Dependencies reached through multiple paths are built once. Links
+form a directed acyclic graph, and each reference names a static-library target.
+
+Cross-target calls use matching `extern` declarations and named C exports.
+Each archive contains its own objects. Executables link the transitive set of
+archives with consumers before their dependencies.
+
+Run [the linked project](../examples/linked_project/) with:
+
+```powershell
+cargo run -- run --project examples/linked_project --target app
+```
+
 ## Native C code
 
 Each target can compile C sources and link libraries:
@@ -144,6 +178,7 @@ link-inputs = ["native/extra.o"]
 - `library-dirs` configure the linker's library search
 - `libraries` pass names through the C driver's `-l` option
 - `link-inputs` pass explicit object or library files to the driver
+- `link-targets` build and link named static-library targets from this project
 - Each target has its own native configuration
 - Macro names are validated and each name appears once per target
 - `check`, `tokens`, `emit-c`, and `emit-header` validate configuration without invoking a C compiler

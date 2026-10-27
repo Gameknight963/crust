@@ -1,0 +1,15 @@
+[project]
+name = "linked-targets"
+
+[[targets]]
+name = "app"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+link-targets = ["math"]
+
+[[targets]]
+name = "math"
+kind = "static-library"
+entry = "src/math.cr"

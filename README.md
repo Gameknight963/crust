@@ -45,6 +45,7 @@ use UTF-8 byte arrays.
 - [Volatile access](examples/volatile.cr): qualified pointers and borrowed views
 - [Exports](examples/export_project/): a C source file calling a named Crust function
 - [Static library](examples/library_project/): a native archive linked into a C consumer
+- [Target links](examples/linked_project/): automatic library builds and native linking
 - [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64
 
 ## Getting started

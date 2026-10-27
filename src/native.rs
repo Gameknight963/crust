@@ -9,7 +9,7 @@ mod volatile_tests;
 pub use archive::compile_static_library;
 pub(crate) use archive::validate_options as validate_archive_options;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
     pub defines: Vec<String>,
@@ -18,6 +18,7 @@ pub struct Options {
     pub library_dirs: Vec<PathBuf>,
     pub libraries: Vec<String>,
     pub link_inputs: Vec<PathBuf>,
+    pub link_targets: Vec<String>,
 }
 
 // The caller controls artifact locations. This driver never invokes a shell.
@@ -30,6 +31,7 @@ pub fn compile_file_with_options(
     executable: &Path,
     options: &Options,
 ) -> Result<(), String> {
+    resolved_targets(options)?;
     validate_defines(&options.defines)?;
     let compiler = env::var_os("CC").unwrap_or_else(|| {
         if cfg!(windows) {
@@ -68,6 +70,13 @@ pub fn compile_file_with_options(
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         ));
+    }
+    return Ok(());
+}
+
+fn resolved_targets(options: &Options) -> Result<(), String> {
+    if !options.link_targets.is_empty() {
+        return Err("native link-targets must be resolved by a project build".to_owned());
     }
     return Ok(());
 }

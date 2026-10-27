@@ -75,6 +75,7 @@ pub fn compile_static_library(
     archive: &Path,
     options: &Options,
 ) -> Result<(), String> {
+    resolved_targets(options)?;
     validate_options(options)?;
     let parent = archive.parent().ok_or("archive path needs a directory")?;
     let mut staging = Staging::create(parent)?;
