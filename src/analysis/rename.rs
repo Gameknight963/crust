@@ -99,6 +99,17 @@ pub(super) fn native_bindings(
             },
         );
     }
+    for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
+        if !checked.types.structs[id].complete {
+            bindings.insert(
+                locate(*span),
+                NativeBinding {
+                    name: name.clone(),
+                    alias: None,
+                },
+            );
+        }
+    }
     return bindings;
 }
 
@@ -118,11 +129,15 @@ impl Analysis {
                 | SymbolKind::Interface
                 | SymbolKind::TypeParameter
                 | SymbolKind::Enum
+                | SymbolKind::Struct
+                | SymbolKind::Union
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
             || (symbol.kind == SymbolKind::Method
                 && (symbol.name.starts_with('~') || symbol.detail.trim_start().starts_with('~')))
+            || (matches!(symbol.kind, SymbolKind::Struct | SymbolKind::Union)
+                && self.native_bindings.contains_key(&symbol.declaration))
         {
             return None;
         }
@@ -155,7 +170,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, parameter, type parameter, function, method, typedef, interface, enum, or external variable to rename"
+                "select a local, parameter, type parameter, function, method, typedef, interface, type, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -166,8 +181,11 @@ impl Analysis {
         let locations = self.references_at(file, offset, true);
         let mut edits = Vec::new();
         for location in locations {
-            if symbol.kind == SymbolKind::Interface
-                && &self.files[location.file].text[location.span.start..location.span.end] == "Self"
+            if matches!(
+                symbol.kind,
+                SymbolKind::Interface | SymbolKind::Struct | SymbolKind::Union
+            ) && &self.files[location.file].text[location.span.start..location.span.end]
+                == "Self"
             {
                 continue;
             }
@@ -218,6 +236,8 @@ impl Analysis {
                 | SymbolKind::Alias
                 | SymbolKind::Interface
                 | SymbolKind::Enum
+                | SymbolKind::Struct
+                | SymbolKind::Union
                 | SymbolKind::Global
         );
         let scope = self

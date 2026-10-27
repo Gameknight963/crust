@@ -116,7 +116,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         {
             let is_union = parser.advance().kind == Token::Union;
             let (name, span) = parser.identifier()?;
-            parser.tagged_struct_id(name, span, is_union)?;
+            let id = parser.tagged_struct_id(name, span, is_union)?;
+            parser.reference_type(span, Type::Struct(id));
             parser.advance();
         } else if matches!(parser.current().kind, Token::Struct | Token::Union)
             && parser
@@ -967,6 +968,7 @@ impl Parser {
                         "the destructor name must match its enclosing struct",
                     ));
                 }
+                self.reference_type(name_span, Type::Struct(id));
                 if has_destructor {
                     return Err(Diagnostic::new(
                         start,

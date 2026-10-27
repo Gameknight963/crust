@@ -736,6 +736,60 @@ fn interface_rename_updates_constraints_in_unopened_target_templates() {
 }
 
 #[test]
+fn struct_rename_updates_shared_generic_destructors_and_unopened_target_uses() {
+    let root = rename_project("structs");
+    let shared = "struct Item<T> { T value; ~Item() {} };";
+    let first =
+        "import \"shared.cr\"; int main() { Item<int> item = { .value = 42 }; return item.value; }";
+    let second = "import \"shared.cr\"; int main() { Item<char> item = { .value = 'a' }; return (int)item.value; }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    let mut server = Server::start();
+    assert_eq!(
+        server.open(&shared_uri, 1, shared)["diagnostics"],
+        json!([])
+    );
+    let mut params =
+        json!({ "textDocument": { "uri": shared_uri }, "position": point(shared, "Item()") });
+    assert_eq!(
+        server
+            .request("textDocument/prepareRename", params.clone())
+            .result
+            .unwrap()["placeholder"],
+        "Item"
+    );
+    params["newName"] = json!("Value");
+    let response = server.request("textDocument/rename", params.clone());
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    assert_eq!(changes.as_object().unwrap().len(), 3);
+    for (file, expected) in [("shared.cr", 2), ("first.cr", 1), ("second.cr", 1)] {
+        let uri = file_uri(&root.join(file));
+        let edits = changes[&uri].as_array().unwrap();
+        assert_eq!(edits.len(), expected);
+        assert!(edits.iter().all(|edit| edit["newText"] == "Value"));
+    }
+    std::fs::write(
+        root.join("second.cr"),
+        format!("{second} struct Value {{ int value; }};"),
+    )
+    .unwrap();
+    assert!(
+        server
+            .request("textDocument/rename", params)
+            .error
+            .is_some()
+    );
+    server.stop();
+}
+
+#[test]
 fn enum_rename_preserves_c_tags_and_checks_unopened_project_targets() {
     let root = rename_project("enums");
     std::fs::write(root.join("native.h"), "enum NativeMode { On = 42 };\n").unwrap();

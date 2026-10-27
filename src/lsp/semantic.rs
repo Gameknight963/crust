@@ -179,6 +179,8 @@ impl Context {
                         | SymbolKind::Interface
                         | SymbolKind::TypeParameter
                         | SymbolKind::Enum
+                        | SymbolKind::Struct
+                        | SymbolKind::Union
                         | SymbolKind::Global
                 )
             });

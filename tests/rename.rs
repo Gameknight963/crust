@@ -125,7 +125,7 @@ fn method_rename_covers_generic_instances_and_rejects_collisions_and_unresolved_
     assert!(
         analysis
             .rename_target(0, source.find("~Item").unwrap() + 1)
-            .is_none()
+            .is_some_and(|(symbol, _)| symbol.kind == crust::analysis::SymbolKind::Struct)
     );
 }
 
@@ -393,6 +393,151 @@ fn renames_generic_parameters_as_value_bindings_without_touching_type_parameters
         .unwrap();
     let result = apply(&analysis, &edits).remove(0);
     assert!(result.starts_with("Value identity<Value>(Value T) { return T; }"));
+}
+
+#[test]
+fn struct_rename_updates_forward_declarations_destructors_and_qualified_calls() {
+    let source = r#"
+struct Item;
+typedef Item Alias;
+struct Item {
+    BoxInt value;
+    ~Item() { print(*this->value); }
+    static Self create(int value) { Self result = { .value = box_int(value) }; return move(result); }
+    int read() const { return *this->value; }
+};
+int main() {
+    Item first = Item::create(41);
+    Alias second = Item::create(42);
+    print(first.read());
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, source.find("Self create").unwrap())
+            .is_none()
+    );
+    let offset = source.find("~Item").unwrap() + 1;
+    let edits = analysis.rename(0, offset, "Resource").unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(!renamed.contains("Item"));
+    assert!(renamed.contains("struct Resource;"));
+    assert!(renamed.contains("typedef Resource Alias;"));
+    assert!(renamed.contains("~Resource()"));
+    assert!(renamed.contains("static Self create"));
+    assert!(renamed.contains("Resource first = Resource::create(41)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "41\n42\n41\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        "drop:42\ndrop:41\n"
+    );
+}
+
+#[test]
+fn generic_struct_rename_updates_instantiations_and_preserves_self() {
+    let source = r#"
+struct Item<T> {
+    T value;
+    ~Item() { print(1); }
+    static Self create(T value) { Self result = { .value = move(value) }; return move(result); }
+    T read() const { return this->value; }
+};
+int main() {
+    Item<int> first = Item<int>::create(42);
+    Item<char> second = Item<char>::create('a');
+    print(first.read());
+    print(second.read());
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("Item<int>").unwrap(), "Value")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(!renamed.contains("Item"));
+    assert!(renamed.contains("struct Value<T>"));
+    assert!(renamed.contains("~Value()"));
+    assert!(renamed.contains("static Self create"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n97\n1\n1\n"
+    );
+}
+
+#[test]
+fn union_rename_updates_generic_and_ordinary_type_uses() {
+    for (definition, ty) in [
+        (
+            "union Bits { unsigned int value; unsigned char bytes[4]; };",
+            "Bits",
+        ),
+        (
+            "union Bits<T> { T value; unsigned char bytes[4]; };",
+            "Bits<unsigned int>",
+        ),
+    ] {
+        let source = format!(
+            "{definition} int main() {{ unsafe {{ {ty} bits = {{ .value = 42 }}; print(bits.value); print(sizeof({ty}) == sizeof(unsigned int)); }} return 0; }}"
+        );
+        let analysis = crust::analyze(&source).unwrap();
+        let edits = analysis
+            .rename(0, source.find("Bits").unwrap(), "Storage")
+            .unwrap();
+        let renamed = apply(&analysis, &edits).remove(0);
+        assert!(!renamed.contains("Bits"));
+        let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "42\n1\n"
+        );
+    }
+}
+
+#[test]
+fn aggregate_rename_protects_native_tags_and_rejects_capture_or_unresolved_uses() {
+    for source in [
+        "struct Handle; int main() { return 0; }",
+        "union Handle; int main() { return 0; }",
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        let offset = source.find("Handle").unwrap();
+        assert!(analysis.rename_target(0, offset).is_none());
+        assert!(analysis.rename(0, offset, "Resource").is_err());
+    }
+    for source in [
+        "struct Item { int value; }; struct Resource { int value; }; int main() { Item item = { .value = 1 }; return item.value; }",
+        "struct Item { int value; }; T future<T>(T value) { Item item = { .value = 1 }; return value; } int main() { return 0; }",
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        assert!(
+            analysis
+                .rename(0, source.find("Item").unwrap(), "Resource")
+                .is_err()
+        );
+    }
 }
 
 #[test]

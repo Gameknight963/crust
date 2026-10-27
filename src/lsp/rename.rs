@@ -35,7 +35,7 @@ pub(super) fn global_edits(
         .rename_target(initial.file, offset)
         .ok_or_else(|| {
             RequestError::failed(
-                "select a function, method, typedef, interface, type parameter, enum, or external variable to rename",
+                "select a function, method, typedef, interface, type parameter, type, or external variable to rename",
             )
         })?;
     let first = initial
