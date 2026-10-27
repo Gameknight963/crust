@@ -64,6 +64,15 @@ pub(super) fn expression(root: &Expression) -> Result<(), Diagnostic> {
         }
         let mut child = |expression| pending.push((expression, depth + 1));
         match &expression.kind {
+            ExpressionKind::Conditional {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                child(condition);
+                child(then_value);
+                child(else_value);
+            }
             ExpressionKind::Storage { pointer, value } => {
                 child(pointer);
                 if let Some(value) = value {

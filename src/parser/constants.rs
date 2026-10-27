@@ -264,6 +264,18 @@ impl Parser {
     ) -> Result<IntegerConstant, Diagnostic> {
         let span = expression.span;
         match &expression.kind {
+            ExpressionKind::Conditional {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let condition = self.integer_constant(condition, evaluate)?;
+                let yes = condition.value != 0;
+                let then_value = self.integer_constant(then_value, evaluate && yes)?;
+                let else_value = self.integer_constant(else_value, evaluate && !yes)?;
+                let kind = then_value.kind.common(else_value.kind);
+                return if yes { then_value } else { else_value }.convert(kind, evaluate, span);
+            }
             ExpressionKind::Integer(value) => {
                 return Ok(IntegerConstant::literal(i128::from(*value)));
             }

@@ -65,6 +65,7 @@ pub enum Token {
     Ellipsis,
     Colon,
     ColonColon,
+    Question,
 
     // Operators.
     Equal,
@@ -453,6 +454,7 @@ impl Lexer<'_> {
             Some(',') => Token::Comma,
             Some('.') => Token::Dot,
             Some(':') => Token::Colon,
+            Some('?') => Token::Question,
             Some('=') => Token::Equal,
             Some('+') => Token::Plus,
             Some('-') => Token::Minus,

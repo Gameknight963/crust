@@ -22,6 +22,6 @@
     { "name": "entity.name.function.crust", "match": "~?[a-zA-Z_][a-zA-Z_0-9]*(?=\\s*\\()" },
     { "name": "constant.numeric.crust", "match": "\\b(0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+)\\b" },
     { "name": "variable.language.crust", "match": "\\bthis\\b" },
-    { "name": "keyword.operator.crust", "match": "::|->|<<=?|>>=?|==|!=|<=|>=|&&|\\|\\||[=+*/%!<>&|^~-]" }
+    { "name": "keyword.operator.crust", "match": "::|->|<<=?|>>=?|==|!=|<=|>=|&&|\\|\\||[?:=+*/%!<>&|^~-]" }
   ]
 }

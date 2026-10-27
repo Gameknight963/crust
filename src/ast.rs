@@ -576,6 +576,11 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Conditional {
+        condition: Box<Expression>,
+        then_value: Box<Expression>,
+        else_value: Box<Expression>,
+    },
     Storage {
         pointer: Box<Expression>,
         value: Option<Box<Expression>>,

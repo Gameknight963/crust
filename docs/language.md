@@ -30,6 +30,7 @@ and file-based commands report errors with the original filename and location.
 - Non-void functions must return a value on every path
 - Operands and call arguments evaluate left to right
 - `&&` and `||` short-circuit
+- `condition ? left : right` evaluates its condition once and then its selected branch
 - `print(value)` writes integers, booleans, or byte-array text followed by a newline
 
 Signed arithmetic overflow and division or remainder by zero terminate the program
@@ -69,6 +70,21 @@ See [the do-while example](../examples/do_while.cr).
 Compound assignments capture their destination before evaluating the right side.
 The right side can read the destination, while mutation or moves of its parent
 are rejected until assignment completes.
+
+Conditional expressions bind below binary operators and associate to the right.
+Integer branches use the usual common integer type. Other branches require the
+same value type or compatible raw pointers, including added `const` and
+`volatile` qualifiers. Both branches can return `void`. Borrowed results require
+an explicit `if` and separate use of each borrow.
+
+```c
+BoxInt selected = condition ? move(first) : move(second);
+```
+
+Ownership states merge after both branches are checked. The example transfers
+one owner to `selected`, and scope cleanup releases the remaining owner.
+Neither `first` nor `second` can be used afterward because each may have moved.
+See [the conditional expression example](../examples/conditional.cr).
 
 ## Generics
 
@@ -954,7 +970,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Characters use ASCII or byte escapes, including `\xFF`, up to three octal digits, and the standard C single-character escapes
 - The lexer accepts magnitudes through `18446744073709551615`
 - Signed minimum literals such as `-2147483648` and `-9223372036854775808` are supported
-- Operators: `= + - * / % ! < > & | ^ << >> == != <= >= && || -> ::`
+- Operators: `= + - * / % ! < > & | ^ << >> == != <= >= && || ? : -> ::`
 - `~` complements integer bits in expressions and introduces destructor declarations
 - `...` marks the variable argument tail in C declarations and function pointer types
 - Comments use `//` or non-nesting `/* ... */`

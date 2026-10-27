@@ -859,6 +859,41 @@ impl Emitter<'_> {
             return Some(self.integer_constant(expression, *value));
         }
         match &expression.kind {
+            ExpressionKind::Conditional {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let condition = self.value_expression(condition);
+                let ty = self.expression_type(expression);
+                let result = if ty == Type::Void {
+                    None
+                } else {
+                    let result = self.fresh_name("conditional");
+                    self.line(&format!("{} {result};", c_type(ty)));
+                    Some(result)
+                };
+                self.line(&format!("if ({condition}) {{"));
+                self.indent += 1;
+                if let Some(result) = &result {
+                    let value = self.value_expression(then_value);
+                    self.line(&format!("{result} = {value};"));
+                } else {
+                    self.expression(then_value);
+                }
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                if let Some(result) = &result {
+                    let value = self.value_expression(else_value);
+                    self.line(&format!("{result} = {value};"));
+                } else {
+                    self.expression(else_value);
+                }
+                self.indent -= 1;
+                self.line("}");
+                return result;
+            }
             ExpressionKind::Storage { pointer, value } => {
                 let Type::Pointer(id) = self.expression_type(pointer) else {
                     unreachable!()

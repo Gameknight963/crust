@@ -1008,6 +1008,29 @@ impl FunctionChecker<'_> {
             return Ok(Type::Integer(kind));
         }
         match &expression.kind {
+            ExpressionKind::Conditional {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let condition_loans = self.loans.len();
+                let condition_type = self.expression(condition)?;
+                self.scalar_condition(condition_type, condition.span)?;
+                self.loans.truncate(condition_loans);
+                let before = self.scopes.clone();
+                let loan_count = self.loans.len();
+                let then_type = self.expression(then_value)?;
+                let then_scopes = self.scopes.clone();
+                let then_loans = self.loans.split_off(loan_count);
+                self.scopes = before;
+                let else_type = self.expression(else_value)?;
+                self.scopes = merge(&then_scopes, &self.scopes);
+                self.loans.extend(then_loans);
+                let ty = self.conditional_type(then_value, then_type, else_value, else_type)?;
+                self.convert(then_value, then_type, ty)?;
+                self.convert(else_value, else_type, ty)?;
+                return Ok(ty);
+            }
             ExpressionKind::Storage { pointer, value } => {
                 self.require_unsafe(expression.span, "initializing or destroying raw storage")?;
                 let ty = self.expression(pointer)?;
@@ -1895,6 +1918,53 @@ impl FunctionChecker<'_> {
         return self.convert(expression, actual, expected);
     }
 
+    fn conditional_type(
+        &mut self,
+        then_value: &Expression,
+        then_type: Type,
+        else_value: &Expression,
+        else_type: Type,
+    ) -> Result<Type, Diagnostic> {
+        if then_type.is_borrow() || else_type.is_borrow() {
+            return Err(Diagnostic::new(
+                then_value.span.through(else_value.span),
+                "conditional expressions require value results, not borrowed references",
+            ));
+        }
+        if let (Some(a), Some(b)) = (then_type.integer(), else_type.integer()) {
+            return Ok(Type::Integer(a.common(b)));
+        }
+        if then_type == else_type {
+            return Ok(then_type);
+        }
+        if let (Type::Pointer(a), Type::Pointer(b)) = (then_type, else_type) {
+            let a = self.types.pointers[a];
+            let b = self.types.pointers[b];
+            if a.pointee == b.pointee || a.pointee == Type::Void || b.pointee == Type::Void {
+                let pointee = if a.pointee == Type::Void || b.pointee == Type::Void {
+                    Type::Void
+                } else {
+                    a.pointee
+                };
+                return Ok(self.types.qualified_pointer_to(
+                    pointee,
+                    a.mutable && b.mutable,
+                    a.volatile || b.volatile,
+                ));
+            }
+        }
+        if matches!(then_type, Type::Pointer(_)) && constant_integer(else_value) == Some(0) {
+            return Ok(then_type);
+        }
+        if matches!(else_type, Type::Pointer(_)) && constant_integer(then_value) == Some(0) {
+            return Ok(else_type);
+        }
+        return Err(Diagnostic::new(
+            then_value.span.through(else_value.span),
+            "conditional branches require compatible value types",
+        ));
+    }
+
     fn function_reference(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
         if matches!(name, "print" | "box_int" | "move") {
             return Err(Diagnostic::new(
@@ -2104,6 +2174,15 @@ impl FunctionChecker<'_> {
             }));
         }
         match &expression.kind {
+            ExpressionKind::Conditional {
+                then_value,
+                else_value,
+                ..
+            } => {
+                let then_type = self.receiver_type(then_value)?;
+                let else_type = self.receiver_type(else_value)?;
+                return self.conditional_type(then_value, then_type, else_value, else_type);
+            }
             ExpressionKind::Storage { .. } => return Ok(Type::Void),
             ExpressionKind::StaticReference { id, name, .. } => {
                 return self.static_reference(*id, name, expression.span);

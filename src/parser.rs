@@ -1830,6 +1830,21 @@ impl Parser {
             };
             limits::expression(&left)?;
         }
+        if minimum <= 1 && self.consume(&Token::Question) {
+            let then_value = self.expression(1)?;
+            self.expect(Token::Colon, "expected ':' in conditional expression")?;
+            let else_value = self.expression(1)?;
+            let span = left.span.through(else_value.span);
+            left = Expression {
+                span,
+                kind: ExpressionKind::Conditional {
+                    condition: Box::new(left),
+                    then_value: Box::new(then_value),
+                    else_value: Box::new(else_value),
+                },
+            };
+            limits::expression(&left)?;
+        }
         return Ok(left);
     }
 
