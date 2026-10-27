@@ -45,6 +45,40 @@ fn printing_volatile_byte_array_views_reads_bounded_text_and_utf8() {
 }
 
 #[test]
+fn pointer_comparisons_preserve_volatile_and_const_qualifiers_in_both_orders() {
+    run(
+        r#"
+        int main() {
+            int value = 42;
+            unsafe {
+                int* plain = &value;
+                volatile int* writable = plain;
+                const int* readonly = plain;
+                const volatile int* qualified = writable;
+                void* erased = plain;
+                const volatile void* qualified_void = qualified;
+                print(writable == qualified);
+                print(qualified == writable);
+                print(plain == qualified);
+                print(qualified == plain);
+                print(readonly == writable);
+                print(writable == readonly);
+                print(qualified == erased);
+                print(erased == qualified);
+                print(qualified_void == writable);
+                print(writable != qualified_void);
+                print(qualified != 0);
+                print(0 != qualified);
+            }
+            return 0;
+        }
+    "#,
+        "",
+        "1\n1\n1\n1\n1\n1\n1\n1\n1\n0\n1\n1\n",
+    );
+}
+
+#[test]
 fn volatile_globals_aliases_addresses_and_borrowed_views_keep_their_qualifiers() {
     run(
         r#"

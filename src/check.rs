@@ -1785,13 +1785,14 @@ impl FunctionChecker<'_> {
                                 "pointer comparisons require compatible pointee types",
                             ));
                         }
-                        self.types.pointer_to(
+                        self.types.qualified_pointer_to(
                             if a.pointee == Type::Void || b.pointee == Type::Void {
                                 Type::Void
                             } else {
                                 a.pointee
                             },
                             a.mutable && b.mutable,
+                            a.volatile || b.volatile,
                         )
                     } else {
                         left_type
