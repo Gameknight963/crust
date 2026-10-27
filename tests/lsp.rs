@@ -498,6 +498,102 @@ fn file_watch_registration_and_events_refresh_semantics_and_recover_after_bad_ev
 }
 
 #[test]
+fn project_configuration_errors_are_published_on_the_manifest_and_clear_after_repairs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-project-diagnostics")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let manifest = root.join("crust.toml");
+    let manifest_uri = file_uri(&manifest);
+    let valid =
+        "[project]\nname='example'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n";
+    std::fs::write(&manifest, "[project\n").unwrap();
+    std::fs::write(root.join("main.cr"), "int main() { return 0; }").unwrap();
+    let mut server = Server::start();
+    assert_eq!(
+        server.open(
+            &file_uri(&root.join("main.cr")),
+            1,
+            "int main() { return 0; }"
+        )["diagnostics"],
+        json!([])
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], manifest_uri);
+    assert!(
+        !result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        result["diagnostics"][0]["range"]["start"],
+        json!({"line": 0, "character": 0})
+    );
+
+    std::fs::write(
+        &manifest,
+        format!("{valid}[targets.native]\nlink-targets=['missing']\n"),
+    )
+    .unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": manifest_uri, "type": 2 }]
+        }),
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], manifest_uri);
+    assert!(
+        result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown target 'missing'")
+    );
+
+    std::fs::write(&manifest, valid).unwrap();
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{ "uri": manifest_uri, "type": 2 }]
+        }),
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], manifest_uri);
+    assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}
+
+#[test]
+fn invalid_workspace_configuration_diagnostics_clear_when_the_folder_is_removed() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-workspace-project-diagnostics")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname=''\n").unwrap();
+    let folder = json!({"uri": file_uri(&root), "name": "broken"});
+    let mut server =
+        Server::start_with_params(json!({"capabilities": {}, "workspaceFolders": [folder]}));
+    assert_eq!(
+        server.open("untitled:independent.cr", 1, "int main() { return 0; }")["diagnostics"],
+        json!([])
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], file_uri(&root.join("crust.toml")));
+    assert_ne!(result["diagnostics"], json!([]));
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({ "event": {
+            "added": [], "removed": [folder]
+        }}),
+    );
+    let result = server.diagnostics();
+    assert_eq!(result["uri"], file_uri(&root.join("crust.toml")));
+    assert_eq!(result["diagnostics"], json!([]));
+    server.stop();
+}
+
+#[test]
 fn opening_only_a_project_dependency_uses_the_entry_and_unsaved_dependency_text() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-project-tests")

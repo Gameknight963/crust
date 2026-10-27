@@ -359,8 +359,23 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
             .filter_map(|root| crate::project::Project::discover(root).ok()),
     );
     for manifest in manifests {
-        let Ok(project) = crate::project::Project::load(&manifest) else {
-            continue;
+        let project = match crate::project::Project::load(&manifest) {
+            Ok(project) => project,
+            Err(message) => {
+                errors.push(crate::source::SourceError {
+                    path: manifest,
+                    diagnostic: crate::diagnostic::Diagnostic::new(
+                        crate::diagnostic::Span {
+                            start: 0,
+                            end: 0,
+                            line: 1,
+                            column: 1,
+                        },
+                        message,
+                    ),
+                });
+                continue;
+            }
         };
         for target in project.targets {
             targets.insert(target.entry.clone(), target.kind.program_kind());
