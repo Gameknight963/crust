@@ -15,11 +15,24 @@ pub struct SourceError {
 
 impl fmt::Display for SourceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return write!(formatter, "{}:{}", self.path.display(), self.diagnostic);
+        return write!(
+            formatter,
+            "{}:{}",
+            display_path(&self.path),
+            self.diagnostic
+        );
     }
 }
 
 impl std::error::Error for SourceError {}
+
+pub(crate) fn display_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    return path
+        .strip_prefix(r"\\?\UNC\")
+        .map(|path| format!(r"\\{path}"))
+        .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned());
+}
 
 pub struct SourceFile {
     pub path: PathBuf,
@@ -150,12 +163,7 @@ impl SourceSet {
             .files
             .iter()
             .map(|file| {
-                let path = file.path.to_string_lossy();
-                let name = path
-                    .strip_prefix(r"\\?\UNC\")
-                    .map(|path| format!(r"\\{path}"))
-                    .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned());
-                return (file.offset, name);
+                return (file.offset, display_path(&file.path));
             })
             .collect::<Vec<_>>();
         return Ok(crate::emit_c::generate_with_sources(&checked, &sources));

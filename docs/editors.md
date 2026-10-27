@@ -110,7 +110,13 @@ The extension lives in [editors/vscode](../editors/vscode/).
 - Build and install the VSIX using the extension's README
 - Set `crust.server.path` to the server executable, or put it on `PATH`
 - Open a `.cr` file to get compiler diagnostics and syntax highlighting
+- Use **Crust: Build Project**, **Crust: Check Project**, and **Crust: Run Project** for the active file's project
+- Select discovered projects and executable targets through **Terminal > Run Task**
 - Use **Crust: Restart Language Server** to restart the server
+
+Build commands use `crust.compiler.path`, a compiler beside the explicitly
+configured server, or `crust` on `PATH`. Compiler errors appear in the Problems
+panel. The extension's README includes a default-build task example.
 
 The compiler checkout includes a **Crust: VS Code extension** launch configuration
 for extension development.

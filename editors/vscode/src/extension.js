@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const path = require('node:path');
 const fs = require('node:fs');
 const { LanguageClient } = require('vscode-languageclient/node');
+const { registerTasks } = require('./tasks');
 
 let client;
 let pending = Promise.resolve();
@@ -41,13 +42,14 @@ function restart(context) {
 }
 
 async function activate(context) {
+    registerTasks(vscode, context);
     context.subscriptions.push(vscode.commands.registerCommand('crust.restartLanguageServer', () => restart(context)));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('crust.server.path')) {
             restart(context).catch(error => vscode.window.showErrorMessage(`Crust: ${error.message}`));
         }
     }));
-    await restart(context);
+    await restart(context).catch(error => vscode.window.showErrorMessage(`Crust: ${error.message}`));
 }
 
 async function deactivate() {

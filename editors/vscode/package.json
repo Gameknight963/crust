@@ -9,6 +9,7 @@
   "engines": { "vscode": "^1.100.0" },
   "categories": ["Programming Languages"],
   "main": "./dist/extension.js",
+  "activationEvents": ["onTaskType:crust", "workspaceContains:crust.toml"],
   "capabilities": { "untrustedWorkspaces": { "supported": false } },
   "contributes": {
     "languages": [{
@@ -22,10 +23,32 @@
       "scopeName": "source.crust",
       "path": "./syntaxes/crust.tmLanguage.json"
     }],
-    "commands": [{ "command": "crust.restartLanguageServer", "title": "Crust: Restart Language Server" }],
+    "commands": [
+      { "command": "crust.restartLanguageServer", "title": "Crust: Restart Language Server" },
+      { "command": "crust.buildProject", "title": "Crust: Build Project" },
+      { "command": "crust.checkProject", "title": "Crust: Check Project" },
+      { "command": "crust.runProject", "title": "Crust: Run Project" }
+    ],
+    "taskDefinitions": [{
+      "type": "crust", "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "enum": ["build", "check", "run"], "description": "Crust command" },
+        "project": { "type": "string", "description": "Manifest path relative to the workspace folder", "default": "crust.toml" },
+        "target": { "type": "string", "description": "Target name" }
+      }
+    }],
+    "problemMatchers": [{
+      "name": "crust", "label": "Crust compiler", "owner": "crust-build", "source": "Crust build",
+      "fileLocation": "absolute",
+      "pattern": { "regexp": "^(.+):(\\d+):(\\d+):\\s*(.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
+    }],
     "configuration": {
       "title": "Crust",
       "properties": {
+        "crust.compiler.path": {
+          "type": "string", "default": "", "scope": "machine-overridable",
+          "description": "Path to the Crust compiler. Empty uses the server's sibling compiler, PATH, or the local development build."
+        },
         "crust.server.path": {
           "type": "string",
           "default": "",
@@ -36,7 +59,8 @@
     }
   },
   "scripts": {
-    "check": "node --check src/extension.js",
+    "check": "node --check src/extension.js && node --check src/tasks.js && node --check src/project.js",
+    "test": "node --test test/project.test.js test/tasks.test.js",
     "build": "esbuild src/extension.js --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
     "vscode:prepublish": "npm run build",
     "package": "vsce package --allow-missing-repository --skip-license --out ../../target/crust-language.vsix"

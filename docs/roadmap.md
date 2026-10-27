@@ -68,6 +68,7 @@
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
+- VS Code project build, check, and run tasks with compiler error links
 - Visual Studio VSIX with a bundled server, shared grammar, and native semantic classifications
 
 ## Compiler work
