@@ -550,7 +550,15 @@ impl Parser {
     }
 
     fn pointer_type(&mut self, pointee: Type, mutable: bool) -> Type {
-        let pointer = PointerType { pointee, mutable };
+        return self.qualified_pointer_type(pointee, mutable, false);
+    }
+
+    fn qualified_pointer_type(&mut self, pointee: Type, mutable: bool, volatile: bool) -> Type {
+        let pointer = PointerType {
+            pointee,
+            mutable,
+            volatile,
+        };
         let id = if let Some(id) = self
             .pointers
             .iter()
@@ -702,7 +710,8 @@ impl Parser {
             | Token::Struct
             | Token::Union
             | Token::Enum
-            | Token::Const => true,
+            | Token::Const
+            | Token::Volatile => true,
             Token::Identifier(name) => {
                 self.known_type(name)
                     && !self
@@ -724,6 +733,9 @@ impl Parser {
         if !matches!(&self.current().kind, Token::Identifier(name) if self.known_type(name)) {
             return false;
         }
+        if self.next_at(&Token::Const) || self.next_at(&Token::Volatile) {
+            return true;
+        }
         if matches!(
             self.tokens.get(self.position + 1).map(|token| &token.kind),
             Some(Token::Identifier(_))
@@ -733,7 +745,10 @@ impl Parser {
         if self.next_at(&Token::Star) {
             let mut position = self.position + 1;
             while self.tokens.get(position).is_some_and(|token| {
-                matches!(token.kind, Token::Star | Token::Const | Token::Caret)
+                matches!(
+                    token.kind,
+                    Token::Star | Token::Const | Token::Volatile | Token::Caret
+                )
             }) {
                 position += 1;
             }
@@ -987,6 +1002,7 @@ impl Parser {
                         ty: Type::Borrow {
                             pointee: Pointee::Struct(id),
                             mutable: true,
+                            volatile: false,
                         },
                         span: name_span,
                     }],
@@ -1096,7 +1112,7 @@ impl Parser {
         }
         let unsafe_suffix = self.consume(&Token::Unsafe);
         let requires_unsafe = unsafe_suffix || unsafe_prefix || external;
-        let (return_type, readonly) = self.qualified_type_name(external)?;
+        let (return_type, qualifiers) = self.qualified_type_name(external)?;
         let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
         if external && !self.at(&Token::LeftParen) && !self.at(&Token::Less) {
@@ -1123,15 +1139,16 @@ impl Parser {
                 name,
                 name_span,
                 ty,
-                readonly,
+                readonly: qualifiers.readonly,
+                volatile: qualifiers.volatile,
                 link_name,
                 span: start.through(end),
             }));
         }
-        if readonly {
+        if qualifiers.readonly || qualifiers.volatile {
             return Err(Diagnostic::new(
                 start,
-                "const-qualified function results require a pointer type",
+                "qualified function results require a pointer or borrow type",
             ));
         }
         if self.at(&Token::Less) {
@@ -1295,6 +1312,7 @@ impl Parser {
                         ty: Type::Borrow {
                             pointee: Pointee::Struct(id),
                             mutable: !shared,
+                            volatile: false,
                         },
                         span: name_span,
                     },
@@ -1353,16 +1371,19 @@ impl Parser {
         return self.qualified_type_name(false).map(|(ty, _)| ty);
     }
 
-    fn qualified_type_name(&mut self, allow_const: bool) -> Result<(Type, bool), Diagnostic> {
+    fn qualified_type_name(&mut self, allow_const: bool) -> Result<(Type, Qualifiers), Diagnostic> {
         let span = self.current().span;
         let parsed = self.nested(|parser| parser.qualified_type_name_inner(allow_const))?;
         limits::ty(self, parsed.0, span)?;
         return Ok(parsed);
     }
 
-    fn qualified_type_name_inner(&mut self, allow_const: bool) -> Result<(Type, bool), Diagnostic> {
+    fn qualified_type_name_inner(
+        &mut self,
+        allow_const: bool,
+    ) -> Result<(Type, Qualifiers), Diagnostic> {
         let start = self.current().span;
-        let mut shared = self.consume(&Token::Const);
+        let mut qualifiers = self.qualifiers();
         let token = self.advance();
         let base = match token.kind {
             Token::Int
@@ -1370,7 +1391,7 @@ impl Parser {
             | Token::Signed
             | Token::Unsigned
             | Token::Short
-            | Token::Long => self.integer_type(token.clone())?,
+            | Token::Long => self.integer_type(token.clone(), &mut qualifiers)?,
             Token::Bool => Type::Bool,
             Token::Void => Type::Void,
             Token::BoxInt => Type::BoxInt,
@@ -1409,6 +1430,9 @@ impl Parser {
                 ));
             }
         };
+        let trailing = self.qualifiers();
+        qualifiers.readonly |= trailing.readonly;
+        qualifiers.volatile |= trailing.volatile;
         let mut base = self.array_suffix(base)?;
         while self.consume(&Token::Star) {
             if base.is_borrow() {
@@ -1417,27 +1441,27 @@ impl Parser {
                     "raw pointers cannot point to borrow bindings",
                 ));
             }
-            if shared && matches!(base, Type::Function(_)) {
+            if (qualifiers.readonly || qualifiers.volatile) && matches!(base, Type::Function(_)) {
                 return Err(Diagnostic::new(
                     token.span,
-                    "function types cannot be const-qualified",
+                    "function types cannot be const- or volatile-qualified",
                 ));
             }
-            base = self.pointer_type(base, !shared);
-            shared = self.consume(&Token::Const);
+            base = self.qualified_pointer_type(base, !qualifiers.readonly, qualifiers.volatile);
+            qualifiers = self.qualifiers();
         }
         let base = self.array_suffix(base)?;
         let ty = if self.consume(&Token::Caret) {
             let ty = base
-                .borrowed(!shared)
+                .borrowed_qualified(!qualifiers.readonly, qualifiers.volatile)
                 .ok_or_else(|| Diagnostic::new(token.span, "void cannot be borrowed"))?;
-            shared = false;
+            qualifiers = Qualifiers::default();
             ty
         } else {
-            if shared && !allow_const {
+            if (qualifiers.readonly || qualifiers.volatile) && !allow_const {
                 return Err(Diagnostic::new(
                     token.span,
-                    "const currently applies to borrows, such as 'const int^'",
+                    "const and volatile qualify pointer targets, borrows, and external objects",
                 ));
             }
             base
@@ -1455,7 +1479,21 @@ impl Parser {
             span,
             declaration: None,
         });
-        return Ok((ty, shared));
+        return Ok((ty, qualifiers));
+    }
+
+    fn qualifiers(&mut self) -> Qualifiers {
+        let mut qualifiers = Qualifiers::default();
+        loop {
+            if self.consume(&Token::Const) {
+                qualifiers.readonly = true;
+            } else if self.consume(&Token::Volatile) {
+                qualifiers.volatile = true;
+            } else {
+                break;
+            }
+        }
+        return qualifiers;
     }
 
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
@@ -1673,6 +1711,7 @@ impl Parser {
             || self.at(&Token::Bool)
             || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
+            || self.at(&Token::Volatile)
             || self.at(&Token::Struct)
             || self.at(&Token::Union)
             || self.at(&Token::Enum)

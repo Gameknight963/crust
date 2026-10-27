@@ -1,7 +1,11 @@
 use super::*;
 
 impl Parser {
-    pub(super) fn integer_type(&mut self, mut token: SpannedToken) -> Result<Type, Diagnostic> {
+    pub(super) fn integer_type(
+        &mut self,
+        mut token: SpannedToken,
+        qualifiers: &mut Qualifiers,
+    ) -> Result<Type, Diagnostic> {
         let start = token.span;
         let mut signed = 0;
         let mut unsigned = 0;
@@ -19,6 +23,9 @@ impl Parser {
                 Token::Long => long += 1,
                 _ => unreachable!(),
             }
+            let next = self.qualifiers();
+            qualifiers.readonly |= next.readonly;
+            qualifiers.volatile |= next.volatile;
             if !matches!(
                 self.current().kind,
                 Token::Int

@@ -57,6 +57,8 @@ fn headers_preserve_scalar_pointer_const_callback_and_returned_callback_abis() {
         extern unsigned long long wide(unsigned long long value) { return value; }
         extern Flags flags() { return Enabled; }
         extern int variadic(Variadic callback) { return callback(0, (unsigned short)65535); }
+        extern int read_register(const volatile int* value) { return *value; }
+        extern void write_register(volatile int* value, int next) { *value = next; }
     "#;
     let kind = crust::ProgramKind::Library;
     let header = crust::emit_header(source, kind).unwrap();
@@ -80,10 +82,13 @@ fn headers_preserve_scalar_pointer_const_callback_and_returned_callback_abis() {
             printf("%llu\n", wide(18446744073709551615ULL));
             printf("%u\n", (unsigned)flags());
             printf("%d\n", (int)variadic(vararg));
+            volatile int32_t reg = 0;
+            write_register(&reg, 42);
+            printf("%d\n", (int)read_register(&reg));
             return 0;
         }
     "#,
-        "42\n7\nhello\n1\n18446744073709551615\n3\n65535\n",
+        "42\n7\nhello\n1\n18446744073709551615\n3\n65535\n42\n",
     );
 }
 

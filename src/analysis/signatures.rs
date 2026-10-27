@@ -92,7 +92,7 @@ fn function_signature(function: &Function, checked: &AnalyzedProgram, name: Stri
         .collect();
     let prefix = format!(
         "{}{}{} {name}",
-        if function.external {
+        if function.link_name.is_some() {
             "extern "
         } else if function.requires_unsafe {
             "unsafe "

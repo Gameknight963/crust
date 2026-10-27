@@ -25,6 +25,72 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types() {
+    let path = header(
+        r#"
+        extern volatile int counter;
+        extern const volatile int limit;
+        extern int* volatile slot;
+        typedef int* const ReadonlyPtr;
+        extern volatile ReadonlyPtr saved;
+        int sample(const volatile int*);
+        void update(volatile int*, int);
+        int read_saved(volatile ReadonlyPtr);
+        int inspect_saved(volatile ReadonlyPtr*);
+        "#,
+    );
+    let mut selected = options(&["sample", "update", "read_saved", "inspect_saved"]);
+    selected.variables = ["counter", "limit", "slot", "saved"]
+        .map(str::to_owned)
+        .to_vec();
+    let bindings = generate(&path, &selected).unwrap();
+    let source = format!(
+        r#"
+        {bindings}
+        int read(const volatile int^ value) {{ return *value; }}
+        int main() {{
+            unsafe {{
+                update(&counter, 42);
+                print(sample(&counter));
+                print(read(^const counter));
+                print(limit);
+                int* pointer = slot;
+                *pointer = 7;
+                print(*slot);
+                print(read_saved(saved));
+                print(inspect_saved(&saved));
+            }}
+            return 0;
+        }}
+    "#
+    );
+    let native = r#"
+        typedef int* const ReadonlyPtr;
+        volatile int counter = 1;
+        const volatile int limit = 99;
+        static int plain = 0;
+        int* volatile slot = &plain;
+        int* const volatile saved = &plain;
+        int sample(const volatile int* value) { return *value; }
+        void update(volatile int* value, int next) { *value = next; }
+        int read_saved(volatile ReadonlyPtr pointer) { return *pointer; }
+        int inspect_saved(volatile ReadonlyPtr* pointer) { return **pointer; }
+    "#;
+    let generated = format!("{}\n{native}", crust::compile(&source).unwrap());
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n42\n99\n7\n7\n7\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn generates_and_executes_selected_opaque_handle_and_callback_bindings() {
     let path = header(
         r#"
@@ -110,7 +176,11 @@ fn rejects_internal_linkage_missing_exports_and_unsupported_types() {
             "value",
             "by value",
         ),
-        ("int inspect(volatile int*);", "inspect", "qualifiers"),
+        (
+            "int inspect(_Atomic(int)*);",
+            "inspect",
+            "unsupported C type",
+        ),
         ("int old();", "old", "complete C function prototype"),
     ] {
         let path = header(source);
@@ -349,7 +419,7 @@ fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarati
     for source in [
         "static int value;",
         "extern _Thread_local int value;",
-        "extern volatile int value;",
+        "extern _Atomic(int) value;",
         "extern int value[4];",
         "struct Item { int n; }; extern struct Item value;",
         "int value(void);",

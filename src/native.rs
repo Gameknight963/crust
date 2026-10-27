@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod archive;
+#[cfg(test)]
+mod volatile_tests;
 pub use archive::compile_static_library;
 pub(crate) use archive::validate_options as validate_archive_options;
 

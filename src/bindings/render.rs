@@ -184,14 +184,20 @@ impl Renderer {
         return Ok(signature);
     }
 
-    fn value_type(&mut self, node: &Value) -> Result<String, String> {
+    fn unqualified(node: &Value) -> Result<&Value, String> {
         let mut node = Self::unwrap(node)?;
-        if kind(node) == "QualType" {
-            node = type_children(node)
-                .next()
-                .ok_or("Clang omitted a qualified value type")?;
+        while kind(node) == "QualType" {
+            node = Self::unwrap(
+                type_children(node)
+                    .next()
+                    .ok_or("Clang omitted a qualified value type")?,
+            )?;
         }
-        return self.ty(node, false);
+        return Ok(node);
+    }
+
+    fn value_type(&mut self, node: &Value) -> Result<String, String> {
+        return self.ty(Self::unqualified(node)?, false);
     }
 
     pub fn object_type(&mut self, node: &Value) -> Result<String, String> {
@@ -221,17 +227,20 @@ impl Renderer {
             }
             "QualType" => {
                 let qualifiers = node["qualifiers"].as_str().unwrap_or("");
-                if qualifiers != "const" {
+                if qualifiers
+                    .split_whitespace()
+                    .any(|qualifier| !matches!(qualifier, "const" | "volatile"))
+                {
                     return Err(format!("unsupported C pointee qualifiers '{qualifiers}'"));
                 }
                 let inner = type_children(node)
                     .next()
                     .ok_or("Clang omitted a qualified type")?;
                 let value = self.ty(inner, opaque)?;
-                return Ok(if value.ends_with('*') {
-                    format!("{value} const")
+                return Ok(if kind(Self::unqualified(inner)?) == "PointerType" {
+                    format!("{value} {qualifiers}")
                 } else {
-                    format!("const {value}")
+                    format!("{qualifiers} {value}")
                 });
             }
             "EnumType" => {

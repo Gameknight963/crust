@@ -37,8 +37,9 @@ impl Renderer<'_> {
                 let pointer = self.types.pointers[id];
                 let pointee = self.ty(pointer.pointee, span)?;
                 return Ok(format!(
-                    "{pointee}{} *",
-                    if pointer.mutable { "" } else { " const" }
+                    "{pointee}{}{} *",
+                    if pointer.mutable { "" } else { " const" },
+                    if pointer.volatile { " volatile" } else { "" }
                 ));
             }
             Type::Struct(id) => {

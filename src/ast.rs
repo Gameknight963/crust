@@ -202,7 +202,11 @@ pub enum Type {
     Array(usize),
     Enum(usize),
     Pointer(usize),
-    Borrow { pointee: Pointee, mutable: bool },
+    Borrow {
+        pointee: Pointee,
+        mutable: bool,
+        volatile: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,7 +239,7 @@ impl Type {
         return matches!(self, Type::Borrow { .. });
     }
 
-    pub fn borrowed(self, mutable: bool) -> Option<Type> {
+    pub fn borrowed_qualified(self, mutable: bool, volatile: bool) -> Option<Type> {
         let pointee = match self {
             Type::Integer(kind) => Pointee::Integer(kind),
             Type::Bool => Pointee::Bool,
@@ -246,7 +250,11 @@ impl Type {
             Type::Pointer(id) => Pointee::Pointer(id),
             _ => return None,
         };
-        return Some(Type::Borrow { pointee, mutable });
+        return Some(Type::Borrow {
+            pointee,
+            mutable,
+            volatile,
+        });
     }
 
     pub fn integer(self) -> Option<IntType> {
@@ -284,6 +292,7 @@ pub struct ExternalVariable {
     pub name_span: Span,
     pub ty: Type,
     pub readonly: bool,
+    pub volatile: bool,
     pub link_name: String,
     pub span: Span,
 }
@@ -372,6 +381,29 @@ impl CallingConvention {
 pub struct PointerType {
     pub pointee: Type,
     pub mutable: bool,
+    pub volatile: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Qualifiers {
+    pub readonly: bool,
+    pub volatile: bool,
+}
+
+impl Qualifiers {
+    pub fn describe(self, ty: Type, name: String) -> String {
+        let qualifiers = match (self.readonly, self.volatile) {
+            (false, false) => return name,
+            (true, false) => "const",
+            (false, true) => "volatile",
+            (true, true) => "const volatile",
+        };
+        return if matches!(ty, Type::Pointer(_)) {
+            format!("{name} {qualifiers}")
+        } else {
+            format!("{qualifiers} {name}")
+        };
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -450,6 +450,20 @@ fn workspace_roots_supply_target_context_for_external_unsaved_dependencies() {
 }
 
 #[test]
+fn signature_help_preserves_volatile_qualifiers_on_pointer_slot_borrows() {
+    let uri = "untitled:volatile-slots.cr";
+    let source = "extern int* volatile native_slot; int* read_slot(int* volatile const^ slot) { return *slot; } int main() { unsafe { int* pointer = read_slot(^const native_slot); } return 0; }";
+    let mut server = Server::start();
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let help = server.request("textDocument/signatureHelp", json!({"textDocument": {"uri": uri}, "position": at(source, source.find("read_slot(^").unwrap() + "read_slot(".len())})).result.unwrap();
+    assert_eq!(
+        help["signatures"][0]["label"],
+        "int* read_slot(int* const volatile^ slot)"
+    );
+    server.stop();
+}
+
+#[test]
 fn library_targets_support_unsaved_dependency_analysis_navigation_and_rename_without_main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/lsp-library")

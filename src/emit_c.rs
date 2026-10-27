@@ -35,6 +35,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .collect(),
         types: &checked.types,
         expression_types: &empty_analysis.expression_types,
+        place_volatile: &empty_analysis.place_volatile,
         method_calls: &empty_analysis.method_calls,
         conversions: &empty_analysis.conversions,
         constants: &empty_analysis.constants,
@@ -131,7 +132,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
     emitter.struct_definitions();
     for variable in &program.globals {
         emitter.line(&format!(
-            "extern {}{}{} {};",
+            "extern {}{}{}{} {};",
             if variable.dll_import {
                 "__declspec(dllimport) "
             } else {
@@ -139,6 +140,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             },
             c_type(variable.ty),
             if variable.readonly { " const" } else { "" },
+            if variable.volatile { " volatile" } else { "" },
             variable.link_name
         ));
         emitter.scopes[0].insert(
@@ -160,6 +162,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         }
         let analysis = &checked.analyses[&function.name];
         emitter.expression_types = &analysis.expression_types;
+        emitter.place_volatile = &analysis.place_volatile;
         emitter.method_calls = &analysis.method_calls;
         emitter.conversions = &analysis.conversions;
         emitter.constants = &analysis.constants;
@@ -221,10 +224,15 @@ pub(crate) fn c_type(ty: Type) -> String {
         Type::Array(id) => format!("struct crust_array_{id}"),
         Type::Enum(id) => format!("crust_enum_{id}"),
         Type::Pointer(id) => format!("crust_ptr_{id}"),
-        Type::Borrow { pointee, mutable } => format!(
-            "{}{} *",
+        Type::Borrow {
+            pointee,
+            mutable,
+            volatile,
+        } => format!(
+            "{}{}{} *",
             c_type(pointee.ty()),
-            if mutable { "" } else { " const" }
+            if mutable { "" } else { " const" },
+            if volatile { " volatile" } else { "" }
         ),
     };
 }
@@ -301,6 +309,7 @@ struct Emitter<'checked> {
     return_types: HashMap<String, Type>,
     types: &'checked Types,
     expression_types: &'checked HashMap<Span, Type>,
+    place_volatile: &'checked HashMap<Span, bool>,
     method_calls: &'checked HashMap<Span, Expression>,
     conversions: &'checked HashMap<Span, Type>,
     constants: &'checked HashMap<Span, i128>,
@@ -315,6 +324,18 @@ struct LoopContext {
 }
 
 impl Emitter<'_> {
+    fn address_type(&self, expression: &Expression, mutable: bool) -> Type {
+        return self
+            .place_type(expression)
+            .borrowed_qualified(
+                mutable,
+                self.place_volatile
+                    .get(&expression.span)
+                    .copied()
+                    .unwrap_or(false),
+            )
+            .expect("checked borrow target");
+    }
     fn type_declaration(&mut self, ty: Type, declared: &mut HashSet<Type>) {
         if !declared.insert(ty) {
             return;
@@ -324,9 +345,10 @@ impl Emitter<'_> {
                 let pointer = self.types.pointers[id];
                 self.type_declaration(pointer.pointee, declared);
                 self.line(&format!(
-                    "typedef {}{} *crust_ptr_{id};",
+                    "typedef {}{}{} *crust_ptr_{id};",
                     c_type(pointer.pointee),
-                    if pointer.mutable { "" } else { " const" }
+                    if pointer.mutable { "" } else { " const" },
+                    if pointer.volatile { " volatile" } else { "" }
                 ));
             }
             Type::Function(id) => {
@@ -560,7 +582,7 @@ impl Emitter<'_> {
                 if matches!(target_type, Type::Pointer(_)) {
                     let place = self.place(target);
                     let address =
-                        self.temporary(target_type.borrowed(true).unwrap(), &format!("&({place})"));
+                        self.temporary(self.address_type(target, true), &format!("&({place})"));
                     let old = self.temporary(target_type, &format!("*{address}"));
                     let right = self.value_expression(value);
                     let symbol = if *operator == BinaryOperator::Add {
@@ -580,7 +602,7 @@ impl Emitter<'_> {
                 };
                 let place = self.place(target);
                 let address =
-                    self.temporary(target_type.borrowed(true).unwrap(), &format!("&({place})"));
+                    self.temporary(self.address_type(target, true), &format!("&({place})"));
                 let old = self.temporary(target_type, &format!("*{address}"));
                 let left = self.convert_value(old, target_type, Type::Integer(common), target.span);
                 let right = self.value_expression(value);
@@ -1039,11 +1061,8 @@ impl Emitter<'_> {
                         self.temporary(self.expression_type(expression), &format!("&({place})")),
                     );
                 }
-                if let UnaryOperator::Borrow { mutable } = operator {
-                    let ty = self
-                        .place_type(operand)
-                        .borrowed(*mutable)
-                        .expect("checked borrow target");
+                if let UnaryOperator::Borrow { .. } = operator {
+                    let ty = self.expression_type(expression);
                     let place = self.place(operand);
                     let value = self.temporary(ty, &format!("&({place})"));
                     return Some(value);
@@ -1172,7 +1191,7 @@ impl Emitter<'_> {
                 let length = self.types.arrays[id].length;
                 let place = self.place(base);
                 let address = self.temporary(
-                    base_type.borrowed(self.place_mutable(base)).unwrap(),
+                    self.address_type(base, self.place_mutable(base)),
                     &format!("&({place})"),
                 );
                 let value = self.value_expression(index);

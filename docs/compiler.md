@@ -36,6 +36,7 @@ ownership checking, C generation, and native compilation.
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
+| `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
 | `src/lsp.rs` | Document synchronization and compiler diagnostics |
@@ -81,6 +82,13 @@ exports. Callback aliases are allocated within each exported symbol's prefix,
 with names reserved against other native symbols. Pointer qualifiers are rendered
 at each indirection level. Native tags and exported names use macro guards, and
 native enum dependencies retain the source program's C headers.
+
+Pointer and borrow types carry pointee volatility. External variables retain
+object volatility separately. Place analysis propagates it through dereferences,
+fields, and array elements, and emission uses that metadata for captured
+assignment destinations. Binding generation and public headers preserve the
+qualifier at each pointer level. An optimized Clang IR test checks volatile
+loads and stores after borrowed access and aggregate projection.
 
 Frontend APIs run parsing, checking, analysis, and emission on a scoped worker
 with a 16 MiB stack. This gives command-line and editor clients the same stack

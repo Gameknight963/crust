@@ -32,6 +32,7 @@ pub(crate) struct AnalyzedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub place_volatile: HashMap<Span, bool>,
     pub calls: HashMap<Span, CallSite>,
     pub receiver_types: HashMap<Span, Type>,
     pub symbol_uses: HashMap<Span, Span>,
@@ -76,6 +77,7 @@ enum State {
 
 #[derive(Clone, Copy)]
 struct Variable {
+    volatile: bool,
     external: bool,
     mutable: bool,
     declaration: Option<Span>,
@@ -87,6 +89,7 @@ struct Variable {
 type Scopes = Vec<HashMap<String, Variable>>;
 
 struct Place {
+    volatile: bool,
     ty: Type,
     mutable: bool,
     root: (usize, String),
@@ -222,7 +225,7 @@ fn analyze(
                 "a C symbol cannot name both a function and an external variable",
             ));
         }
-        let signature = (global.ty, global.readonly);
+        let signature = (global.ty, global.readonly, global.volatile);
         if let Some(previous) = native_globals.insert(&global.link_name, signature)
             && previous != signature
         {
@@ -234,7 +237,8 @@ fn analyze(
         if let Some(previous) = global_symbols.insert(global.name.clone(), global.link_name.clone())
             && (previous != global.link_name
                 || globals[&global.name].ty != global.ty
-                || globals[&global.name].mutable == global.readonly)
+                || globals[&global.name].mutable == global.readonly
+                || globals[&global.name].volatile != global.volatile)
         {
             return Err(Diagnostic::new(
                 global.span,
@@ -242,6 +246,7 @@ fn analyze(
             ));
         }
         globals.entry(global.name.clone()).or_insert(Variable {
+            volatile: global.volatile,
             external: true,
             mutable: !global.readonly,
             declaration: Some(global.name_span),
@@ -497,6 +502,7 @@ fn analyze(
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            place_volatile: &mut analysis.place_volatile,
             calls: &mut analysis.calls,
             completion,
             receiver_types: &mut analysis.receiver_types,
@@ -583,6 +589,7 @@ fn analyze(
 }
 
 struct FunctionChecker<'program> {
+    place_volatile: &'program mut HashMap<Span, bool>,
     calls: &'program mut HashMap<Span, CallSite>,
     completion: bool,
     receiver_types: &'program mut HashMap<Span, Type>,
@@ -773,6 +780,12 @@ impl FunctionChecker<'_> {
                     return Err(Diagnostic::new(
                         target.span,
                         "cannot assign through a shared borrow or rebind a borrow",
+                    ));
+                }
+                if place.volatile && self.types.owns(place.ty) {
+                    return Err(Diagnostic::new(
+                        target.span,
+                        "volatile storage operations require copyable values",
                     ));
                 }
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
@@ -1009,6 +1022,12 @@ impl FunctionChecker<'_> {
                     return Err(Diagnostic::new(
                         pointer.span,
                         "storage operations require a mutable pointer to a complete object type",
+                    ));
+                }
+                if destination.volatile && self.types.owns(destination.pointee) {
+                    return Err(Diagnostic::new(
+                        pointer.span,
+                        "volatile storage operations require copyable values",
                     ));
                 }
                 if let Some(value) = value {
@@ -1482,6 +1501,12 @@ impl FunctionChecker<'_> {
                             ));
                         }
                         let owning = self.types.owns(place.ty);
+                        if owning && place.volatile {
+                            return Err(Diagnostic::new(
+                                arguments[0].span,
+                                "volatile storage operations require copyable values",
+                            ));
+                        }
                         if owning && !place.mutable {
                             return Err(Diagnostic::new(
                                 arguments[0].span,
@@ -1600,7 +1625,11 @@ impl FunctionChecker<'_> {
                         place.via,
                         expression.span,
                     )?;
-                    return Ok(self.types.pointer_to(place.ty, place.mutable));
+                    return Ok(self.types.qualified_pointer_to(
+                        place.ty,
+                        place.mutable,
+                        place.volatile,
+                    ));
                 }
                 if let UnaryOperator::Borrow { mutable } = operator {
                     let place = self.checked_place(operand)?;
@@ -1610,7 +1639,7 @@ impl FunctionChecker<'_> {
                             "cannot create a mutable borrow through a shared borrow",
                         ));
                     }
-                    let ty = place.ty.borrowed(*mutable).ok_or_else(|| {
+                    let ty = place.ty.borrowed_qualified(*mutable, place.volatile).ok_or_else(|| {
                         Diagnostic::new(
                             operand.span,
                             "borrows of borrows are not supported; reborrow the pointee instead",
@@ -1973,6 +2002,7 @@ impl FunctionChecker<'_> {
                     || (target.pointee == Type::Void
                         && !matches!(source.pointee, Type::Function(_))))
                     && (source.mutable || !target.mutable)
+                    && (!source.volatile || target.volatile)
             } else {
                 constant_integer(expression) == Some(0)
             };
@@ -2115,7 +2145,8 @@ impl FunctionChecker<'_> {
                 }
                 let pointee = self.receiver_type(operand)?;
                 let mutable = self.probe_mutability(operand)?;
-                return Ok(self.types.pointer_to(pointee, mutable));
+                let volatile = self.probe_volatile(operand)?;
+                return Ok(self.types.qualified_pointer_to(pointee, mutable, volatile));
             }
             ExpressionKind::Binary {
                 operator,
@@ -2207,9 +2238,10 @@ impl FunctionChecker<'_> {
                 operator: UnaryOperator::Borrow { mutable },
                 operand,
             } => {
-                return self
-                    .receiver_type(operand)?
-                    .borrowed(*mutable)
+                let pointee = self.receiver_type(operand)?;
+                let volatile = self.probe_volatile(operand)?;
+                return pointee
+                    .borrowed_qualified(*mutable, volatile)
                     .ok_or_else(|| Diagnostic::new(expression.span, "invalid borrow type"));
             }
             ExpressionKind::Unary { operator, operand } => {
@@ -2295,6 +2327,32 @@ impl FunctionChecker<'_> {
                 Type::Borrow { mutable, .. } => Ok(mutable),
                 Type::Pointer(id) => Ok(self.types.pointers[id].mutable),
                 _ => self.probe_mutability(operand),
+            },
+            _ => Err(Diagnostic::new(
+                expression.span,
+                "address target must be a place",
+            )),
+        };
+    }
+
+    fn probe_volatile(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
+        return match &expression.kind {
+            ExpressionKind::Variable { name, .. } => {
+                Ok(self.available(name, expression.span)?.volatile)
+            }
+            ExpressionKind::Field { base, .. } => self.probe_volatile(base),
+            ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
+                Type::Pointer(id) => Ok(self.types.pointers[id].volatile),
+                _ => self.probe_volatile(base),
+            },
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Dereference,
+                operand,
+            } => match self.receiver_type(operand)? {
+                Type::Pointer(id) => Ok(self.types.pointers[id].volatile),
+                Type::Borrow { volatile, .. } => Ok(volatile),
+                Type::BoxInt => Ok(false),
+                _ => self.probe_volatile(operand),
             },
             _ => Err(Diagnostic::new(
                 expression.span,
@@ -2411,6 +2469,7 @@ impl FunctionChecker<'_> {
             }
         };
         self.receiver_types.insert(expression.span, place.ty);
+        self.place_volatile.insert(expression.span, place.volatile);
         return Ok(place);
     }
 
@@ -2457,6 +2516,11 @@ impl FunctionChecker<'_> {
                 return Ok(Place {
                     ty: element,
                     mutable,
+                    volatile: if let Type::Pointer(id) = place.ty {
+                        self.types.pointers[id].volatile
+                    } else {
+                        place.volatile
+                    },
                     ..place
                 });
             }
@@ -2500,9 +2564,13 @@ impl FunctionChecker<'_> {
                 } else {
                     self.temporary_pointer_place(operand)?
                 };
-                let (ty, mutable) = match place.ty {
-                    Type::BoxInt => (Type::Integer(IntType::I32), place.mutable),
-                    Type::Borrow { pointee, mutable } => (pointee.ty(), mutable),
+                let (ty, mutable, volatile) = match place.ty {
+                    Type::BoxInt => (Type::Integer(IntType::I32), place.mutable, false),
+                    Type::Borrow {
+                        pointee,
+                        mutable,
+                        volatile,
+                    } => (pointee.ty(), mutable, volatile),
                     Type::Pointer(id) => {
                         self.require_unsafe(expression.span, "dereferencing a raw pointer")?;
                         let pointer = self.types.pointers[id];
@@ -2512,7 +2580,7 @@ impl FunctionChecker<'_> {
                                 "void pointers must be cast before dereferencing",
                             ));
                         }
-                        (pointer.pointee, pointer.mutable)
+                        (pointer.pointee, pointer.mutable, pointer.volatile)
                     }
                     _ => {
                         return Err(Diagnostic::new(
@@ -2524,6 +2592,7 @@ impl FunctionChecker<'_> {
                 return Ok(Place {
                     ty,
                     mutable,
+                    volatile,
                     ..place
                 });
             }
@@ -2546,6 +2615,7 @@ impl FunctionChecker<'_> {
         }
         if self.unevaluated || matches!(ty, Type::Pointer(_)) {
             return Ok(Place {
+                volatile: false,
                 ty,
                 mutable: false,
                 root: (self.scopes.len(), format!("@{}", expression.span.start)),
@@ -2562,6 +2632,7 @@ impl FunctionChecker<'_> {
         return Ok(Place {
             ty,
             mutable: false,
+            volatile: false,
             root: loan.root.clone(),
             fields: loan.fields.clone(),
             via: Some(id),
@@ -2611,6 +2682,7 @@ impl FunctionChecker<'_> {
         };
         return Ok(Place {
             ty: variable.ty,
+            volatile: variable.volatile,
             mutable: variable.mutable && !variable.ty.is_borrow(),
             root,
             fields,
@@ -2718,6 +2790,7 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
+                volatile: false,
                 external: false,
                 mutable: true,
                 declaration,

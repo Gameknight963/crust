@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::ast::{
     ArrayType, CallingConvention, EnumDefinition, EnumVariant, Field, FunctionType, IntType,
-    PointerType, Program, Type,
+    PointerType, Program, Qualifiers, Type,
 };
 use crate::diagnostic::{Diagnostic, Span};
 
@@ -339,7 +339,15 @@ impl Types {
     }
 
     pub fn pointer_to(&mut self, pointee: Type, mutable: bool) -> Type {
-        let pointer = PointerType { pointee, mutable };
+        return self.qualified_pointer_to(pointee, mutable, false);
+    }
+
+    pub fn qualified_pointer_to(&mut self, pointee: Type, mutable: bool, volatile: bool) -> Type {
+        let pointer = PointerType {
+            pointee,
+            mutable,
+            volatile,
+        };
         let id = if let Some(id) = self
             .pointers
             .iter()
@@ -388,24 +396,33 @@ impl Types {
                 self.structs[id].name
             ),
             Type::Enum(id) => format!("enum {}", self.enum_names[id]),
-            Type::Pointer(id) => format!(
-                "{}{}*",
-                if self.pointers[id].mutable {
-                    ""
-                } else {
-                    "const "
-                },
-                self.describe(self.pointers[id].pointee)
-            ),
+            Type::Pointer(id) => {
+                let pointer = self.pointers[id];
+                format!(
+                    "{}*",
+                    Qualifiers {
+                        readonly: !pointer.mutable,
+                        volatile: pointer.volatile
+                    }
+                    .describe(pointer.pointee, self.describe(pointer.pointee))
+                )
+            }
             Type::Array(id) => format!(
                 "{}[{}]",
                 self.describe(self.arrays[id].element),
                 self.arrays[id].length
             ),
-            Type::Borrow { pointee, mutable } => format!(
-                "{}{}^",
-                if mutable { "" } else { "const " },
-                self.describe(pointee.ty())
+            Type::Borrow {
+                pointee,
+                mutable,
+                volatile,
+            } => format!(
+                "{}^",
+                Qualifiers {
+                    readonly: !mutable,
+                    volatile
+                }
+                .describe(pointee.ty(), self.describe(pointee.ty()))
             ),
         };
     }

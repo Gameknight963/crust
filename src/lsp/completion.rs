@@ -209,6 +209,7 @@ fn complete(
         "break",
         "continue",
         "const",
+        "volatile",
         "struct",
         "union",
         "enum",

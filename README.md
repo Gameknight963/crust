@@ -42,6 +42,7 @@ use UTF-8 byte arrays.
 
 - [Headers](examples/header_project/): generated bindings and an opaque handle wrapper
 - [C algorithms](examples/c_algorithms.cr): sorting and searching through standard library callbacks
+- [Volatile access](examples/volatile.cr): qualified pointers and borrowed views
 - [Exports](examples/export_project/): a C source file calling a named Crust function
 - [Static library](examples/library_project/): a native archive linked into a C consumer
 - [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64

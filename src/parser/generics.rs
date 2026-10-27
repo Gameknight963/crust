@@ -132,7 +132,7 @@ impl Parser {
         }
         loop {
             match self.tokens.get(position).map(|token| &token.kind) {
-                Some(Token::Star | Token::Const | Token::Caret) => position += 1,
+                Some(Token::Star | Token::Const | Token::Volatile | Token::Caret) => position += 1,
                 Some(Token::LeftBracket) => {
                     let mut brackets = 1usize;
                     position += 1;
@@ -777,24 +777,33 @@ impl Parser {
             Type::BoxInt => "BoxInt".to_owned(),
             Type::Struct(id) => self.struct_names[id].0.clone(),
             Type::Enum(id) => self.enum_names[id].0.clone(),
-            Type::Pointer(id) => format!(
-                "{}{}*",
-                if self.pointers[id].mutable {
-                    ""
-                } else {
-                    "const "
-                },
-                self.generic_type_name(self.pointers[id].pointee)
-            ),
+            Type::Pointer(id) => {
+                let pointer = self.pointers[id];
+                format!(
+                    "{}*",
+                    Qualifiers {
+                        readonly: !pointer.mutable,
+                        volatile: pointer.volatile
+                    }
+                    .describe(pointer.pointee, self.generic_type_name(pointer.pointee))
+                )
+            }
             Type::Array(id) => format!(
                 "{}[{}]",
                 self.generic_type_name(self.arrays[id].element),
                 self.arrays[id].length
             ),
-            Type::Borrow { pointee, mutable } => format!(
-                "{}{}^",
-                if mutable { "" } else { "const " },
-                self.generic_type_name(pointee.ty())
+            Type::Borrow {
+                pointee,
+                mutable,
+                volatile,
+            } => format!(
+                "{}^",
+                Qualifiers {
+                    readonly: !mutable,
+                    volatile
+                }
+                .describe(pointee.ty(), self.generic_type_name(pointee.ty()))
             ),
             Type::Function(id) => format!("function#{id}"),
         };

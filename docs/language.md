@@ -666,6 +666,29 @@ Safe interface requirements require safe implementations. An unsafe requirement
 accepts either a safe or unsafe method. Calls use the concrete method's contract.
 The entry point has a safe signature.
 
+### Volatile access
+
+`volatile` qualifies external C objects, raw pointer targets, and borrowed
+pointees. Accesses retain the C compiler's volatile semantics through field
+access, array indexing, reborrows, and returned borrows.
+
+```c
+extern volatile int status;
+
+int read_status(const volatile int^ value) {
+    return *value;
+}
+```
+
+- Raw pointer conversions can add `const` and `volatile`, and removing them uses an explicit unsafe cast
+- Compatible declarations and aliases of a C variable retain the same qualifiers
+- Borrowed views preserve their pointee's qualifiers and follow ordinary loan rules
+- Volatile storage assignment, initialization, destruction, and raw moves work on copyable values
+- Qualifiers can appear before or after a type, including between C integer type words
+
+Use a volatile pointer or borrowed view to access local storage. See
+[the volatile example](../examples/volatile.cr).
+
 ### C exports
 
 An `extern` function with a body defines a named C symbol. An optional alias
@@ -920,7 +943,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `do`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `do`, `for`, `break`, `continue`, `const`, `volatile`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers
