@@ -9,6 +9,7 @@ mod executable;
 mod runtime_tests;
 mod shared;
 mod staging;
+mod tool_paths;
 #[cfg(test)]
 mod volatile_tests;
 pub use archive::compile_static_library;
@@ -80,7 +81,8 @@ fn invoke_compiler(
         }
         return "cc".into();
     });
-    let mut command = Command::new(&compiler);
+    let paths = tool_paths::ToolPaths::for_output(executable)?;
+    let mut command = paths.command(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
     if shared {
@@ -91,7 +93,8 @@ fn invoke_compiler(
             command.arg("-shared");
         }
         if cfg!(windows) {
-            let gnu = Command::new(&compiler)
+            let gnu = paths
+                .command(&compiler)
                 .arg("-dumpmachine")
                 .output()
                 .ok()
@@ -101,7 +104,7 @@ fn invoke_compiler(
                         && (target.contains("mingw") || target.contains("windows-gnu"))
                 });
             let mut flag = std::ffi::OsString::from(if gnu { "--out-implib=" } else { "/implib:" });
-            flag.push(import_library(executable));
+            flag.push(paths.output(&import_library(executable)));
             command.arg("-Xlinker").arg(flag);
         } else {
             command.arg("-fPIC");
@@ -131,21 +134,21 @@ fn invoke_compiler(
         command.arg("-D").arg(define);
     }
     for directory in &options.include_dirs {
-        command.arg("-I").arg(directory);
+        command.arg("-I").arg(paths.input(directory));
     }
     command
         .args(["-x", "c"])
-        .arg(c_path)
-        .args(&options.sources)
+        .arg(paths.input(c_path))
+        .args(options.sources.iter().map(|source| paths.input(source)))
         .args(["-x", "none"]);
-    command.args(&options.link_inputs);
+    command.args(options.link_inputs.iter().map(|input| paths.input(input)));
     for directory in &options.library_dirs {
-        command.arg("-L").arg(directory);
+        command.arg("-L").arg(paths.input(directory));
     }
     for library in &options.libraries {
         command.arg(format!("-l{library}"));
     }
-    let result = command.arg("-o").arg(executable)
+    let result = command.arg("-o").arg(paths.output(executable))
         .output()
         .map_err(|error| format!("could not start C compiler '{}': {error}; set CC to a Clang/GCC-compatible compiler executable", compiler.to_string_lossy()))?;
     if !result.status.success() {

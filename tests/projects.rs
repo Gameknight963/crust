@@ -1807,6 +1807,71 @@ fn native_integer_types_survive_variadic_calls_and_repeated_imported_declaration
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn native_libraries_and_relative_driver_inputs_build_in_percent_named_directories() {
+    let parent = Fixture::new();
+    let fixture = Fixture {
+        directory: parent.directory.join("native % path; and & symbols"),
+    };
+    fs::create_dir(&fixture.directory).unwrap();
+    fixture.manifest(
+        r#"
+        [[targets]]
+        name = 'core'
+        kind = 'static-library'
+        entry = 'core.cr'
+        [targets.native]
+        sources = ['helper.c']
+        include-dirs = ['include']
+        [[targets]]
+        name = 'shared'
+        kind = 'shared-library'
+        entry = 'shared.cr'
+        [targets.native]
+        link-targets = ['core']
+        [[targets]]
+        name = 'app'
+        kind = 'executable'
+        entry = 'main.cr'
+        [targets.native]
+        link-targets = ['shared']
+    "#,
+    );
+    fixture.write("include/offset.h", "#define OFFSET 1\n");
+    fixture.write(
+        "helper.c",
+        "#include \"offset.h\"\nint helper(int value) { return value + OFFSET; }\n",
+    );
+    fixture.write("core.cr", "extern int helper(int); extern int core_answer(int value) { unsafe { return helper(value); } }");
+    fixture.write("shared.cr", "extern int core_answer(int); extern int answer(int value) { unsafe { return core_answer(value); } }");
+    fixture.write(
+        "main.cr",
+        "extern int answer(int); int main() { unsafe { print(answer(41)); } return 0; }",
+    );
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+
+    // Public driver paths retain their meaning relative to the caller even
+    // when the native tool runs from the output directory.
+    let relative = fixture
+        .directory
+        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+        .unwrap();
+    fixture.write("relative.c", "#include \"offset.h\"\nextern int answer(int); int main(void) { return answer(41) == 41 + OFFSET ? 0 : 1; }\n");
+    let options = crust::native::Options {
+        include_dirs: vec![relative.join("include")],
+        link_inputs: vec![relative.join("target/crust/shared/shared.lib")],
+        runtime_libraries: vec![relative.join("target/crust/shared/shared.dll")],
+        ..Default::default()
+    };
+    let output = relative.join("relative.exe");
+    crust::native::compile_file_with_options(&relative.join("relative.c"), &output, &options)
+        .unwrap();
+    success(&Command::new(output).output().unwrap());
+}
+
 #[test]
 fn renamed_c_functions_can_use_crust_keywords_and_builtin_names() {
     let fixture = Fixture::new();

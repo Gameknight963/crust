@@ -39,6 +39,7 @@ ownership checking, C generation, and native compilation.
 | `src/native/shared.rs` | Shared-library compilation, import libraries, and coordinated output recovery |
 | `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
 | `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
+| `src/native/tool_paths.rs` | Native tool working directories and preserved input paths |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/project/links.rs` | Native target dependency order and transitive archive inputs |
@@ -246,6 +247,7 @@ The CLI writes the generated UTF-8 file after validation. See
 - Target macro definitions pass directly to the C preprocessor, with shared validation for native builds and header binding generation
 - Native paths are resolved relative to the manifest, and compiler arguments are passed directly to the process
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
+- Windows output paths containing `%` use the output directory as the native tool's working directory and pass a relative output filename, preserving the caller's input paths
 - Toolchain environment changes apply to the child compiler process
 - Pointer-sized types follow the Rust host, with a generated C assertion checking native pointer width
 - `char` follows the host C signedness, with a generated assertion checking the selected C compiler

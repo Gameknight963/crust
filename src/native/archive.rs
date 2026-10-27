@@ -43,7 +43,8 @@ pub fn compile_static_library(
         .enumerate()
     {
         let object = staging.file(&format!("source_{index}.o"));
-        let mut command = Command::new(&compiler);
+        let paths = tool_paths::ToolPaths::for_output(&object)?;
+        let mut command = paths.command(&compiler);
         configure_windows_toolchain(&mut command);
         command.args(["-std=c11", "-c", "-x", "c"]);
         if !cfg!(windows) {
@@ -53,9 +54,13 @@ pub fn compile_static_library(
             command.arg("-D").arg(define);
         }
         for directory in &options.include_dirs {
-            command.arg("-I").arg(directory);
+            command.arg("-I").arg(paths.input(directory));
         }
-        command.arg("-o").arg(&object).arg("--").arg(source);
+        command
+            .arg("-o")
+            .arg(paths.output(&object))
+            .arg("--")
+            .arg(paths.input(source));
         let result = command.output().map_err(|error| {
             format!(
                 "could not start C compiler '{}': {error}",
@@ -86,10 +91,12 @@ pub fn compile_static_library(
             "ar".into()
         }
     });
-    let result = Command::new(&archiver)
+    let paths = tool_paths::ToolPaths::for_output(&temporary)?;
+    let result = paths
+        .command(&archiver)
         .arg("rcs")
-        .arg(&temporary)
-        .args(objects)
+        .arg(paths.output(&temporary))
+        .args(objects.iter().map(|object| paths.input(object)))
         .output()
         .map_err(|error| {
             format!(
