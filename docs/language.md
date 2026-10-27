@@ -22,6 +22,7 @@ and file-based commands report errors with the original filename and location.
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
 - `if`, `else`, `while`, `do`, and `for` bodies use braces
+- `else if` chains test successive conditions and give each branch its own scope
 - `break` exits the innermost loop, and `continue` advances to its next iteration
 - `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
 - Loop control destroys locals in the scopes being exited

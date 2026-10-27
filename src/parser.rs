@@ -1509,7 +1509,15 @@ impl Parser {
             self.expect(Token::RightParen, "expected ')' after the condition")?;
             let then_block = self.block()?;
             let else_block = if self.consume(&Token::Else) {
-                Some(self.block()?)
+                if self.at(&Token::If) {
+                    let branch = self.statement()?;
+                    Some(Block {
+                        span: branch.span,
+                        statements: vec![branch],
+                    })
+                } else {
+                    Some(self.block()?)
+                }
             } else {
                 None
             };

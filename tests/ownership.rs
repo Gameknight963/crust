@@ -3,6 +3,55 @@ mod common;
 use common::tracked_run;
 
 #[test]
+fn else_if_chains_preserve_returns_branch_scopes_and_owner_cleanup() {
+    let source = r#"
+        int select(int kind) {
+            BoxInt outer = box_int(9);
+            if (kind == 0) {
+                BoxInt local = box_int(10);
+                return *local;
+            } else if (kind == 1) {
+                BoxInt local = box_int(11);
+                return *local;
+            } else if (kind == 2) {
+                BoxInt local = box_int(12);
+                return *local;
+            } else {
+                return *outer;
+            }
+        }
+        int main() {
+            for (int kind = 0; kind < 4; kind += 1) { print(select(kind)); }
+            return 0;
+        }
+    "#;
+    let output = tracked_run(source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "10\n11\n12\n9\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        "drop:10\ndrop:9\ndrop:11\ndrop:9\ndrop:12\ndrop:9\ndrop:9\n"
+    );
+    for body in [
+        "if (kind == 0) { } else if (kind == 1) { move(owner); } print(*owner); return 0;",
+        "if (kind == 0) { } else if (kind == 1) { int local = 1; } else { print(local); } return 0;",
+        "if (kind == 0) { return 1; } else if (kind == 1) { return 2; }",
+    ] {
+        let source = format!(
+            "int select(int kind) {{ BoxInt owner = box_int(9); {body} }} int main() {{ return select(0); }}"
+        );
+        assert!(crust::check(&source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn rejects_copying_and_using_moved_owners_across_control_flow() {
     let prelude = "int take(BoxInt owner) { return *owner; } ";
     let cases = [

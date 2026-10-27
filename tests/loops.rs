@@ -69,7 +69,7 @@ fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break()
                     R b = { .value = box_int(10 + i) };
                     i += 1;
                     if (i == 1) { continue; }
-                    if (i == 3) { break; }
+                    else if (i == 3) { break; }
                 }
             } while (condition(i));
             print(42);
