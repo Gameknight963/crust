@@ -1,9 +1,7 @@
+use super::staging::Staging;
 use super::*;
 use std::fs;
 use std::io::Read;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static NEXT_BUILD: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn validate_options(options: &Options) -> Result<(), String> {
     validate_defines(&options.defines)?;
@@ -21,53 +19,6 @@ pub(crate) fn validate_options(options: &Options) -> Result<(), String> {
         }
     }
     return Ok(());
-}
-
-struct Staging {
-    directory: PathBuf,
-    files: Vec<PathBuf>,
-}
-
-impl Staging {
-    fn create(parent: &Path) -> Result<Self, String> {
-        let parent = parent.canonicalize().map_err(|error| error.to_string())?;
-        loop {
-            let directory = parent.join(format!(
-                "crust-build-{}-{}",
-                std::process::id(),
-                NEXT_BUILD.fetch_add(1, Ordering::Relaxed)
-            ));
-            match fs::create_dir(&directory) {
-                Ok(()) => {
-                    return Ok(Self {
-                        directory,
-                        files: Vec::new(),
-                    });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => {
-                    return Err(format!(
-                        "could not create archive staging directory: {error}"
-                    ));
-                }
-            }
-        }
-    }
-
-    fn file(&mut self, name: &str) -> PathBuf {
-        let path = self.directory.join(name);
-        self.files.push(path.clone());
-        return path;
-    }
-}
-
-impl Drop for Staging {
-    fn drop(&mut self) {
-        for file in &self.files {
-            let _ = fs::remove_file(file);
-        }
-        let _ = fs::remove_dir(&self.directory);
-    }
 }
 
 pub fn compile_static_library(

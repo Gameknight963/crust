@@ -36,6 +36,8 @@ ownership checking, C generation, and native compilation.
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
 | `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
 | `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
+| `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
+| `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/project/links.rs` | Native target dependency order and transitive archive inputs |

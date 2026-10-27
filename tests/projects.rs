@@ -63,6 +63,169 @@ fn success(output: &Output) {
     );
 }
 
+fn executable(fixture: &Fixture) -> PathBuf {
+    return fixture
+        .directory
+        .join("target/crust/app/app")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+}
+
+fn assert_no_build_staging(fixture: &Fixture) {
+    assert!(
+        fs::read_dir(fixture.directory.join("target/crust/app"))
+            .unwrap()
+            .all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("crust-build-")
+            })
+    );
+}
+
+fn compiler_stub(fixture: &Fixture, writes_output: bool, code: u8) -> PathBuf {
+    let name = if cfg!(windows) {
+        "compiler.cmd"
+    } else {
+        "compiler.sh"
+    };
+    let source = if cfg!(windows) {
+        if writes_output {
+            format!(
+                "@echo off\r\n:args\r\nif \"%~1\"==\"\" exit /b {code}\r\nif \"%~1\"==\"-o\" goto output\r\nshift\r\ngoto args\r\n:output\r\nshift\r\n> \"%~1\" echo invalid-executable\r\nexit /b {code}\r\n"
+            )
+        } else {
+            format!("@echo off\r\nexit /b {code}\r\n")
+        }
+    } else if writes_output {
+        format!(
+            "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = \"-o\" ]; then\nshift\nprintf 'invalid-executable' > \"$1\"\nexit {code}\nfi\nshift\ndone\nexit {code}\n"
+        )
+    } else {
+        format!("#!/bin/sh\nexit {code}\n")
+    };
+    fixture.write(name, &source);
+    let path = fixture.directory.join(name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    return path;
+}
+
+#[test]
+fn executable_rebuilds_preserve_the_previous_program_after_compile_and_link_failures() {
+    let fixture = Fixture::new();
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nsources=['native.c']\n");
+    fixture.write(
+        "main.cr",
+        "extern int answer(); int main() { unsafe { print(answer()); } return 0; }",
+    );
+    fixture.write("native.c", "int answer(void) { return 42; }");
+    success(&fixture.invoke(&["build"]));
+    let binary = executable(&fixture);
+    let previous = fs::read(&binary).unwrap();
+    for source in [
+        "this is invalid C",
+        "extern int missing(void); int answer(void) { return missing(); }",
+    ] {
+        fixture.write("native.c", source);
+        let output = fixture.invoke(&["build"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("C compiler failed"));
+        assert_eq!(fs::read(&binary).unwrap(), previous);
+        assert_eq!(text(&Command::new(&binary).output().unwrap()), "42\n");
+        assert_no_build_staging(&fixture);
+    }
+    fixture.write("native.c", "int answer(void) { return 7; }");
+    success(&fixture.invoke(&["build"]));
+    assert_eq!(text(&Command::new(&binary).output().unwrap()), "7\n");
+    assert_no_build_staging(&fixture);
+}
+
+#[test]
+fn missing_native_output_is_an_error_instead_of_running_a_stale_executable() {
+    for existing in [false, true] {
+        let fixture = Fixture::new();
+        fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n");
+        fixture.write("main.cr", "int main() { print(42); return 0; }");
+        let binary = executable(&fixture);
+        let previous = if existing {
+            success(&fixture.invoke(&["build"]));
+            Some(fs::read(&binary).unwrap())
+        } else {
+            None
+        };
+        fixture.write("main.cr", "int main() { print(7); return 0; }");
+        let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+            .arg("run")
+            .current_dir(&fixture.directory)
+            .env("CC", compiler_stub(&fixture, false, 0))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("did not produce an executable"));
+        assert!(output.stdout.is_empty());
+        if let Some(previous) = previous {
+            assert_eq!(fs::read(&binary).unwrap(), previous);
+        } else {
+            assert!(!binary.exists());
+        }
+        assert_no_build_staging(&fixture);
+    }
+}
+
+#[test]
+fn invalid_and_partial_native_outputs_restore_previous_executables_or_remove_failed_files() {
+    for code in [0, 1] {
+        for existing in [false, true] {
+            let fixture = Fixture::new();
+            fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n");
+            fixture.write("main.cr", "int main() { print(42); return 0; }");
+            let binary = executable(&fixture);
+            let previous = if existing {
+                success(&fixture.invoke(&["build"]));
+                Some(fs::read(&binary).unwrap())
+            } else {
+                None
+            };
+            let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+                .arg("build")
+                .current_dir(&fixture.directory)
+                .env("CC", compiler_stub(&fixture, true, code))
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                error.contains(if code == 0 {
+                    "invalid native file signature"
+                } else {
+                    "C compiler failed"
+                }),
+                "{error}"
+            );
+            if let Some(previous) = previous {
+                assert_eq!(fs::read(&binary).unwrap(), previous);
+            } else {
+                assert!(!binary.exists());
+            }
+            assert_no_build_staging(&fixture);
+        }
+    }
+}
+
+#[test]
+fn native_driver_accepts_executable_output_paths_without_extensions() {
+    let fixture = Fixture::new();
+    fixture.write("native.c", "int main(void) { return 0; }");
+    let output = fixture.directory.join("program");
+    crust::native::compile_file(&fixture.directory.join("native.c"), &output).unwrap();
+    assert!(output.is_file());
+}
+
 #[test]
 fn discovers_projects_from_subdirectories_and_runs_the_named_output() {
     let fixture = Fixture::new();

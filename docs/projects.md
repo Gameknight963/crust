@@ -44,6 +44,10 @@ The loader validates field names and TOML types. Configuration errors include
 the manifest filename. Source diagnostics include the original filename and
 source location, including errors in imported files.
 
+Failed native compilation preserves the last working executable. A compiler
+that exits successfully must produce a fresh native executable before `run`
+starts it.
+
 ## Source imports
 
 ```c

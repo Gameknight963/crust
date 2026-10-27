@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod archive;
+mod executable;
+mod staging;
 #[cfg(test)]
 mod volatile_tests;
 pub use archive::compile_static_library;
@@ -33,6 +35,10 @@ pub fn compile_file_with_options(
 ) -> Result<(), String> {
     resolved_targets(options)?;
     validate_defines(&options.defines)?;
+    return executable::build(executable, || invoke_compiler(c_path, executable, options));
+}
+
+fn invoke_compiler(c_path: &Path, executable: &Path, options: &Options) -> Result<(), String> {
     let compiler = env::var_os("CC").unwrap_or_else(|| {
         if cfg!(windows) {
             return "clang".into();
