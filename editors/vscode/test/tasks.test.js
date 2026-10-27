@@ -54,14 +54,24 @@ test('configured tasks preserve definition identity, labels, and user task setti
 
 test('project commands work for files outside open workspace folders', async () => {
     const project = fixture();
-    const api = host([]);
+    const api = host([fixture()]);
     api.vscode.window.activeTextEditor = { document: { uri: api.uri(path.join(project.root, 'app.cr')) } };
     const provider = registerTasks(api.vscode, api.context);
     await api.handlers.get('crust.buildProject')();
-    assert.equal(api.executed[0].scope, api.vscode.TaskScope.Global);
+    assert.equal(api.executed[0].scope, api.vscode.TaskScope.Workspace);
     assert.equal(api.executed[0].definition.project, project.manifest);
     const resolved = await provider.resolveTask(api.executed[0], token);
     assert.deepEqual(resolved.execution.args, ['build', '--project', project.manifest]);
+});
+
+test('project commands explain the workspace requirement in an empty window', async () => {
+    const project = fixture();
+    const api = host([]);
+    api.vscode.window.activeTextEditor = { document: { uri: api.uri(path.join(project.root, 'app.cr')) } };
+    registerTasks(api.vscode, api.context);
+    await api.handlers.get('crust.buildProject')();
+    assert.equal(api.executed.length, 0);
+    assert.match(api.errors[0], /Open a workspace folder/);
 });
 
 test('commands report missing projects and libraries cannot be run', async () => {

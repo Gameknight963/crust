@@ -22,7 +22,7 @@ server logs. **Crust: Restart Language Server** restarts the connection.
 
 ## Build and run
 
-Use **Crust: Build Project**, **Crust: Check Project**, or **Crust: Run Project**
+Open a workspace folder, then use **Crust: Build Project**, **Crust: Check Project**, or **Crust: Run Project**
 from the command palette. Commands use the project containing the active file,
 or offer projects from the workspace. Run offers a choice of executable targets.
 

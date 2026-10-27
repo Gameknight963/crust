@@ -36,12 +36,15 @@ function registerTasks(vscode, context) {
 
     function task(manifest, info, command, target, suppliedDefinition, suppliedName) {
         const folder = vscode.workspace.getWorkspaceFolder(manifest);
+        if (!folder && !vscode.workspace.workspaceFolders?.length) {
+            throw new Error('Open a workspace folder to run Crust project tasks.');
+        }
         const project = folder ? path.relative(folder.uri.fsPath, manifest.fsPath) : manifest.fsPath;
         const definition = suppliedDefinition || { type: 'crust', command, project, ...(target ? { target } : {}) };
         const name = suppliedName || `${info.name}: ${command}${target ? ` ${target}` : ''}`;
         const execution = new vscode.ProcessExecution(compilerPath(manifest),
             commandArguments(command, manifest.fsPath, target), { cwd: path.dirname(manifest.fsPath) });
-        const result = new vscode.Task(definition, folder || vscode.TaskScope.Global, name, 'Crust', execution, ['$crust']);
+        const result = new vscode.Task(definition, folder || vscode.TaskScope.Workspace, name, 'Crust', execution, ['$crust']);
         if (command === 'build') result.group = vscode.TaskGroup.Build;
         result.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.Dedicated };
         return result;

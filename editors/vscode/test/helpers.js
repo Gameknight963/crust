@@ -35,10 +35,12 @@ function host(projects) {
         ProcessExecution: class { constructor(process, args, options) { Object.assign(this, { process, args, options }); } },
         Task: class {
             constructor(definition, scope, name, source, execution, problemMatchers) {
+                if (scope === 1) throw new Error('Global tasks are unsupported by VS Code');
                 Object.assign(this, { definition, scope, name, source, execution, problemMatchers });
             }
         },
         workspace: {
+            workspaceFolders: folders,
             getConfiguration: () => ({ get: (key, fallback) => config[key] ?? fallback }),
             getWorkspaceFolder: resource => folders.find(folder => resource.fsPath.startsWith(folder.uri.fsPath + path.sep)),
             findFiles: async () => projects.map(project => uri(project.manifest)),
