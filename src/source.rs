@@ -146,7 +146,19 @@ impl SourceSet {
             crate::parser::parse(self.tokens.clone()).map_err(|error| self.locate(error))?;
         let checked =
             crate::check::check_with_kind(program, kind).map_err(|error| self.locate(error))?;
-        return Ok(crate::emit_c::generate(&checked));
+        let sources = self
+            .files
+            .iter()
+            .map(|file| {
+                let path = file.path.to_string_lossy();
+                let name = path
+                    .strip_prefix(r"\\?\UNC\")
+                    .map(|path| format!(r"\\{path}"))
+                    .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned());
+                return (file.offset, name);
+            })
+            .collect::<Vec<_>>();
+        return Ok(crate::emit_c::generate_with_sources(&checked, &sources));
     }
 
     pub fn analyze(&self) -> Result<crate::analysis::Analysis, SourceError> {

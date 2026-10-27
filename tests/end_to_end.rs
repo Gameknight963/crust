@@ -136,7 +136,7 @@ fn arithmetic_errors_fail_predictably_instead_of_using_c_undefined_behavior() {
         assert_eq!(output.status.code(), Some(1));
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(message), "{expression}: {error}");
-        assert!(error.contains("runtime error at 2:8:"), "{error}");
+        assert!(error.contains(".cr:2:8: runtime error:"), "{error}");
     }
 }
 

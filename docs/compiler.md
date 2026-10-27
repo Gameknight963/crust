@@ -70,6 +70,10 @@ protection, and generated C includes those paths directly.
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.
 
+`SourceSet::compile` includes original filenames in runtime check locations.
+Generated C stores one escaped filename per source file and passes its address
+with each check's line and column. String compilation reports line and column.
+
 The `check_with_kind`, `compile_with_kind`, and `analyze_with_kind` APIs accept
 `ProgramKind::Library` for entries without `main`. Checked snapshots retain that
 kind through editor analysis and rename validation. Library emission gives

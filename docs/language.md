@@ -37,6 +37,8 @@ and file-based commands report errors with the original filename and location.
 Signed arithmetic overflow and division or remainder by zero terminate the program
 with a source-location diagnostic. Normal scope exits and
 returns run cleanup. Runtime termination ends the process immediately.
+File-based compilation reports `path:line:column: runtime error: message`,
+including failures in imported files.
 
 ```c
 int main() {

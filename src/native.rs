@@ -5,6 +5,8 @@ use std::process::Command;
 
 mod archive;
 mod executable;
+#[cfg(test)]
+mod runtime_tests;
 mod staging;
 #[cfg(test)]
 mod volatile_tests;

@@ -6,6 +6,13 @@ use crate::diagnostic::Span;
 use crate::types::Types;
 
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
+    return generate_with_sources(checked, &[]);
+}
+
+pub(crate) fn generate_with_sources(
+    checked: &CheckedProgram,
+    sources: &[(usize, String)],
+) -> String {
     let program = &checked.program;
     let mut native_headers = program
         .native_headers
@@ -24,6 +31,8 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
     }
     let empty_analysis = FunctionAnalysis::default();
     let mut emitter = Emitter {
+        source_files: sources,
+        runtime_files_used: false,
         output: format!("{native_headers}{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
         next_name: 0,
@@ -52,6 +61,7 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
             .collect(),
         function_values: &empty_analysis.function_values,
     };
+    let source_declaration_position = emitter.output.len();
     emitter
         .return_types
         .insert(String::from("print"), Type::Void);
@@ -188,6 +198,16 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
         }
         emitter.block_with_scope(&function.body, scope);
     }
+    if emitter.runtime_files_used {
+        let names = sources
+            .iter()
+            .map(|(_, name)| format!("    {},\n", c_string(name)))
+            .collect::<String>();
+        emitter.output.insert_str(
+            source_declaration_position,
+            &format!("static const char *const crust_rt_files[] = {{\n{names}}};\n"),
+        );
+    }
     return emitter.output;
 }
 
@@ -301,6 +321,8 @@ impl Scope {
 }
 
 struct Emitter<'checked> {
+    source_files: &'checked [(usize, String)],
+    runtime_files_used: bool,
     function_values: &'checked HashMap<Span, String>,
     output: String,
     indent: usize,
@@ -324,6 +346,19 @@ struct LoopContext {
 }
 
 impl Emitter<'_> {
+    fn runtime_location(&mut self, span: Span) -> String {
+        let file = self
+            .source_files
+            .partition_point(|(start, _)| *start <= span.start);
+        let name = if file == 0 {
+            "NULL".to_owned()
+        } else {
+            self.runtime_files_used = true;
+            format!("crust_rt_files[{}]", file - 1)
+        };
+        return format!("{name}, {}, {}", span.line, span.column);
+    }
+
     fn address_type(&self, expression: &Expression, mutable: bool) -> Type {
         return self
             .place_type(expression)
@@ -390,9 +425,9 @@ impl Emitter<'_> {
                 ("div", "/"),
                 ("rem", "%"),
             ] {
-                self.line(&format!("static inline {ty} crust_rt_u{bits}_{name}({ty} a, {ty} b, size_t line, size_t column) {{"));
+                self.line(&format!("static inline {ty} crust_rt_u{bits}_{name}({ty} a, {ty} b, const char *crust_file, size_t line, size_t column) {{"));
                 self.indent += 1;
-                self.line("(void)line; (void)column;");
+                self.line("(void)crust_file; (void)line; (void)column;");
                 if name == "div" || name == "rem" {
                     let reason = if name == "div" {
                         "division by zero"
@@ -400,14 +435,14 @@ impl Emitter<'_> {
                         "remainder by zero"
                     };
                     self.line(&format!(
-                        "if (b == 0) {{ crust_rt_fail(\"{reason}\", line, column); }}"
+                        "if (b == 0) {{ crust_rt_fail(\"{reason}\", crust_file, line, column); }}"
                     ));
                 }
                 self.line(&format!("return ({ty})(a {symbol} b);"));
                 self.indent -= 1;
                 self.line("}");
             }
-            self.line(&format!("static inline {ty} crust_rt_u{bits}_neg({ty} value, size_t line, size_t column) {{ (void)line; (void)column; return ({ty})(0 - value); }}"));
+            self.line(&format!("static inline {ty} crust_rt_u{bits}_neg({ty} value, const char *crust_file, size_t line, size_t column) {{ (void)crust_file; (void)line; (void)column; return ({ty})(0 - value); }}"));
         }
     }
 
@@ -752,29 +787,26 @@ impl Emitter<'_> {
             return self.temporary(to, &cast);
         }
         let bits = target.bits();
+        let location = self.runtime_location(span);
         let call = match (source.signed(), target.signed()) {
-            (true, true) => format!(
-                "crust_rt_cast_signed({value}, INT{bits}_MIN, INT{bits}_MAX, {}, {})",
-                span.line, span.column
-            ),
-            (true, false) => format!(
-                "crust_rt_cast_unsigned_from_signed({value}, UINT{bits}_MAX, {}, {})",
-                span.line, span.column
-            ),
-            (false, true) => format!(
-                "crust_rt_cast_signed_from_unsigned({value}, INT{bits}_MAX, {}, {})",
-                span.line, span.column
-            ),
-            (false, false) => format!(
-                "crust_rt_cast_unsigned({value}, UINT{bits}_MAX, {}, {})",
-                span.line, span.column
-            ),
+            (true, true) => {
+                format!("crust_rt_cast_signed({value}, INT{bits}_MIN, INT{bits}_MAX, {location})")
+            }
+            (true, false) => {
+                format!("crust_rt_cast_unsigned_from_signed({value}, UINT{bits}_MAX, {location})")
+            }
+            (false, true) => {
+                format!("crust_rt_cast_signed_from_unsigned({value}, INT{bits}_MAX, {location})")
+            }
+            (false, false) => {
+                format!("crust_rt_cast_unsigned({value}, UINT{bits}_MAX, {location})")
+            }
         };
         return self.temporary(to, &format!("({})({call})", c_type(to)));
     }
 
     fn operation(
-        &self,
+        &mut self,
         operator: BinaryOperator,
         kind: IntType,
         left: &str,
@@ -782,6 +814,7 @@ impl Emitter<'_> {
         span: Span,
     ) -> String {
         if operator.is_shift() {
+            let location = self.runtime_location(span);
             let direction = if operator == BinaryOperator::ShiftLeft {
                 "left"
             } else {
@@ -789,10 +822,8 @@ impl Emitter<'_> {
             };
             let sign = if kind.signed() { "signed" } else { "unsigned" };
             return format!(
-                "crust_rt_shift_{direction}_{sign}({left}, (uint64_t)({right}), {}, {}, {})",
-                kind.bits(),
-                span.line,
-                span.column
+                "crust_rt_shift_{direction}_{sign}({left}, (uint64_t)({right}), {}, {location})",
+                kind.bits()
             );
         }
         let helper = match operator {
@@ -804,11 +835,9 @@ impl Emitter<'_> {
             _ => None,
         };
         if let Some(helper) = helper {
+            let location = self.runtime_location(span);
             let family = kind.runtime_prefix();
-            return format!(
-                "crust_rt_{family}{helper}({left}, {right}, {}, {})",
-                span.line, span.column
-            );
+            return format!("crust_rt_{family}{helper}({left}, {right}, {location})");
         }
         let symbol = match operator {
             BinaryOperator::Equal => "==",
@@ -1085,8 +1114,7 @@ impl Emitter<'_> {
                     values.push(self.value_expression(argument));
                 }
                 if name == "box_int" {
-                    values.push(expression.span.line.to_string());
-                    values.push(expression.span.column.to_string());
+                    values.push(self.runtime_location(expression.span));
                 }
                 let function = if name == "print" {
                     let argument_type = self.expression_type(&arguments[0]);
@@ -1164,8 +1192,8 @@ impl Emitter<'_> {
                             .unwrap()
                             .runtime_prefix();
                         format!(
-                            "crust_rt_{family}neg({value}, {}, {})",
-                            expression.span.line, expression.span.column
+                            "crust_rt_{family}neg({value}, {})",
+                            self.runtime_location(expression.span)
                         )
                     }
                     UnaryOperator::Dereference => unreachable!(),
@@ -1267,10 +1295,9 @@ impl Emitter<'_> {
                 let value = self.value_expression(index);
                 let signed = self.expression_type(index).integer().unwrap().signed();
                 let check = format!(
-                    "crust_rt_index_{}({value}, {length}, {}, {})",
+                    "crust_rt_index_{}({value}, {length}, {})",
                     if signed { "signed" } else { "unsigned" },
-                    index.span.line,
-                    index.span.column
+                    self.runtime_location(index.span)
                 );
                 let checked_index =
                     self.temporary(Type::Integer(IntType::named("size_t").unwrap()), &check);
@@ -1415,51 +1442,55 @@ const RUNTIME: &str = r#"/* Generated by the Crust prototype compiler. */
 #include <stdio.h>
 #include <stdlib.h>
 
-static inline void crust_rt_fail(const char *message, size_t line, size_t column)
+static inline void crust_rt_fail(const char *message, const char *crust_file, size_t line, size_t column)
 {
-    fprintf(stderr, "runtime error at %zu:%zu: %s\n", line, column, message);
+    if (crust_file != NULL) {
+        fprintf(stderr, "%s:%zu:%zu: runtime error: %s\n", crust_file, line, column, message);
+    } else {
+        fprintf(stderr, "runtime error at %zu:%zu: %s\n", line, column, message);
+    }
     exit(EXIT_FAILURE);
 }
 
-static inline int32_t crust_rt_range(int64_t value, size_t line, size_t column)
+static inline int32_t crust_rt_range(int64_t value, const char *crust_file, size_t line, size_t column)
 {
     if (value < INT32_MIN || value > INT32_MAX) {
-        crust_rt_fail("integer overflow", line, column);
+        crust_rt_fail("integer overflow", crust_file, line, column);
     }
     return (int32_t)value;
 }
 
-static inline int32_t crust_rt_add(int32_t a, int32_t b, size_t line, size_t column)
+static inline int32_t crust_rt_add(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
 {
-    return crust_rt_range((int64_t)a + b, line, column);
+    return crust_rt_range((int64_t)a + b, crust_file, line, column);
 }
 
-static inline int32_t crust_rt_sub(int32_t a, int32_t b, size_t line, size_t column)
+static inline int32_t crust_rt_sub(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
 {
-    return crust_rt_range((int64_t)a - b, line, column);
+    return crust_rt_range((int64_t)a - b, crust_file, line, column);
 }
 
-static inline int32_t crust_rt_mul(int32_t a, int32_t b, size_t line, size_t column)
+static inline int32_t crust_rt_mul(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
 {
-    return crust_rt_range((int64_t)a * b, line, column);
+    return crust_rt_range((int64_t)a * b, crust_file, line, column);
 }
 
-static inline int32_t crust_rt_neg(int32_t value, size_t line, size_t column)
+static inline int32_t crust_rt_neg(int32_t value, const char *crust_file, size_t line, size_t column)
 {
-    return crust_rt_range(-(int64_t)value, line, column);
+    return crust_rt_range(-(int64_t)value, crust_file, line, column);
 }
 
-static inline int32_t crust_rt_div(int32_t a, int32_t b, size_t line, size_t column)
+static inline int32_t crust_rt_div(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
 {
-    if (b == 0) { crust_rt_fail("division by zero", line, column); }
-    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", line, column); }
+    if (b == 0) { crust_rt_fail("division by zero", crust_file, line, column); }
+    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", crust_file, line, column); }
     return a / b;
 }
 
-static inline int32_t crust_rt_rem(int32_t a, int32_t b, size_t line, size_t column)
+static inline int32_t crust_rt_rem(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
 {
-    if (b == 0) { crust_rt_fail("remainder by zero", line, column); }
-    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", line, column); }
+    if (b == 0) { crust_rt_fail("remainder by zero", crust_file, line, column); }
+    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", crust_file, line, column); }
     return a % b;
 }
 
@@ -1468,10 +1499,10 @@ static inline void crust_rt_print(int32_t value)
     printf("%" PRId32 "\n", value);
 }
 
-static inline int32_t *crust_rt_box_int(int32_t value, size_t line, size_t column)
+static inline int32_t *crust_rt_box_int(int32_t value, const char *crust_file, size_t line, size_t column)
 {
     int32_t *owner = (int32_t *)malloc(sizeof(int32_t));
-    if (owner == NULL) { crust_rt_fail("out of memory", line, column); }
+    if (owner == NULL) { crust_rt_fail("out of memory", crust_file, line, column); }
     *owner = value;
     return owner;
 }
@@ -1483,4 +1514,19 @@ static inline void crust_rt_drop(int32_t **owner)
 }
 
 "#;
+
+fn c_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for byte in value.bytes() {
+        match byte {
+            b'"' => result.push_str("\\\""),
+            b'\\' => result.push_str("\\\\"),
+            b'?' => result.push_str("\\?"),
+            32..=126 => result.push(char::from(byte)),
+            _ => result.push_str(&format!("\\{byte:03o}")),
+        }
+    }
+    result.push('"');
+    return result;
+}
 const NUMERIC_RUNTIME: &str = include_str!("runtime_numbers.h");
