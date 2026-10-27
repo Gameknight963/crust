@@ -40,6 +40,7 @@ ownership checking, C generation, and native compilation.
 | `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
 | `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
 | `src/native/tool_paths.rs` | Native tool working directories and preserved input paths |
+| `src/native/source_mapping_tests.rs` | Native source locations, debug records, and filename escaping |
 | `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
 | `src/project.rs` | TOML project loading, discovery, and target selection |
 | `src/project/links.rs` | Native target dependency order and transitive archive inputs |
@@ -74,6 +75,13 @@ to the original path and byte range.
 Native header references resolve relative to their declaring source file.
 `SourceSet::native_headers` exposes their canonical paths for build-input
 protection, and generated C includes those paths directly.
+
+Generated function bodies use `#line` directives to retain source filenames and
+line numbers. Expressions retain their own locations, and scope cleanup maps to
+the closing brace. Source maps follow imported files and accept LF, CRLF, and
+bare CR line endings. Clang debug records retain these locations when the C is
+compiled with debug information. Native variable and function names follow the
+compiler's generated C names.
 
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and

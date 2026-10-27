@@ -5,14 +5,34 @@ use crate::check::{CheckedProgram, FunctionAnalysis};
 use crate::diagnostic::Span;
 use crate::types::Types;
 
+pub(crate) struct Source {
+    start: usize,
+    name: String,
+    line_starts: Vec<usize>,
+}
+
+impl Source {
+    pub fn new(start: usize, name: String, text: &str) -> Self {
+        let mut line_starts = vec![start];
+        let bytes = text.as_bytes();
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == b'\n' || (*byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')) {
+                line_starts.push(start + index + 1);
+            }
+        }
+        return Self {
+            start,
+            name,
+            line_starts,
+        };
+    }
+}
+
 pub(crate) fn generate(checked: &CheckedProgram) -> String {
     return generate_with_sources(checked, &[]);
 }
 
-pub(crate) fn generate_with_sources(
-    checked: &CheckedProgram,
-    sources: &[(usize, String)],
-) -> String {
+pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]) -> String {
     let program = &checked.program;
     let mut native_headers = program
         .native_headers
@@ -32,6 +52,8 @@ pub(crate) fn generate_with_sources(
     let empty_analysis = FunctionAnalysis::default();
     let mut emitter = Emitter {
         source_files: sources,
+        source_offset: None,
+        mapped_location: None,
         runtime_files_used: false,
         output: format!("{native_headers}{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
@@ -180,6 +202,7 @@ pub(crate) fn generate_with_sources(
         emitter.constants = &analysis.constants;
         emitter.function_values = &analysis.function_values;
         emitter.line("");
+        emitter.source_offset = Some(function.span.start);
         emitter.line(&header(function, checked.kind));
         let mut scope = Scope::default();
         for (index, parameter) in function.parameters.iter().enumerate() {
@@ -199,11 +222,12 @@ pub(crate) fn generate_with_sources(
             );
         }
         emitter.block_with_scope(&function.body, scope);
+        emitter.source_offset = None;
     }
     if emitter.runtime_files_used {
         let names = sources
             .iter()
-            .map(|(_, name)| format!("    {},\n", c_string(name)))
+            .map(|source| format!("    {},\n", c_string(&source.name)))
             .collect::<String>();
         emitter.output.insert_str(
             source_declaration_position,
@@ -325,7 +349,9 @@ impl Scope {
 }
 
 struct Emitter<'checked> {
-    source_files: &'checked [(usize, String)],
+    source_files: &'checked [Source],
+    source_offset: Option<usize>,
+    mapped_location: Option<(usize, usize)>,
     runtime_files_used: bool,
     function_values: &'checked HashMap<Span, String>,
     output: String,
@@ -353,7 +379,7 @@ impl Emitter<'_> {
     fn runtime_location(&mut self, span: Span) -> String {
         let file = self
             .source_files
-            .partition_point(|(start, _)| *start <= span.start);
+            .partition_point(|source| source.start <= span.start);
         let name = if file == 0 {
             "NULL".to_owned()
         } else {
@@ -549,6 +575,7 @@ impl Emitter<'_> {
     }
 
     fn block_with_scope(&mut self, block: &Block, scope: Scope) {
+        let previous = self.source_offset.replace(block.span.start);
         self.line("{");
         self.indent += 1;
         for name in &scope.declaration_order {
@@ -560,13 +587,21 @@ impl Emitter<'_> {
         for statement in &block.statements {
             self.statement(statement);
         }
+        self.source_offset = Some(block.span.end.saturating_sub(1));
         self.cleanup_scope(self.scopes.len() - 1);
         self.scopes.pop();
         self.indent -= 1;
         self.line("}");
+        self.source_offset = previous;
     }
 
     fn statement(&mut self, statement: &Statement) {
+        let previous = self.source_offset.replace(statement.span.start);
+        self.statement_inner(statement);
+        self.source_offset = previous;
+    }
+
+    fn statement_inner(&mut self, statement: &Statement) {
         match &statement.kind {
             StatementKind::Unsafe(block) => self.block(block),
             StatementKind::Local {
@@ -754,6 +789,13 @@ impl Emitter<'_> {
     }
 
     fn value_expression(&mut self, expression: &Expression) -> String {
+        let previous = self.source_offset.replace(expression.span.start);
+        let value = self.value_expression_inner(expression);
+        self.source_offset = previous;
+        return value;
+    }
+
+    fn value_expression_inner(&mut self, expression: &Expression) -> String {
         let value = self
             .expression(expression)
             .expect("checker requires a non-void value here");
@@ -892,6 +934,13 @@ impl Emitter<'_> {
     // assignment, argument, return, or discard. Its temporary is transferred to
     // that consumer; only named owning locals are registered for scope cleanup.
     fn expression(&mut self, expression: &Expression) -> Option<String> {
+        let previous = self.source_offset.replace(expression.span.start);
+        let value = self.expression_inner(expression);
+        self.source_offset = previous;
+        return value;
+    }
+
+    fn expression_inner(&mut self, expression: &Expression) -> Option<String> {
         if let Some(name) = self.function_values.get(&expression.span) {
             let function = if let Some(symbol) = self.external_names.get(name) {
                 symbol.clone()
@@ -1445,9 +1494,30 @@ impl Emitter<'_> {
     }
 
     fn line(&mut self, text: &str) {
+        if let Some(offset) = self.source_offset
+            && let Some(index) = self
+                .source_files
+                .partition_point(|source| source.start <= offset)
+                .checked_sub(1)
+        {
+            let source = &self.source_files[index];
+            let line = source.line_starts.partition_point(|start| *start <= offset);
+            if self.mapped_location != Some((index, line)) {
+                let filename = if self.mapped_location.is_some_and(|(file, _)| file == index) {
+                    String::new()
+                } else {
+                    format!(" {}", c_string(&source.name))
+                };
+                self.output.push_str(&format!("#line {line}{filename}\n"));
+                self.mapped_location = Some((index, line));
+            }
+        }
         self.output.push_str(&"    ".repeat(self.indent));
         self.output.push_str(text);
         self.output.push('\n');
+        if let Some((_, line)) = &mut self.mapped_location {
+            *line += text.bytes().filter(|byte| *byte == b'\n').count() + 1;
+        }
     }
 }
 

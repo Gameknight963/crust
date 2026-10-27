@@ -8,6 +8,8 @@ mod executable;
 #[cfg(test)]
 mod runtime_tests;
 mod shared;
+#[cfg(test)]
+mod source_mapping_tests;
 mod staging;
 mod tool_paths;
 #[cfg(test)]

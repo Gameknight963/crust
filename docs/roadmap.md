@@ -72,6 +72,7 @@
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
+- Source line mapping in generated C for native function, expression, and cleanup locations
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links

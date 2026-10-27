@@ -163,7 +163,11 @@ impl SourceSet {
             .files
             .iter()
             .map(|file| {
-                return (file.offset, display_path(&file.path));
+                return crate::emit_c::Source::new(
+                    file.offset,
+                    display_path(&file.path),
+                    &file.text,
+                );
             })
             .collect::<Vec<_>>();
         return Ok(crate::emit_c::generate_with_sources(&checked, &sources));
