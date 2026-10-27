@@ -55,7 +55,7 @@
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping
-- Local, parameter, function, method, typedef, interface, and external-variable rename with binding checks, preserved C names, and affected-target validation
+- Local, parameter, generic type parameter, function, method, typedef, interface, and external-variable rename with binding checks, preserved C names, and affected-target validation
 - Scope completion with shadowing, imported declarations, generic parameters, and partial-word recovery
 - Resolved member completion for fields, methods, and enums, including generic receivers and private-field visibility
 - Workspace symbol search across unopened project targets and shared imports, with unsaved source overlays and folder updates
@@ -82,7 +82,7 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 ## Editor support
 
-- Extend rename to structs, unions, enums, and type parameters
+- Extend rename to structs, unions, and enums
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Add native build and launch commands to Visual Studio
 - Use `crust.toml` as the authoritative project configuration

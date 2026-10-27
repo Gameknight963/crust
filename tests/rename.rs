@@ -388,11 +388,119 @@ fn renames_generic_parameters_as_value_bindings_without_touching_type_parameters
     assert_eq!(edits.len(), 2);
     let result = apply(&analysis, &edits).remove(0);
     assert!(result.starts_with("T identity<T>(T value) { return value; }"));
+    let edits = analysis
+        .rename(0, source.find("T>(T").unwrap(), "Value")
+        .unwrap();
+    let result = apply(&analysis, &edits).remove(0);
+    assert!(result.starts_with("Value identity<Value>(Value T) { return T; }"));
+}
+
+#[test]
+fn type_parameter_rename_covers_struct_members_and_separate_instantiations() {
+    let source = r#"
+struct Pair<T, U> {
+    T first;
+    U second;
+    T read() const { return this->first; }
+    static Self create(T first, U second) { Self result = { .first = first, .second = second }; return result; }
+};
+T echo<T>(T value) { return value; }
+int main() {
+    Pair<int, char> first = Pair<int, char>::create(42, 'a');
+    Pair<char, int> second = Pair<char, int>::create('b', 7);
+    print(first.read());
+    print(second.read());
+    print(echo<int>(8));
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("T, U").unwrap(), "Element")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("struct Pair<Element, U>"));
+    assert!(renamed.contains("Element first;"));
+    assert!(renamed.contains("Element read() const"));
+    assert!(renamed.contains("create(Element first, U second)"));
+    assert!(renamed.contains("T echo<T>(T value)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
     assert!(
-        analysis
-            .rename_target(0, source.find("T>(T").unwrap())
-            .is_none()
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n98\n8\n"
+    );
+}
+
+#[test]
+fn type_parameter_rename_preserves_generic_owner_cleanup_and_union_access() {
+    let source = r#"
+struct Holder<T> { T value; };
+union Bits<T> { T value; unsigned char byte; };
+int main() {
+    Holder<BoxInt> holder = { .value = box_int(42) };
+    print(*holder.value);
+    unsafe { Bits<int> bits = { .value = 7 }; print(bits.value); }
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("T>").unwrap(), "Value")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("Holder<Value> { Value value; }"));
+    assert!(renamed.contains("union Bits<T> { T value;"));
+    let analysis = crust::analyze(&renamed).unwrap();
+    let edits = analysis
+        .rename(
+            0,
+            renamed.find("Bits<T>").unwrap() + "Bits<".len(),
+            "Storage",
+        )
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("union Bits<Storage> { Storage value;"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\n7\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        "drop:42\n"
+    );
+}
+
+#[test]
+fn type_parameter_rename_rejects_capture_and_unresolved_template_uses() {
+    for (source, name) in [
+        (
+            "T echo<T, U>(T value) { return value; } int main() { return echo<int, char>(1); }",
+            "U",
+        ),
+        (
+            "typedef int Item; T echo<T>(T value) { Item other = 1; return value; } int main() { return echo<int>(1); }",
+            "Item",
+        ),
+        (
+            "T echo<T>(T value) { return value; } int main() { return 0; }",
+            "Element",
+        ),
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        let offset = source.find("echo<T").unwrap() + "echo<".len();
+        assert!(analysis.rename(0, offset, name).is_err(), "{source}");
+    }
 }
 
 #[test]

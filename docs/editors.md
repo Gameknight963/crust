@@ -27,7 +27,7 @@ The server also provides:
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 - Find All References for resolved bindings across the analyzed target's imports
 - Workspace symbol search across project targets and imported sources
-- Rename for locals, explicit parameters, functions, methods, typedefs, interfaces, and external variables, with checks for name capture
+- Rename for locals, explicit parameters, generic type parameters, functions, methods, typedefs, interfaces, and external variables, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
 - Signature help for functions, methods, callbacks, and built-in calls
@@ -148,6 +148,6 @@ to stderr.
 
 ## Further work
 
-- Rename for structs, unions, enums, and type parameters
+- Rename for structs, unions, and enums
 - Semantic information across module namespaces and project dependencies
 - Visual Studio project-system integration and debugging

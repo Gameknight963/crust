@@ -87,6 +87,7 @@ impl Analysis {
                 | SymbolKind::Method
                 | SymbolKind::Alias
                 | SymbolKind::Interface
+                | SymbolKind::TypeParameter
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
@@ -124,7 +125,7 @@ impl Analysis {
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
             return Err(
-                "select a local, parameter, function, method, typedef, interface, or external variable to rename"
+                "select a local, parameter, type parameter, function, method, typedef, interface, or external variable to rename"
                     .to_owned(),
             );
         };
@@ -189,7 +190,9 @@ impl Analysis {
             .symbols
             .iter()
             .filter(|parent| {
-                matches!(parent.kind, SymbolKind::Function | SymbolKind::Method)
+                (matches!(parent.kind, SymbolKind::Function | SymbolKind::Method)
+                    || (symbol.kind == SymbolKind::TypeParameter
+                        && matches!(parent.kind, SymbolKind::Struct | SymbolKind::Union)))
                     && contains(
                         parent.range,
                         symbol.location.file,

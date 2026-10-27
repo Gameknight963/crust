@@ -177,6 +177,7 @@ impl Context {
                         | SymbolKind::Method
                         | SymbolKind::Alias
                         | SymbolKind::Interface
+                        | SymbolKind::TypeParameter
                         | SymbolKind::Global
                 )
             });
