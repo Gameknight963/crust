@@ -18,6 +18,119 @@ fn run(source: &str, stdout: &str, drops: &str) {
 }
 
 #[test]
+fn do_while_runs_once_and_continue_evaluates_the_condition() {
+    run(
+        r#"
+        int condition(int^ calls, int count) { *calls += 1; return count < 3; }
+        int main() {
+            int once = 0;
+            do { once += 1; } while (false);
+            print(once);
+            int count = 0;
+            int calls = 0;
+            do {
+                int calls = 99;
+                count += 1;
+                if (count < 3) { continue; }
+            } while (condition(^calls, count));
+            print(count);
+            print(calls);
+            int total = 0;
+            for (int i = 0; i < 2; i += 1) {
+                int j = 0;
+                do {
+                    j += 1;
+                    if (j == 1) { continue; }
+                    do { total += 1; break; } while (true);
+                    break;
+                } while (j < 3);
+            }
+            print(total);
+            return 0;
+        }
+        "#,
+        "1\n3\n3\n2\n",
+        "",
+    );
+}
+
+#[test]
+fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break() {
+    run(
+        r#"
+        struct R { BoxInt value; ~R() { print(*this->value); } };
+        int condition(int count) { print(100 + count); return count < 5; }
+        int main() {
+            R outer = { .value = box_int(99) };
+            int i = 0;
+            do {
+                R a = { .value = box_int(i) };
+                {
+                    R b = { .value = box_int(10 + i) };
+                    i += 1;
+                    if (i == 1) { continue; }
+                    if (i == 3) { break; }
+                }
+            } while (condition(i));
+            print(42);
+            return 0;
+        }
+        "#,
+        "10\n0\n101\n11\n1\n102\n12\n2\n42\n99\n",
+        "drop:10\ndrop:0\ndrop:11\ndrop:1\ndrop:12\ndrop:2\ndrop:99\n",
+    );
+}
+
+#[test]
+fn do_while_releases_body_borrows_before_the_condition_and_tracks_guaranteed_exits() {
+    run(
+        r#"
+        int bump(int^ value) { *value += 1; return *value < 2; }
+        int result() {
+            BoxInt owner = box_int(8);
+            do { return *owner; } while (false);
+        }
+        int main() {
+            int count = 0;
+            do {
+                const int^ view = ^const count;
+                print(*view);
+                continue;
+            } while (bump(^count));
+            BoxInt owner = box_int(7);
+            do { move(owner); break; } while (false);
+            owner = box_int(9);
+            print(*owner);
+            print(result());
+            return 0;
+        }
+        "#,
+        "0\n1\n9\n8\n",
+        "drop:7\ndrop:8\ndrop:9\n",
+    );
+}
+
+#[test]
+fn do_while_rejects_invalid_syntax_scope_and_owner_backedges() {
+    for body in [
+        "do { move(a); } while (true);",
+        "do { move(a); continue; } while (false);",
+        "do { if (true) { move(a); continue; } } while (true);",
+        "do { move(a); break; } while (false); print(*a);",
+        "do { } while (consume(move(a)));",
+        "do { int local = 1; } while (local);",
+        "do { } while (true)",
+        "do { } (true);",
+        "do print(1); while (true);",
+    ] {
+        let source = format!(
+            "int consume(BoxInt owner) {{ return 0; }} int main() {{ BoxInt a = box_int(7); {body} return 0; }}"
+        );
+        assert!(crust::check(&source).is_err(), "should reject {source}");
+    }
+}
+
+#[test]
 fn for_and_while_support_break_continue_and_empty_clauses() {
     run(
         r#"

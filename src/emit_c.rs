@@ -300,6 +300,7 @@ struct Emitter<'checked> {
 struct LoopContext {
     scope_count: usize,
     step: Option<Box<Statement>>,
+    continue_label: Option<String>,
 }
 
 impl Emitter<'_> {
@@ -618,6 +619,7 @@ impl Emitter<'_> {
                 let context = self.loops.last().expect("checked loop control");
                 let scope_count = context.scope_count;
                 let step = context.step.clone();
+                let continue_label = context.continue_label.clone();
                 for index in (scope_count..self.scopes.len()).rev() {
                     self.cleanup_scope(index);
                 }
@@ -627,7 +629,11 @@ impl Emitter<'_> {
                         self.statement(&step);
                         self.scopes.extend(inner_scopes);
                     }
-                    self.line("continue;");
+                    if let Some(label) = continue_label {
+                        self.line(&format!("goto {label};"));
+                    } else {
+                        self.line("continue;");
+                    }
                 } else {
                     self.line("break;");
                 }
@@ -644,12 +650,30 @@ impl Emitter<'_> {
                 self.loops.push(LoopContext {
                     scope_count: self.scopes.len(),
                     step: step.clone(),
+                    continue_label: None,
                 });
                 self.block(body);
                 if let Some(step) = step {
                     self.statement(step);
                 }
                 self.loops.pop();
+                self.indent -= 1;
+                self.line("}");
+            }
+            StatementKind::DoWhile { body, condition } => {
+                let label = format!("crust_continue_{}", statement.span.start);
+                self.line("while (1) {");
+                self.indent += 1;
+                self.loops.push(LoopContext {
+                    scope_count: self.scopes.len(),
+                    step: None,
+                    continue_label: Some(label.clone()),
+                });
+                self.block(body);
+                self.loops.pop();
+                self.line(&format!("{label}: ;"));
+                let condition = self.value_expression(condition);
+                self.line(&format!("if (!{condition}) {{ break; }}"));
                 self.indent -= 1;
                 self.line("}");
             }

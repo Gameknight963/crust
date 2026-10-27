@@ -514,6 +514,10 @@ pub enum StatementKind {
         body: Block,
         step: Option<Box<Statement>>,
     },
+    DoWhile {
+        body: Block,
+        condition: Expression,
+    },
     Empty,
 }
 

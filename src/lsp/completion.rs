@@ -205,6 +205,7 @@ fn complete(
         "else",
         "while",
         "for",
+        "do",
         "break",
         "continue",
         "const",

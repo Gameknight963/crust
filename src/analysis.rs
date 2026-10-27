@@ -250,6 +250,7 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
                     self.statement(step);
                 }
             }
+            StatementKind::DoWhile { body, .. } => self.block(body),
             _ => {}
         }
     }

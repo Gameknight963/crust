@@ -16,7 +16,7 @@
     { "name": "storage.type.crust", "match": "\\b(int|char|signed|unsigned|short|long|bool|void|BoxInt|Self|u?int(8|16|32|64)_t|size_t|ptrdiff_t|u?intptr_t)\\b" },
     { "name": "constant.language.crust", "match": "\\b(true|false)\\b" },
     { "name": "storage.modifier.crust", "match": "\\b(const|static|typedef|extern|private|__cdecl|__stdcall|__fastcall|__vectorcall|__declspec)\\b" },
-    { "name": "keyword.control.crust", "match": "\\b(return|if|else|while|for|break|continue|unsafe|import)\\b" },
+    { "name": "keyword.control.crust", "match": "\\b(return|if|else|while|do|for|break|continue|unsafe|import)\\b" },
     { "name": "keyword.operator.crust", "match": "\\b(sizeof|alignof|_Alignof|init|destroy)\\b" },
     { "name": "support.function.crust", "match": "\\b(print|box_int|move)(?=\\s*\\()" },
     { "name": "entity.name.function.crust", "match": "~?[a-zA-Z_][a-zA-Z_0-9]*(?=\\s*\\()" },

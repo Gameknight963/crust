@@ -84,7 +84,9 @@ fn block_scopes(block: &Block, locate: &impl Fn(Span) -> Location, scopes: &mut 
                     block_scopes(block, locate, scopes);
                 }
             }
-            StatementKind::While { body, .. } => block_scopes(body, locate, scopes),
+            StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
+                block_scopes(body, locate, scopes)
+            }
             _ => {}
         }
     }

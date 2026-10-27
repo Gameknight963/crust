@@ -7,6 +7,7 @@
 - Instance methods, value receivers, and destructors
 - Bare struct names, basic typedefs, and static methods
 - For loops, break/continue cleanup, and compound assignments
+- Do-while loops with body-first checking, condition-directed continue, and ownership cleanup
 - Boolean values, scalar conversions, and a common borrow representation
 - Fixed-width and pointer-sized integers, checked conversions, casts, and size/alignment queries
 - ASCII character literals and hexadecimal, binary, octal, and decimal integers

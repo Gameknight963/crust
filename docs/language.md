@@ -21,7 +21,7 @@ and file-based commands report errors with the original filename and location.
 - The entry point is `int main()` or `int main(void)`
 - Local declarations require initializers
 - Blocks support nested scopes and variable shadowing
-- `if`, `else`, `while`, and `for` bodies use braces
+- `if`, `else`, `while`, `do`, and `for` bodies use braces
 - `break` exits the innermost loop, and `continue` advances to its next iteration
 - `for` scopes its initializer and runs its step after each continuing iteration, including `continue`
 - Loop control destroys locals in the scopes being exited
@@ -49,6 +49,21 @@ int main() {
 
 For-loop clauses may be empty. An omitted condition continues until a `break`
 or return. Header variables are scoped to the loop.
+
+`do { ... } while (condition);` runs its body before testing the condition.
+`continue` cleans up body locals and advances to that test. `break` exits without
+evaluating the condition. Body-local names are scoped to the braces.
+
+```c
+int count = 0;
+do {
+    count += 1;
+} while (count < 3);
+```
+
+Every path reaching the next iteration must restore any moved outer owners.
+The condition can borrow outer values after body-local borrows have ended.
+See [the do-while example](../examples/do_while.cr).
 
 Compound assignments capture their destination before evaluating the right side.
 The right side can read the destination, while mutation or moves of its parent
@@ -880,7 +895,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `do`, `for`, `break`, `continue`, `const`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `box_int`, and `move` tokenize as identifiers

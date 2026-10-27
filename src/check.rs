@@ -860,6 +860,57 @@ impl FunctionChecker<'_> {
                     self.scopes = merge(&self.scopes, &state);
                 }
             }
+            StatementKind::DoWhile { body, condition } => {
+                let before = self.scopes.clone();
+                self.loops.push(LoopContext {
+                    scope_count: self.scopes.len(),
+                    breaks: Vec::new(),
+                    continues: Vec::new(),
+                });
+                let body_terminates = self.block(body)?;
+                let mut context = self.loops.pop().expect("loop context");
+                if !body_terminates {
+                    context.continues.push((self.scopes.clone(), body.span));
+                }
+                if context.continues.is_empty() {
+                    // Unreachable conditions still need checked expression metadata.
+                    self.scopes = before.clone();
+                    self.condition(condition)?;
+                    if !same_owner_states(&before, &self.scopes, self.types) {
+                        return Err(Diagnostic::new(
+                            condition.span,
+                            "a loop condition cannot consume an outer owner",
+                        ));
+                    }
+                }
+                let mut exits = context.breaks;
+                for (state, span) in context.continues {
+                    self.scopes = state;
+                    let before_condition = self.scopes.clone();
+                    self.condition(condition)?;
+                    if !same_owner_states(&before_condition, &self.scopes, self.types) {
+                        return Err(Diagnostic::new(
+                            condition.span,
+                            "a loop condition cannot consume an outer owner",
+                        ));
+                    }
+                    if !same_owner_states(&before, &self.scopes, self.types) {
+                        return Err(Diagnostic::new(
+                            span,
+                            "a loop must restore moved outer owners before the next iteration",
+                        ));
+                    }
+                    exits.push(self.scopes.clone());
+                }
+                let Some(mut after) = exits.pop() else {
+                    self.scopes = before;
+                    return Ok(true);
+                };
+                for state in exits {
+                    after = merge(&after, &state);
+                }
+                self.scopes = after;
+            }
             StatementKind::Empty => {}
         }
         return Ok(false);

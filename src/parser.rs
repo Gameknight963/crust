@@ -1526,6 +1526,22 @@ impl Parser {
             });
         }
 
+        if self.consume(&Token::Do) {
+            let body = self.block()?;
+            self.expect(Token::While, "expected 'while' after the do body")?;
+            self.expect(Token::LeftParen, "expected '(' after 'while'")?;
+            let condition = self.expression(1)?;
+            self.expect(Token::RightParen, "expected ')' after the condition")?;
+            let end = self.expect(
+                Token::Semicolon,
+                "expected ';' after the do-while condition",
+            )?;
+            return Ok(Statement {
+                span: start.through(end),
+                kind: StatementKind::DoWhile { body, condition },
+            });
+        }
+
         if self.consume(&Token::While) {
             self.expect(Token::LeftParen, "expected '(' after 'while'")?;
             let condition = self.expression(1)?;
