@@ -18,6 +18,25 @@ Target names start with a letter or digit and use letters, digits, `_`, and `-`.
 Names are unique ignoring ASCII case, giving projects consistent names across
 Windows and Unix filesystems.
 
+## Sharing Crust source
+
+Reusable Crust code uses ordinary relative imports. A library can contain
+several files, each importing its dependencies. Projects can keep a library in
+their source tree or import it from a neighboring checkout.
+
+```c
+import "../../shared/box.cr";
+import "../../shared/vector.cr";
+```
+
+Imported declarations share the target's scope. File-local `static` functions
+hide implementation helpers. The loader deduplicates files by filesystem
+identity, including files reached through different relative paths.
+
+The repository's [library](../lib/) supplies generic containers and sorting.
+These sources compile as part of the importing target, including the generic
+instances that target uses.
+
 An optional [`.crproj` file](../editors/msbuild/) adds MSBuild and Visual Studio
 solution integration alongside the manifest.
 

@@ -1142,10 +1142,8 @@ fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_ca
 fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
     let path = header("#include <stdlib.h>\n");
     let bindings = generate(&path, &options(&["qsort"])).unwrap();
-    let vector = include_str!("../examples/container_project/src/vector.cr").replace(
-        "import \"memory.cr\";",
-        include_str!("../examples/container_project/src/memory.cr"),
-    );
+    let vector = include_str!("../lib/vector.cr")
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
     let source = format!(
         r#"
         {bindings}

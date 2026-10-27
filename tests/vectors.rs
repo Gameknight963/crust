@@ -1,10 +1,8 @@
 mod common;
 
 fn run(body: &str, stdout: &str, drops: &str) {
-    let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
-        "import \"memory.cr\";",
-        include_str!("../examples/container_project/src/memory.cr"),
-    );
+    let definitions = include_str!("../lib/vector.cr")
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
     let source = format!("{definitions} {body}");
     let output = common::tracked_run_sizes(&source);
     assert!(
@@ -69,10 +67,8 @@ fn reallocation_moves_owners_without_destroying_them_and_drops_only_live_element
 
 #[test]
 fn live_element_borrows_prevent_mutation_and_whole_vector_moves() {
-    let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
-        "import \"memory.cr\";",
-        include_str!("../examples/container_project/src/memory.cr"),
-    );
+    let definitions = include_str!("../lib/vector.cr")
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
     for action in [
         "values.push(2);",
         "values.pop();",
@@ -201,10 +197,8 @@ fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() 
 
 #[test]
 fn invalid_vector_edits_stop_before_allocation_or_element_access() {
-    let definitions = include_str!("../examples/container_project/src/vector.cr").replace(
-        "import \"memory.cr\";",
-        include_str!("../examples/container_project/src/memory.cr"),
-    );
+    let definitions = include_str!("../lib/vector.cr")
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
     for (action, allocations) in [
         ("values.insert(1, 10);", 0),
         ("values.insert(~(size_t)0, 10);", 0),
