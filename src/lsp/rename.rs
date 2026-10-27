@@ -33,11 +33,7 @@ pub(super) fn global_edits(
     let (selected, _) = initial
         .analysis
         .rename_target(initial.file, offset)
-        .ok_or_else(|| {
-            RequestError::failed(
-                "select a function, method, typedef, interface, type parameter, type, or external variable to rename",
-            )
-        })?;
+        .ok_or_else(|| RequestError::failed("select a source declaration to rename"))?;
     let first = initial
         .analysis
         .rename(initial.file, offset, name)

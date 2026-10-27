@@ -396,6 +396,165 @@ fn renames_generic_parameters_as_value_bindings_without_touching_type_parameters
 }
 
 #[test]
+fn field_rename_follows_generic_initializers_borrows_and_members_without_touching_other_types() {
+    let source = r#"
+struct Item<T> { T value; T read() const { return this->value; } };
+struct Other { int value; };
+int main() {
+    Item<int> items[2] = { { .value = 41 }, { .value = 42 } };
+    Item<char> letter = { .value = 'a' };
+    Other other = { .value = 7 };
+    int value = 8;
+    { int^ view = ^items[1].value; *view += 1; }
+    print(items[1].read());
+    print(letter.read());
+    print(other.value);
+    print(value);
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("T value;").unwrap() + 2, "data")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("T data;"));
+    assert!(renamed.contains("this->data"));
+    assert!(renamed.contains("^items[1].data"));
+    assert!(renamed.contains("Other other = { .value = 7 }"));
+    assert!(renamed.contains("print(other.value)"));
+    assert!(renamed.contains("int value = 8;"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "43\n97\n7\n8\n"
+    );
+}
+
+#[test]
+fn field_rename_preserves_destructor_cleanup_and_union_layout() {
+    let source = r#"
+struct Owner { BoxInt value; ~Owner() { print(*this->value); } };
+union Bits { int value; unsigned char bytes[4]; };
+int main() {
+    Owner owner = { .value = box_int(42) };
+    unsafe { Bits bits = { .value = 7 }; print(bits.value); }
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("BoxInt value").unwrap() + 7, "storage")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("~Owner() { print(*this->storage); }"));
+    assert!(renamed.contains(".storage = box_int(42)"));
+    let analysis = crust::analyze(&renamed).unwrap();
+    let edits = analysis
+        .rename(0, renamed.find("int value;").unwrap() + 4, "number")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("Bits bits = { .number = 7 }; print(bits.number)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "7\n42\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        "drop:42\n"
+    );
+}
+
+#[test]
+fn enum_member_rename_updates_constants_scoped_uses_and_array_lengths() {
+    let source = r#"
+enum Flags : unsigned int { Read = 1, Write = 2, Both = (unsigned int)Flags::Read | (unsigned int)Write };
+enum Length { Count = (unsigned int)Flags::Read + 2 };
+int main() {
+    Flags flags = Read;
+    int values[(unsigned int)Flags::Read + 2] = { 1, 2, 3 };
+    print((unsigned int)flags);
+    print((unsigned int)Flags::Both);
+    print(values[(int)Count - 1]);
+    int Read = 7;
+    print(Read);
+    return 0;
+}
+"#;
+    let analysis = crust::analyze(source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("Read =").unwrap(), "Readable")
+        .unwrap();
+    let renamed = apply(&analysis, &edits).remove(0);
+    assert!(renamed.contains("Readable = 1"));
+    assert!(renamed.contains("Flags flags = Readable"));
+    assert!(renamed.contains("int Read = 7;"));
+    assert!(renamed.contains("print(Read)"));
+    let output = common::tracked_generated_c(&crust::compile(&renamed).unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n3\n3\n7\n"
+    );
+}
+
+#[test]
+fn member_rename_rejects_capture_unresolved_uses_and_native_enum_constants() {
+    for (source, selected, name) in [
+        (
+            "struct Item { int value; int data; }; int main() { Item item = { .value = 1, .data = 2 }; return item.value; }",
+            "value;",
+            "data",
+        ),
+        (
+            "struct Item { int value; }; int future<T>(T item) { return item.value; } int main() { return 0; }",
+            "value;",
+            "data",
+        ),
+        (
+            "enum Flags { Read = 1, Write = 2 }; int main() { return (int)Read; }",
+            "Read =",
+            "Write",
+        ),
+        (
+            "enum Flags { Read = 1 }; int main() { int Active = 7; return (int)Read; }",
+            "Read =",
+            "Active",
+        ),
+    ] {
+        let analysis = crust::analyze(source).unwrap();
+        assert!(
+            analysis
+                .rename(0, source.find(selected).unwrap(), name)
+                .is_err(),
+            "{source}"
+        );
+    }
+    let source = "extern header \"native.h\"; extern enum NativeMode : int { On = 1 }; int main() { return (int)On; }";
+    let analysis = crust::analyze(source).unwrap();
+    assert!(
+        analysis
+            .rename_target(0, source.find("On =").unwrap())
+            .is_none()
+    );
+}
+
+#[test]
 fn struct_rename_updates_forward_declarations_destructors_and_qualified_calls() {
     let source = r#"
 struct Item;

@@ -98,6 +98,15 @@ pub(super) fn native_bindings(
                 alias,
             },
         );
+        for variant in &definition.variants {
+            bindings.insert(
+                locate(variant.span),
+                NativeBinding {
+                    name: variant.name.clone(),
+                    alias: None,
+                },
+            );
+        }
     }
     for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
         if !checked.types.structs[id].complete {
@@ -131,13 +140,17 @@ impl Analysis {
                 | SymbolKind::Enum
                 | SymbolKind::Struct
                 | SymbolKind::Union
+                | SymbolKind::Field
+                | SymbolKind::EnumMember
                 | SymbolKind::Global
         ) || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || (symbol.kind == SymbolKind::Parameter && symbol.name == "this")
             || (symbol.kind == SymbolKind::Method
                 && (symbol.name.starts_with('~') || symbol.detail.trim_start().starts_with('~')))
-            || (matches!(symbol.kind, SymbolKind::Struct | SymbolKind::Union)
-                && self.native_bindings.contains_key(&symbol.declaration))
+            || (matches!(
+                symbol.kind,
+                SymbolKind::Struct | SymbolKind::Union | SymbolKind::EnumMember
+            ) && self.native_bindings.contains_key(&symbol.declaration))
         {
             return None;
         }
@@ -169,10 +182,7 @@ impl Analysis {
             return Err("the new name must be an identifier".to_owned());
         }
         let Some((symbol, _)) = self.rename_target(file, offset) else {
-            return Err(
-                "select a local, parameter, type parameter, function, method, typedef, interface, type, or external variable to rename"
-                    .to_owned(),
-            );
+            return Err("select a source declaration to rename".to_owned());
         };
         if symbol.name == new_name {
             return Ok(Vec::new());
@@ -238,6 +248,8 @@ impl Analysis {
                 | SymbolKind::Enum
                 | SymbolKind::Struct
                 | SymbolKind::Union
+                | SymbolKind::Field
+                | SymbolKind::EnumMember
                 | SymbolKind::Global
         );
         let scope = self

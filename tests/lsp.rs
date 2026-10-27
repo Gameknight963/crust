@@ -736,6 +736,64 @@ fn interface_rename_updates_constraints_in_unopened_target_templates() {
 }
 
 #[test]
+fn member_rename_updates_initializers_and_enum_uses_in_unopened_targets() {
+    let root = rename_project("members");
+    let shared = "enum Flags { Enabled = 1, Disabled = 0 }; struct Item<T> { T value; };";
+    let first = "import \"shared.cr\"; int main() { Item<Flags> item = { .value = Flags::Enabled }; return (int)item.value; }";
+    let second = "import \"shared.cr\"; struct Other { int value; }; int main() { Item<int> item = { .value = 7 }; Other other = { .value = 8 }; return item.value + other.value + (int)Enabled; }";
+    for (name, source) in [
+        ("shared.cr", shared),
+        ("first.cr", first),
+        ("second.cr", second),
+    ] {
+        std::fs::write(root.join(name), source).unwrap();
+    }
+    let first_uri = file_uri(&root.join("first.cr"));
+    let shared_uri = file_uri(&root.join("shared.cr"));
+    let second_uri = file_uri(&root.join("second.cr"));
+    let mut server = Server::start();
+    assert_eq!(server.open(&first_uri, 1, first)["diagnostics"], json!([]));
+    let mut params =
+        json!({ "textDocument": { "uri": first_uri }, "position": point(first, "value =") });
+    assert_eq!(
+        server
+            .request("textDocument/prepareRename", params.clone())
+            .result
+            .unwrap()["placeholder"],
+        "value"
+    );
+    params["newName"] = json!("data");
+    let response = server.request("textDocument/rename", params);
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    for (uri, expected) in [(&shared_uri, 1), (&first_uri, 2), (&second_uri, 2)] {
+        let edits = changes[uri].as_array().unwrap();
+        assert_eq!(edits.len(), expected);
+        assert!(edits.iter().all(|edit| edit["newText"] == "data"));
+    }
+    let params = json!({ "textDocument": { "uri": first_uri }, "position": point(first, "Enabled"), "newName": "Active" });
+    let response = server.request("textDocument/rename", params.clone());
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let changes = response.result.unwrap()["changes"].clone();
+    for uri in [&shared_uri, &first_uri, &second_uri] {
+        assert_eq!(changes[uri].as_array().unwrap().len(), 1);
+        assert_eq!(changes[uri][0]["newText"], "Active");
+    }
+    std::fs::write(
+        root.join("second.cr"),
+        second.replace("return item.value", "int Active = 2; return item.value"),
+    )
+    .unwrap();
+    assert!(
+        server
+            .request("textDocument/rename", params)
+            .error
+            .is_some()
+    );
+    server.stop();
+}
+
+#[test]
 fn struct_rename_updates_shared_generic_destructors_and_unopened_target_uses() {
     let root = rename_project("structs");
     let shared = "struct Item<T> { T value; ~Item() {} };";

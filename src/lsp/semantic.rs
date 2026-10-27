@@ -181,6 +181,8 @@ impl Context {
                         | SymbolKind::Enum
                         | SymbolKind::Struct
                         | SymbolKind::Union
+                        | SymbolKind::Field
+                        | SymbolKind::EnumMember
                         | SymbolKind::Global
                 )
             });

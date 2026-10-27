@@ -27,7 +27,7 @@ The server also provides:
 - Source outlines for types, interfaces, typedefs, fields, functions, and methods, including unused generic declarations
 - Find All References for resolved bindings across the analyzed target's imports
 - Workspace symbol search across project targets and imported sources
-- Rename for locals, parameters, generic type parameters, functions, methods, typedefs, interfaces, source types, and external variables, with checks for name capture
+- Rename for locals, parameters, generic type parameters, functions, methods, fields, typedefs, interfaces, source types, enum members, and external variables, with checks for name capture
 - Completion for visible locals, parameters, generic parameters, imported declarations, types, keywords, and built-in functions
 - Member completion for fields, instance methods, static methods, and enum values
 - Signature help for functions, methods, callbacks, and built-in calls
@@ -51,7 +51,8 @@ Project declaration rename includes unopened targets, including interface constr
 Native C names and enum tags are preserved through explicit aliases. Every affected target
 must check successfully, and unresolved uses in unused generic bodies can prevent a rename.
 Struct rename updates forward declarations and destructor names. `Self` keeps its
-implicit meaning. Opaque C struct and union tags retain their native spelling.
+implicit meaning. Field rename follows designated initializers and generic
+instances. Opaque C tags and native enum constants retain their native spelling.
 Clients supporting versioned edits receive the current open-document version.
 
 Completion respects lexical scopes, shadowing, and declaration order. Suggestions
@@ -150,6 +151,5 @@ to stderr.
 
 ## Further work
 
-- Rename for fields and enum members
 - Semantic information across module namespaces and project dependencies
 - Visual Studio project-system integration and debugging
