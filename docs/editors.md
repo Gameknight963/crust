@@ -114,6 +114,12 @@ Project**. The extension supplies the MSBuild SDK. Solution builds use the targe
 and native dependencies in `crust.toml`, and compiler errors appear in the Error
 List. See [MSBuild projects](../editors/msbuild/) for the file format and commands.
 
+Set the `.crproj` as the startup project for **F5** or **Ctrl+F5**. Launch follows
+the General properties' Target setting, or selects the sole executable.
+The Debug page configures arguments and the working directory. Enable
+[native debug information](projects.md#native-debug-information) on the target
+for source breakpoints and stepping.
+
 The client uses Visual Studio's editing UI for compiler diagnostics, completion,
 navigation, references, rename, and semantic highlighting. Syntax highlighting
 and bracket configuration use the same files as the VS Code extension.

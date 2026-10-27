@@ -40,7 +40,7 @@ $crustSources = @{
     'Sdk/tasks/net472/Crust.Build.Tasks.dll' = 'target/msbuild/tasks/net472/Crust.Build.Tasks.dll'
     'Sdk/tasks/net8.0/Crust.Build.Tasks.dll' = 'target/msbuild/tasks/net8.0/Crust.Build.Tasks.dll'
 }
-foreach ($crustRule in @('ProjectItemsSchema', 'General', 'Compile', 'None', 'Folder')) {
+foreach ($crustRule in @('ProjectItemsSchema', 'General', 'Compile', 'None', 'Folder', 'CrustLocal', 'DebuggerGeneral')) {
     $crustSources["Sdk/Rules/$crustRule.xaml"] = "editors/msbuild/Rules/$crustRule.xaml"
 }
 foreach ($crustEntry in $crustSources.GetEnumerator()) {

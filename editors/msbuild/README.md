@@ -56,6 +56,16 @@ Solution Explorer displays Crust sources and supporting files from the project
 directory. Entry files and source imports determine what the compiler builds.
 Local settings can go in the ignored `<project>.crproj.user` file.
 
+In Visual Studio, **F5** starts the selected executable with the native debugger
+and **Ctrl+F5** starts it without debugging. An empty `CrustTarget` selects the
+manifest's sole executable. For multiple executables, choose a Target in the
+project's General properties.
+
+The Debug page stores command arguments and the working directory in the local
+user file. `CrustRunArguments` contains the command line. `CrustRunWorkingDirectory`
+defaults to the manifest directory, with relative overrides resolved beside
+`.crproj`. Set `debug = true` in the target's native options for source debugging.
+
 ## Development checks
 
 ```powershell

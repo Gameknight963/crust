@@ -80,6 +80,7 @@
 - Visual Studio VSIX with a bundled server, shared grammar, and native semantic classifications
 - Visual Studio project build and check commands, Error List navigation, and executable console launch
 - Optional MSBuild `.crproj` projects with bundled Visual Studio SDK paths, source items, build properties, and native builds
+- Visual Studio native debugger launch for executable project targets with local arguments and working-directory settings
 
 ## Compiler work
 
@@ -94,7 +95,8 @@ backed by C allocation, with automatic cleanup and safe access to its contents.
 
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Use `crust.toml` as the authoritative project configuration
-- Add native debugger launch from `.crproj` and VS Code
+- Add native debugger launch from VS Code
+- Preserve source variable and type names in native debug information
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
 source outlines, reference searches, rename, and scope and member completion.

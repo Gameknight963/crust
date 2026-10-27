@@ -159,6 +159,7 @@ internal static class ClientProbe
         object app = targets.GetValue(0);
         Assert((string)app.GetType().GetProperty("kind").GetValue(app) == "executable", "executable metadata");
         Assert(!Directory.Exists(Path.Combine(root, "target")), "metadata leaves build outputs untouched");
+        CheckLaunchSettings(assembly, info, app, manifest, root);
         Func<string, object> execute = command => Await((Task)tool.GetMethod("ExecuteAsync").Invoke(null, new object[] { compiler, manifest, command, "app" }));
         object result = execute("check");
         Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) != 0, "invalid source check");
@@ -188,6 +189,68 @@ internal static class ClientProbe
             Assert(console.ExitCode == 0, "console program exit: " + output.Result + error.Result);
             Assert(output.Result.Replace("\r\n", "\n").StartsWith("42\n42\n", StringComparison.Ordinal), "shared-library lookup and inherited console input/output: " + output.Result);
         }
+    }
+
+    private static void CheckLaunchSettings(Assembly assembly, object info, object app, string manifest, string root)
+    {
+        var provider = assembly.GetType("Crust.VisualStudio.CrustLaunchProvider", true);
+        Assert(provider.BaseType.FullName == "Microsoft.VisualStudio.ProjectSystem.VS.Debug.DebugLaunchProviderBase", "native debugger provider base");
+        var export = provider.CustomAttributes.Single(attribute => attribute.AttributeType.Name == "ExportDebuggerAttribute");
+        Assert((string)export.ConstructorArguments[0].Value == "CrustLocal", "debugger schema registration");
+        var tool = assembly.GetType("Crust.VisualStudio.ProjectTool", true);
+        var select = tool.GetMethod("ExecutableTarget");
+        Assert(ReferenceEquals(select.Invoke(null, new object[] { info, "" }), app), "sole executable selection");
+        Assert(ReferenceEquals(select.Invoke(null, new object[] { info, "app" }), app), "explicit executable selection");
+        Reject(() => select.Invoke(null, new object[] { info, "library" }), typeof(InvalidOperationException), "builds a library");
+        Reject(() => select.Invoke(null, new object[] { info, "unknown" }), typeof(InvalidOperationException), "Unknown Crust target");
+        var targetType = app.GetType();
+        var other = Activator.CreateInstance(targetType);
+        targetType.GetProperty("name").SetValue(other, "other");
+        targetType.GetProperty("kind").SetValue(other, "executable");
+        targetType.GetProperty("output").SetValue(other, targetType.GetProperty("output").GetValue(app));
+        var multiple = Activator.CreateInstance(info.GetType());
+        var targets = Array.CreateInstance(targetType, 2);
+        targets.SetValue(app, 0); targets.SetValue(other, 1);
+        info.GetType().GetProperty("targets").SetValue(multiple, targets);
+        Reject(() => select.Invoke(null, new object[] { multiple, "" }), typeof(InvalidOperationException), "Target setting");
+        Assert(ReferenceEquals(select.Invoke(null, new object[] { multiple, "other" }), other), "multiple executable selection");
+        var empty = Activator.CreateInstance(info.GetType());
+        Reject(() => select.Invoke(null, new object[] { empty, "" }), typeof(InvalidOperationException), "no executable target");
+
+        var launch = assembly.GetType("Crust.VisualStudio.CrustLaunch", true)
+            .GetMethod("CreateSettings", BindingFlags.NonPublic | BindingFlags.Static);
+        var optionsType = launch.GetParameters()[0].ParameterType;
+        var engine = optionsType.Assembly.GetType("Microsoft.VisualStudio.ProjectSystem.Debug.DebuggerEngines", true)
+            .GetField("NativeOnlyEngine").GetValue(null);
+        string projectDirectory = Path.Combine(root, "project-file");
+        string workingDirectory = Path.Combine(projectDirectory, "work");
+        Directory.CreateDirectory(workingDirectory);
+        string arguments = "\"two words\" C:\\path\\";
+        foreach (object flags in new[] { Enum.ToObject(optionsType, 0), Enum.Parse(optionsType, "NoDebug") })
+        {
+            object settings = launch.Invoke(null, new object[] { flags, app, manifest, arguments, "", projectDirectory });
+            var type = settings.GetType();
+            Assert((string)type.GetProperty("Executable").GetValue(settings) == (string)targetType.GetProperty("output").GetValue(app), "planned executable before build");
+            Assert((string)type.GetProperty("CurrentDirectory").GetValue(settings) == root, "default manifest working directory");
+            Assert((string)type.GetProperty("Arguments").GetValue(settings) == arguments, "native command arguments");
+            Assert(type.GetProperty("LaunchOptions").GetValue(settings).Equals(flags), "debug and no-debug flags");
+            Assert(type.GetProperty("LaunchDebugEngineGuid").GetValue(settings).Equals(engine), "native debug engine");
+            Assert(type.GetProperty("LaunchOperation").GetValue(settings).ToString() == "CreateProcess", "process launch operation");
+            settings = launch.Invoke(null, new object[] { flags, app, manifest, "", "work", projectDirectory });
+            Assert((string)type.GetProperty("CurrentDirectory").GetValue(settings) == workingDirectory, "relative working directory");
+            Reject(() => launch.Invoke(null, new object[] { flags, app, manifest, "", "missing", projectDirectory }), typeof(DirectoryNotFoundException), "working directory");
+        }
+    }
+
+    private static void Reject(Action action, Type exception, string message)
+    {
+        try { action(); }
+        catch (TargetInvocationException error)
+        {
+            Assert(exception.IsInstanceOfType(error.InnerException) && error.InnerException.Message.Contains(message), "launch rejection: " + error.InnerException);
+            return;
+        }
+        throw new InvalidOperationException("Expected launch rejection: " + message);
     }
 
     private static object Await(Task task)

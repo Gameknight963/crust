@@ -1,0 +1,7 @@
+<Rule Name="CrustLocal" DisplayName="Crust application" PageTemplate="debugger"
+      xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <Rule.DataSource><DataSource Persistence="UserFileWithXamlDefaults" HasConfigurationCondition="true" /></Rule.DataSource>
+  <StringProperty Name="CrustRunArguments" DisplayName="Command arguments" Description="Arguments passed to the executable. Quote arguments containing spaces." />
+  <StringProperty Name="CrustRunWorkingDirectory" DisplayName="Working directory" Subtype="folder"
+                  Description="Defaults to the manifest directory. Relative paths are resolved from the project file's directory." />
+</Rule>

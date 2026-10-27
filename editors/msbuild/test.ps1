@@ -72,6 +72,7 @@ foreach ($crustHostKind in @('framework', 'core')) {
   <Import Project="`$(CrustSdkPath)/Crust.targets" />
 </Project>
 "@
+    Write-CrustFixture ($crustProject + '.user') '<Project><PropertyGroup><CrustRunArguments>&quot;two words&quot;</CrustRunArguments><CrustRunWorkingDirectory>work</CrustRunWorkingDirectory></PropertyGroup></Project>'
     Write-CrustFixture (Join-Path $crustDirectory 'config/crust.toml') @'
 [project]
 name = "msbuild-test"
@@ -97,9 +98,11 @@ entry = "../src/tool.cr"
     Write-CrustFixture (Join-Path $crustDirectory 'src/app.cr') 'import "value.cr"; extern int answer(int) = "crust_answer"; int main() { unsafe { print(answer(value())); } return 0; }'
     Write-CrustFixture (Join-Path $crustDirectory 'src/value.cr') 'int value() { return 41; }'
     Write-CrustFixture (Join-Path $crustDirectory 'src/tool.cr') 'int main() { print(7); return 0; }'
-    $crustMetadata = Invoke-CrustBuild $crustHostKind $crustProject @('-t:GetTargetPath', '-getTargetResult:GetTargetPath') 'missing-cc-for-check'
+    $crustMetadata = Invoke-CrustBuild $crustHostKind $crustProject @('-t:GetTargetPath', '-getTargetResult:GetTargetPath', '-getProperty:DebuggerFlavor,CrustRunArguments,CrustRunWorkingDirectory') 'missing-cc-for-check'
     Assert-CrustSuccess $crustMetadata
-    $crustItems = @((ConvertFrom-Json $crustMetadata.Output).TargetResults.GetTargetPath.Items)
+    $crustResult = ConvertFrom-Json $crustMetadata.Output
+    $crustItems = @($crustResult.TargetResults.GetTargetPath.Items)
+    if ($crustResult.Properties.DebuggerFlavor -ne 'CrustLocal' -or $crustResult.Properties.CrustRunArguments -ne '"two words"' -or $crustResult.Properties.CrustRunWorkingDirectory -ne 'work') { throw 'MSBuild lost debugger selection or local launch properties.' }
     if ($crustItems.Count -ne 3 -or ($crustItems.TargetName -join ',') -ne 'native,app,tool') { throw 'MSBuild metadata lost manifest order or targets.' }
     foreach ($crustItem in $crustItems) {
         if (-not $crustItem.Identity.StartsWith($crustDirectory + '\') -or $crustItem.Identity -ne $crustItem.TargetPath) { throw 'MSBuild changed an output path.' }

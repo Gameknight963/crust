@@ -9,6 +9,7 @@ Language support through the bundled `crust-lsp` server:
 - Project build and check commands with Error List navigation
 - Executable target selection and console execution
 - MSBuild `.crproj` projects with source files and build properties
+- Native debugger launch through F5 and console execution through Ctrl+F5
 
 ## Build and install
 
@@ -52,6 +53,28 @@ Set `CRUST_COMPILER_PATH` to a development compiler's full path before starting
 Visual Studio to override the bundled compiler. Setting `CRUST_LSP_PATH` also
 selects a compiler beside that server when one exists.
 
+## Debug projects
+
+Open a `.crproj` and set it as the solution's startup project:
+
+- **F5** builds and starts its executable with Visual Studio's native debugger
+- **Ctrl+F5** builds and starts it without debugging
+- **Properties > General > Target** selects the executable when the manifest has multiple executables
+- The **Debug** settings contain command arguments and a working-directory override
+
+With an empty Target setting, launch uses the manifest's sole executable.
+The default working directory is the manifest directory. Local debug settings
+are saved in `.crproj.user`.
+
+Enable debug information in the target's `crust.toml` configuration:
+
+```toml
+[targets.native]
+debug = true
+```
+
+Native debugger symbols use generated C names for variables and functions.
+
 ## Development checks
 
 ```powershell
@@ -66,3 +89,5 @@ project metadata, compiler diagnostics, native builds, and console input through
 the packaged tools using a project path containing Unicode, spaces, and `&`.
 It also tests the packaged MSBuild SDK with both MSBuild hosts, shared libraries,
 target selection, relative paths, and source diagnostics.
+Launch checks verify target selection, the native debug engine, F5 and Ctrl+F5
+flags, arguments, and working-directory settings.

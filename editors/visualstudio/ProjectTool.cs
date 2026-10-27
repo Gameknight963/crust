@@ -34,6 +34,37 @@ public sealed class ToolResult
 
 public static class ProjectTool
 {
+    public static string ResolveCompilerPath(string path, string directory)
+    {
+        if (Path.IsPathRooted(path) || path.IndexOfAny(new[] { '/', '\\' }) >= 0)
+            return Path.GetFullPath(Path.Combine(directory, path));
+        foreach (string search in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(search)) continue;
+            string candidate = Path.Combine(search.Trim('"'), path);
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            if (Path.DirectorySeparatorChar == '\\' && File.Exists(candidate + ".exe"))
+                return Path.GetFullPath(candidate + ".exe");
+        }
+        return path;
+    }
+
+    public static TargetMetadata ExecutableTarget(ProjectMetadata info, string selected)
+    {
+        if (!string.IsNullOrEmpty(selected))
+        {
+            var target = info.targets.FirstOrDefault(item => item.name == selected)
+                ?? throw new InvalidOperationException("Unknown Crust target '" + selected + "'.");
+            if (target.kind != "executable")
+                throw new InvalidOperationException("Target '" + selected + "' builds a library. Select an executable target to run.");
+            return target;
+        }
+        var targets = info.targets.Where(item => item.kind == "executable").ToArray();
+        if (targets.Length == 0) throw new InvalidOperationException("The project has no executable target.");
+        if (targets.Length > 1) throw new InvalidOperationException("Choose an executable in the project's Target setting before starting it.");
+        return targets[0];
+    }
+
     public static string EscapeMsBuild(string value)
     {
         var escaped = new StringBuilder();

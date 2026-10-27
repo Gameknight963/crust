@@ -33,17 +33,7 @@ public sealed class CrustCompile : ToolTask
 
     internal static string FindCompiler(string path, string directory)
     {
-        if (Path.IsPathRooted(path) || path.IndexOfAny(new[] { '/', '\\' }) >= 0)
-            return Path.GetFullPath(Path.Combine(directory, path));
-        foreach (string search in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
-        {
-            if (string.IsNullOrWhiteSpace(search)) continue;
-            string candidate = Path.Combine(search.Trim('"'), path);
-            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
-            if (Path.DirectorySeparatorChar == '\\' && File.Exists(candidate + ".exe"))
-                return Path.GetFullPath(candidate + ".exe");
-        }
-        return path;
+        return VisualStudio.ProjectTool.ResolveCompilerPath(path, directory);
     }
 
     protected override string GenerateCommandLineCommands()

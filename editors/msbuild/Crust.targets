@@ -1,5 +1,6 @@
 <Project>
   <PropertyGroup>
+    <DebuggerFlavor Condition="'$(DebuggerFlavor)' == ''">CrustLocal</DebuggerFlavor>
     <_CrustTaskFramework Condition="'$(MSBuildRuntimeType)' == 'Full'">net472</_CrustTaskFramework>
     <_CrustTaskFramework Condition="'$(_CrustTaskFramework)' == ''">net8.0</_CrustTaskFramework>
     <CrustBuildTasksPath Condition="'$(CrustBuildTasksPath)' == '' and Exists('$(MSBuildThisFileDirectory)tasks/$(_CrustTaskFramework)/Crust.Build.Tasks.dll')">$(MSBuildThisFileDirectory)tasks/$(_CrustTaskFramework)/Crust.Build.Tasks.dll</CrustBuildTasksPath>
@@ -14,6 +15,7 @@
     <ProjectCapability Include="Crust;DeclaredSourceItems;UserSourceItems;UseFileGlobs;OpenProjectFile;HandlesOwnReload;ProjectConfigurationsDeclaredAsItems" />
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/ProjectItemsSchema.xaml" />
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/General.xaml"><Context>Project;BrowseObject</Context></PropertyPageSchema>
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/CrustLocal.xaml;$(MSBuildThisFileDirectory)Rules/DebuggerGeneral.xaml"><Context>Project</Context></PropertyPageSchema>
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/Compile.xaml;$(MSBuildThisFileDirectory)Rules/None.xaml;$(MSBuildThisFileDirectory)Rules/Folder.xaml"><Context>File;BrowseObject</Context></PropertyPageSchema>
   </ItemGroup>
   <Import Project="$(MSBuildProjectFullPath).user" Condition="Exists('$(MSBuildProjectFullPath).user')" />
