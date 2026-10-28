@@ -5,9 +5,6 @@ use std::io::Read;
 
 pub(crate) fn validate_options(options: &Options) -> Result<(), String> {
     validate_defines(&options.defines)?;
-    if !options.libraries.is_empty() || !options.library_dirs.is_empty() {
-        return Err("static-library targets accept native sources, include directories, defines, and object link-inputs".to_owned());
-    }
     for input in &options.link_inputs {
         if !input.extension().is_some_and(|extension| {
             extension.eq_ignore_ascii_case("o") || extension.eq_ignore_ascii_case("obj")

@@ -83,6 +83,7 @@
 - Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
 - C header generation for scalar, enum, opaque-pointer, and callback exports
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
+- Transitive native library names and search directories supplied by linked library targets
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
 - Source line mapping in generated C for native function, expression, and cleanup locations

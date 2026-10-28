@@ -143,7 +143,9 @@ archiving preserves the previous archive.
 - `AR` selects an ar-compatible executable, defaulting to `llvm-ar` on Windows and `ar` on Unix
 - Native `sources`, `include-dirs`, and `defines` apply to object compilation
 - Native `link-inputs` can include `.o` or `.obj` files, including matching basenames in different directories
-- Consumers supply any further libraries needed by the archive
+- `library-dirs` and `libraries` declare the archive's native link requirements
+- Crust consumers inherit those requirements through `link-targets`, including transitive dependencies
+- C consumers pass the required libraries to their native linker
 
 See [the library project](../examples/library_project/). Its C consumer links
 against the built archive. For example, from PowerShell in this checkout:
@@ -316,6 +318,7 @@ link-inputs = ["native/extra.o"]
 - `runtime-libraries` lists existing shared-library files used when running the target
 - `library-dirs` configure the linker's library search
 - `libraries` pass names through the C driver's `-l` option
+- Linked targets contribute their library search directories and libraries in dependency order, preserving explicit repeated library names
 - `link-inputs` pass explicit object or library files to the driver
 - `link-targets` build and link named library targets from this project
 - Each target has its own native configuration

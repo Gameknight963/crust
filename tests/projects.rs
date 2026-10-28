@@ -87,6 +87,86 @@ fn assert_no_build_staging(fixture: &Fixture) {
 }
 
 #[test]
+fn static_libraries_supply_transitive_native_link_requirements_and_rebuild_consumers() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "vendor libs/vendor.c",
+        "int vendor_answer(void) { return 42; }",
+    );
+    let vendor = fixture
+        .directory
+        .join("vendor libs")
+        .join(if cfg!(windows) {
+            "vendor.lib"
+        } else {
+            "libvendor.a"
+        });
+    crust::native::compile_static_library(
+        &fixture.directory.join("vendor libs/vendor.c"),
+        &vendor,
+        &Default::default(),
+    )
+    .unwrap();
+    fixture.write(
+        "base.cr",
+        "extern int vendor_answer(); extern int base_answer() { return vendor_answer(); }",
+    );
+    fixture.write(
+        "bridge.cr",
+        "extern int base_answer(); extern int answer() { return base_answer(); }",
+    );
+    fixture.write(
+        "main.cr",
+        "extern int answer(); int main() { unsafe { print(answer()); } return 0; }",
+    );
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nlink-targets=['base']\n[[targets]]\nname='base'\nkind='static-library'\nentry='base.cr'\n[targets.native]\nlibrary-dirs=['vendor libs']\nlibraries=['vendor']\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let app = project.select(Some("app"), true).unwrap()[0];
+    let native = project.resolved_native(app).unwrap();
+    assert_eq!(native.libraries, vec!["vendor"]);
+    assert_eq!(
+        native.library_dirs,
+        vec![
+            fixture
+                .directory
+                .join("vendor libs")
+                .canonicalize()
+                .unwrap()
+        ]
+    );
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    fixture.write(
+        "vendor libs/vendor.c",
+        "int vendor_answer(void) { return 43; }",
+    );
+    crust::native::compile_static_library(
+        &fixture.directory.join("vendor libs/vendor.c"),
+        &vendor,
+        &Default::default(),
+    )
+    .unwrap();
+    let output = fixture.invoke(&["run", "--target", "app"]);
+    success(&output);
+    assert_eq!(text(&output), "43\n");
+}
+
+#[test]
+fn transitive_library_flags_preserve_order_repetitions_and_unique_search_directories() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("library.cr", "extern int answer() { return 42; }");
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['middle']\nlibraries=['first']\nlibrary-dirs=['.']\n[[targets]]\nname='middle'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-targets=['base']\nlibraries=['second','first']\nlibrary-dirs=['.']\n[[targets]]\nname='base'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlibraries=['third']\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let app = project.select(Some("app"), true).unwrap()[0];
+    let native = project.resolved_native(app).unwrap();
+    assert_eq!(native.libraries, vec!["first", "second", "first", "third"]);
+    assert_eq!(native.library_dirs.len(), 1);
+    success(&fixture.invoke(&["check"]));
+}
+
+#[test]
 fn sanitizer_settings_propagate_from_native_library_dependencies() {
     let fixture = Fixture::new();
     fixture.write("main.cr", "int main() { return 0; }");
@@ -738,7 +818,7 @@ fn external_c_runtime_libraries_flow_through_static_dependencies_and_metadata() 
         .unwrap()
         .to_string_lossy()
         .replace('\\', "/");
-    fixture.manifest(&format!("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge']\nlibrary-dirs=['vendor, data; files']\nlibraries=['vendor']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nruntime-libraries=['{relative}']\n"));
+    fixture.manifest(&format!("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['bridge']\n[[targets]]\nname='bridge'\nkind='static-library'\nentry='bridge.cr'\n[targets.native]\nlibrary-dirs=['vendor, data; files']\nlibraries=['vendor']\nruntime-libraries=['{relative}']\n"));
     fixture.write(
         "main.cr",
         "extern int bridge(); int main() { unsafe { print(bridge()); } return 0; }",
@@ -1364,17 +1444,11 @@ fn library_rebuilds_drop_removed_members_and_helpers_do_not_collide_between_arch
 fn static_library_configuration_and_outputs_preserve_inputs() {
     let fixture = Fixture::new();
     fixture.write("library.cr", "extern int answer() { return 42; }");
-    for native in [
-        "libraries=['other']",
-        "library-dirs=['.']",
-        "link-inputs=['other.a']",
-    ] {
-        fixture.write("other.a", "preserved");
-        fixture.manifest(&format!("[[targets]]\nname='app'\nkind='static-library'\nentry='library.cr'\n[targets.native]\n{native}\n"));
-        let output = fixture.invoke(&["check"]);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("static-library"));
-    }
+    fixture.write("other.a", "preserved");
+    fixture.manifest("[[targets]]\nname='app'\nkind='static-library'\nentry='library.cr'\n[targets.native]\nlink-inputs=['other.a']\n");
+    let output = fixture.invoke(&["check"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("static-library"));
     fixture.manifest("[[targets]]\nname='library'\nkind='static-library'\nentry='library.cr'\n[[targets]]\nname='app'\nkind='executable'\nentry='library.cr'\n");
     let output = fixture.invoke(&["check"]);
     assert!(!output.status.success());

@@ -97,16 +97,26 @@ impl Project {
     pub fn resolved_native(&self, target: &Target) -> Result<crate::native::Options, String> {
         let mut native = target.native.clone();
         native.link_targets.clear();
-        for dependency in self.ordered_targets(&[target])? {
+        let dependencies = self.ordered_targets(&[target])?;
+        for dependency in &dependencies {
             for sanitizer in &dependency.native.sanitizers {
                 if !native.sanitizers.contains(sanitizer) {
                     native.sanitizers.push(*sanitizer);
                 }
             }
         }
-        if target.kind != TargetKind::StaticLibrary {
-            for dependency in self.ordered_targets(&[target])?.into_iter().rev() {
-                if dependency.name != target.name {
+        for dependency in dependencies.into_iter().rev() {
+            if dependency.name != target.name {
+                for directory in &dependency.native.library_dirs {
+                    if !native.library_dirs.contains(directory) {
+                        native.library_dirs.push(directory.clone());
+                    }
+                }
+                // Keep library order and repeated names needed by static linkers.
+                native
+                    .libraries
+                    .extend(dependency.native.libraries.iter().cloned());
+                if target.kind != TargetKind::StaticLibrary {
                     native
                         .link_inputs
                         .push(dependency.kind.link_path(&self.output_base(dependency))?);
