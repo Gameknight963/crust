@@ -1,5 +1,94 @@
 mod common;
 
+fn named_file(contents: &[u8]) -> (std::path::PathBuf, String) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let relative = format!(
+        "target/file-api-tests/file_{}_{}.bin",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, contents).unwrap();
+    let declaration = format!(
+        "char path[{}]={};",
+        relative.len() + 1,
+        serde_json::to_string(&relative).unwrap()
+    );
+    return (path, declaration);
+}
+
+#[test]
+fn named_binary_files_enforce_modes_append_and_synchronize_read_write_access() {
+    let (path, declaration) = named_file(b"A\0\xff");
+    run(
+        &r#"
+        int main() {
+            PATH_DECLARATION
+            Result<File,FileError> opened=File::try_open(&path,FileMode::Read);
+            File input=move(opened).take_value();
+            print(input.read_byte()); print(input.read_byte()); print(input.read_byte());
+            Result<Unit,FileError> denied=input.try_write_byte(1u);
+            print((int)denied.error_value()); input.close();
+            Result<File,FileError> appended=File::try_open(&path,FileMode::Append);
+            File output=move(appended).take_value(); output.rewind();
+            output.write_byte(67u); output.close();
+            Result<File,FileError> update=File::try_open(&path,FileMode::ReadWrite);
+            File both=move(update).take_value();
+            print(both.read_byte()); print(both.write_byte(90u));
+            return 0;
+        }
+    "#
+        .replace("PATH_DECLARATION", &declaration),
+        "65\n0\n255\n3\n65\n1\n",
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"AZ\xffC");
+    run(
+        &r#"
+        int main() {
+            PATH_DECLARATION
+            Result<File,FileError> opened=File::try_open(&path,FileMode::Write);
+            File output=move(opened).take_value();
+            Result<FileRead,FileError> denied=output.try_read_byte();
+            print((int)denied.error_value()); output.write_byte(42u);
+            return 0;
+        }
+    "#
+        .replace("PATH_DECLARATION", &declaration),
+        "2\n",
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"*");
+}
+
+#[test]
+fn file_open_errors_reject_unterminated_paths_and_leave_no_live_handles() {
+    let (_path, declaration) = named_file(b"data");
+    run(
+        &r#"
+        extern void test_file_fail_next(int operation);
+        extern int test_files_live();
+        int main() {
+            PATH_DECLARATION
+            char missing[1]={'A'};
+            Result<File,FileError> invalid=File::try_open(&missing,FileMode::Read);
+            print((int)invalid.error_value());
+            unsafe { test_file_fail_next(0); }
+            Result<File,FileError> failed=File::try_open(&path,FileMode::Read);
+            print((int)failed.error_value());
+            Result<File,FileError> mode=File::try_open(&path,(FileMode)255);
+            print((int)mode.error_value());
+            char empty[1]={0};
+            Result<File,FileError> absent=File::try_open(&empty,FileMode::Read);
+            print((int)absent.error_value());
+            unsafe { print(test_files_live()); }
+            return 0;
+        }
+    "#
+        .replace("PATH_DECLARATION", &declaration),
+        "7\n0\n0\n0\n0\n",
+    );
+}
+
 #[test]
 fn file_results_distinguish_read_and_write_errors_and_rewind_clears_status() {
     run(
@@ -77,6 +166,7 @@ fn file_bindings_match_the_native_header() {
         binding_dir: Some(root.join("native")),
         functions: [
             "crust_file_temporary",
+            "crust_file_open",
             "crust_file_close",
             "crust_file_read_byte",
             "crust_file_write_byte",
@@ -110,11 +200,7 @@ fn run(program: &str, expected: &str) {
             .replace("import \"result.cr\";", include_str!("../lib/result.cr")),
     );
     let generated = crust::compile(&source).unwrap();
-    let native = include_str!("../lib/native/file.c").replace("#include \"file.h\"", "");
-    let instrumented = format!(
-        "{TRACKING}\n{}\n{native}\n{UNDEFINE}\n{generated}",
-        include_str!("../lib/native/file.h"),
-    );
+    let instrumented = format!("{}\n{generated}", common::tracked_file_source());
     let output = common::tracked_generated_c(&instrumented, false);
     assert!(
         output.status.success(),
@@ -239,102 +325,3 @@ fn file_failures_leave_closed_handles_detached_and_allow_synchronization_retries
         "0\n1\n0\n0\n0\n1\n0\n1\n1\n-1\n1\n1\n0\n1\n1\n1\n2\n",
     );
 }
-
-// These hooks run the real C stdio operations and check the update-stream
-// sequencing rules. EOF, seek, flush, and close behavior therefore comes from
-// the native stream rather than a simulated byte buffer.
-const TRACKING: &str = r#"
-    #include <stdio.h>
-    #include <stdlib.h>
-    struct file_record { FILE* handle; int direction; int error; };
-    static struct file_record records[64];
-    static int live_files = 0;
-    static int closed_files = 0;
-    static int fail_operation = -1;
-    static int registered_check = 0;
-    static void files_closed_at_exit(void) {
-        if (live_files != 0) { fprintf(stderr, "leaked %d file(s)\n", live_files); abort(); }
-    }
-    static struct file_record* record_for(FILE* handle) {
-        for (int i = 0; i < 64; ++i) {
-            if (records[i].handle == handle && handle != NULL) { return &records[i]; }
-        }
-        fprintf(stderr, "operation on a closed file\n"); abort();
-    }
-    static int fail_next(int operation) {
-        if (fail_operation != operation) { return 0; }
-        fail_operation = -1; return 1;
-    }
-    void test_file_fail_next(int operation) { fail_operation = operation; }
-    int test_files_live(void) { return live_files; }
-    int test_files_closed(void) { return closed_files; }
-    static FILE* tracked_tmpfile(void) {
-        if (!registered_check) { atexit(files_closed_at_exit); registered_check = 1; }
-        if (fail_next(0)) { return NULL; }
-        FILE* handle = tmpfile();
-        if (handle == NULL) { fprintf(stderr, "could not create test stream\n"); abort(); }
-        for (int i = 0; i < 64; ++i) {
-            if (records[i].handle == NULL) {
-                records[i].handle = handle; records[i].direction = 0; records[i].error = 0;
-                live_files += 1; return handle;
-            }
-        }
-        abort();
-    }
-    static int tracked_fclose(FILE* handle) {
-        struct file_record* record = record_for(handle);
-        record->handle = NULL; live_files -= 1; closed_files += 1;
-        int result = fclose(handle);
-        return fail_next(1) ? EOF : result;
-    }
-    static int tracked_fgetc(FILE* handle) {
-        struct file_record* record = record_for(handle);
-        if (record->direction == 2) { fprintf(stderr, "read after unsynchronized write\n"); abort(); }
-        record->direction = 1;
-        if (fail_next(4)) { record->error = 1; return EOF; }
-        return fgetc(handle);
-    }
-    static int tracked_fputc(int value, FILE* handle) {
-        struct file_record* record = record_for(handle);
-        if (record->direction == 1) { fprintf(stderr, "write after unsynchronized read\n"); abort(); }
-        record->direction = 2;
-        if (fail_next(5)) { record->error = 1; return EOF; }
-        return fputc(value, handle);
-    }
-    static int tracked_fflush(FILE* handle) {
-        struct file_record* record = record_for(handle);
-        if (record->direction == 1) { fprintf(stderr, "fflush after input\n"); abort(); }
-        if (fail_next(2)) { return EOF; }
-        int result = fflush(handle);
-        if (result == 0) { record->direction = 0; }
-        return result;
-    }
-    static int tracked_fseek(FILE* handle, long offset, int origin) {
-        struct file_record* record = record_for(handle);
-        if (fail_next(3)) { return -1; }
-        int result = fseek(handle, offset, origin);
-        if (result == 0) { record->direction = 0; }
-        return result;
-    }
-    static int tracked_ferror(FILE* handle) { return record_for(handle)->error || ferror(handle); }
-    static void tracked_clearerr(FILE* handle) { record_for(handle)->error = 0; clearerr(handle); }
-    #define tmpfile tracked_tmpfile
-    #define fclose tracked_fclose
-    #define fgetc tracked_fgetc
-    #define fputc tracked_fputc
-    #define fflush tracked_fflush
-    #define fseek tracked_fseek
-    #define ferror tracked_ferror
-    #define clearerr tracked_clearerr
-"#;
-
-const UNDEFINE: &str = r#"
-    #undef tmpfile
-    #undef fclose
-    #undef fgetc
-    #undef fputc
-    #undef fflush
-    #undef fseek
-    #undef ferror
-    #undef clearerr
-"#;

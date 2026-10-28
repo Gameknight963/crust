@@ -2,6 +2,11 @@
 #include <stdio.h>
 
 void* crust_file_temporary(void) { return tmpfile(); }
+void* crust_file_open(const char* path, int mode) {
+    static const char* const modes[] = { "rb", "wb", "ab", "r+b" };
+    if (mode < 0 || mode > 3) { return NULL; }
+    return fopen(path, modes[mode]);
+}
 int crust_file_close(void* handle) { return fclose((FILE*)handle); }
 int crust_file_read_byte(void* handle) {
     int value = fgetc((FILE*)handle);

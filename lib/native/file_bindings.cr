@@ -1,4 +1,5 @@
 extern void* crust_file_temporary();
+extern void* crust_file_open(const char*, int);
 extern int crust_file_close(void*);
 extern int crust_file_read_byte(void*);
 extern int crust_file_write_byte(void*, unsigned char);

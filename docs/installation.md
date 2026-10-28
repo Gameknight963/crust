@@ -39,6 +39,7 @@ and macOS use gzip-compressed tar archives.
 
 The packager extracts the archive, verifies every file's SHA-256 digest, starts
 the packaged language server, and compiles and runs the text and native-file
-examples. It writes the completed archive and a `.sha256` file after these checks
+examples. It also builds the file-statistics CLI and compares its UTF-8 counts
+against the packaged README. It writes the completed archive and a `.sha256` file after these checks
 pass. `manifest.json` records the version, target, source revision, working-tree
 state, and file digests.

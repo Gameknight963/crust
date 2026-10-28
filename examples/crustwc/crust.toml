@@ -1,0 +1,10 @@
+[project]
+name = "crustwc"
+
+[[targets]]
+name = "crustwc"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+sources = ["../../lib/native/file.c", "native/console.c"]

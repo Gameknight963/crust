@@ -51,6 +51,7 @@ use UTF-8 byte arrays.
 - [Vector edits](examples/vector_edits.cr): insertion, removal, and cleanup
 - [Sorting](examples/sorting.cr): a comparison interface and a vector of heap owners
 - [File resource](examples/file_project/): binary I/O, ownership transfer, and automatic closing
+- [File statistics](examples/crustwc/): a multi-file CLI with UTF-8 validation and recoverable errors
 
 ### C integration
 

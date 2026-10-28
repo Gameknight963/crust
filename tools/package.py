@@ -99,6 +99,12 @@ def main():
         raise RuntimeError(f"Unexpected text example output: {text!r}")
     subprocess.run([str(compiler), "run", "--project", "examples/file_project"], cwd=extracted,
                    check=True, stdout=subprocess.DEVNULL)
+    contents = (extracted / "README.md").read_bytes()
+    lines = contents.count(b"\n")
+    counts = command([str(compiler), "run", "--project", "examples/crustwc", "--", "--utf8", "README.md"], cwd=extracted)
+    expected = f"{lines} {len(contents)} {len(contents.decode('utf-8'))} README.md"
+    if counts != expected:
+        raise RuntimeError(f"Unexpected file statistics: {counts!r}")
     os.replace(partial, archive)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     archive.with_name(archive.name + ".sha256").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")

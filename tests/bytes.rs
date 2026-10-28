@@ -88,6 +88,8 @@ fn failed_byte_copy_and_append_preserve_the_source_and_destination() {
             Result<ByteBuffer,AllocError> copied=ByteBuffer::try_copy(&source);
             print((int)copied.error_value()); print(source[0]);
             ByteBuffer empty=ByteBuffer::create();
+            Result<Unit,AllocError> unchanged=bytes.try_append(empty.view());
+            print(unchanged.is_ok());
             Result<ByteBuffer,AllocError> zero=ByteBuffer::try_copy(empty.view());
             print(zero.is_ok()); return 0;
         }
@@ -101,7 +103,7 @@ fn failed_byte_copy_and_append_preserve_the_source_and_destination() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "0\n2\n10\n20\n0\n10\n1\n"
+        "0\n2\n10\n20\n0\n10\n1\n1\n"
     );
 }
 

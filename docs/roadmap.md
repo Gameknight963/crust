@@ -117,7 +117,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Compiler, LSP, and editor release packages with native compiler setup
 - [ ] VS Code native debugger launch and original source names in debug information
 - [x] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
-- [ ] Build and maintain the release validation application
+- [x] Build and maintain the release validation application
 
 ## Editor support
 

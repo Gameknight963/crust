@@ -2,8 +2,9 @@ import "native/file_bindings.cr";
 import "result.cr";
 
 enum class FileDirection : uint8_t { None, Read, Write };
+enum class FileMode : uint8_t { Read, Write, Append, ReadWrite };
 enum class FileError : uint8_t {
-    OpenFailed, Closed, ReadFailed, WriteFailed, FlushFailed, SeekFailed, CloseFailed
+    OpenFailed, Closed, ReadFailed, WriteFailed, FlushFailed, SeekFailed, CloseFailed, InvalidPath
 };
 
 tagged union FileRead {
@@ -14,13 +15,28 @@ tagged union FileRead {
 struct File {
     private void* handle;
     private FileDirection direction;
+    private FileMode mode;
+
+    static Result<Self, FileError> try_open(const char[]& path, FileMode mode) {
+        bool terminated = false;
+        for (size_t i = 0; i < path.length; i++) {
+            if (path[i] == 0) { terminated = true; break; }
+        }
+        if (!terminated) { return Result<Self, FileError>::failure(FileError::InvalidPath); }
+        unsafe {
+            void* handle = crust_file_open(&path[0], (int)mode);
+            if (handle == 0) { return Result<Self, FileError>::failure(FileError::OpenFailed); }
+            return Result<Self, FileError>::success(
+                (Self){ .handle = handle, .direction = FileDirection::None, .mode = mode });
+        }
+    }
 
     static Result<Self, FileError> try_temporary() {
         unsafe {
             void* handle = crust_file_temporary();
             if (handle == 0) { return Result<Self, FileError>::failure(FileError::OpenFailed); }
             return Result<Self, FileError>::success(
-                (Self){ .handle = handle, .direction = FileDirection::None });
+                (Self){ .handle = handle, .direction = FileDirection::None, .mode = FileMode::ReadWrite });
         }
     }
 
@@ -39,6 +55,9 @@ struct File {
 
     Result<FileRead, FileError> try_read_byte() {
         if (!this.is_open()) { return Result<FileRead, FileError>::failure(FileError::Closed); }
+        if (this.mode == FileMode::Write || this.mode == FileMode::Append) {
+            return Result<FileRead, FileError>::failure(FileError::ReadFailed);
+        }
         unsafe {
             if (this.direction == FileDirection::Write && crust_file_flush(this.handle) != 0) {
                 return Result<FileRead, FileError>::failure(FileError::FlushFailed);
@@ -57,6 +76,9 @@ struct File {
 
     Result<Unit, FileError> try_write_byte(uint8_t value) {
         if (!this.is_open()) { return Result<Unit, FileError>::failure(FileError::Closed); }
+        if (this.mode == FileMode::Read) {
+            return Result<Unit, FileError>::failure(FileError::WriteFailed);
+        }
         unsafe {
             if (this.direction == FileDirection::Read && crust_file_sync_position(this.handle) != 0) {
                 return Result<Unit, FileError>::failure(FileError::SeekFailed);
@@ -95,7 +117,7 @@ struct File {
 
     static Self temporary() {
         unsafe {
-            return (Self){ .handle = crust_file_temporary(), .direction = FileDirection::None };
+            return (Self){ .handle = crust_file_temporary(), .direction = FileDirection::None, .mode = FileMode::ReadWrite };
         }
     }
 

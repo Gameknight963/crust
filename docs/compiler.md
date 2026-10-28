@@ -66,6 +66,8 @@ ownership checking, C generation, and native compilation.
 | `editors/visualstudio/ConsoleRunner.cs` | Console input, output, and exit handling |
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
+| `tests/common/files.rs` | Native file-handle tracking and I/O fault injection |
+| `tests/release_app.rs` | File-statistics CLI, argument forwarding, recoverable errors, and allocation-failure cleanup |
 
 ## Continuous integration
 

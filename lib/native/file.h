@@ -2,6 +2,7 @@
 #define CRUST_FILE_H
 
 void* crust_file_temporary(void);
+void* crust_file_open(const char* path, int mode);
 int crust_file_close(void* handle);
 int crust_file_read_byte(void* handle);
 int crust_file_write_byte(void* handle, unsigned char value);

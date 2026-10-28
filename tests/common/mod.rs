@@ -2,8 +2,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+mod files;
 
 static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
+
+#[allow(dead_code)]
+pub fn tracked_file_source() -> String {
+    return files::native_source();
+}
 
 #[allow(dead_code)]
 pub fn allocation_source() -> String {
@@ -31,6 +37,19 @@ fn run_with_tracking(source: &str, sizes: bool) -> Output {
 
 #[allow(dead_code)]
 pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
+    return tracked_generated_c_arguments(generated, sizes, None);
+}
+
+#[allow(dead_code)]
+pub fn tracked_generated_c_with_args(generated: &str, sizes: bool, arguments: &[String]) -> Output {
+    return tracked_generated_c_arguments(generated, sizes, Some(arguments));
+}
+
+fn tracked_generated_c_arguments(
+    generated: &str,
+    sizes: bool,
+    arguments: Option<&[String]>,
+) -> Output {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ownership-tests");
@@ -93,6 +112,9 @@ pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
         #undef malloc
         #undef free
         int main(void) {
+            #ifdef CRUST_TEST_ALLOCATION_BUDGET
+            crust_test_fail_allocations_after(CRUST_TEST_ALLOCATION_BUDGET);
+            #endif
             int result = crust_test_main();
             if (live_allocations != 0) {
                 fprintf(stderr, "leaked %zu allocation(s)\n", live_allocations);
@@ -101,6 +123,13 @@ pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
             return result;
         }
     "#;
+    let suffix = if arguments.is_some() {
+        suffix
+            .replace("int main(void)", "int main(int argc, char** argv)")
+            .replace("crust_test_main()", "crust_test_main(argc, argv)")
+    } else {
+        suffix.to_owned()
+    };
     fs::write(&path, format!("{prefix}\n{generated}\n{suffix}")).unwrap();
     let sanitizers = match std::env::var("CRUST_TEST_SANITIZERS").as_deref() {
         Ok("address") => vec![crust::native::Sanitizer::Address],
@@ -117,5 +146,8 @@ pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
         ..Default::default()
     };
     crust::native::compile_file_with_options(&path, &executable, &options).unwrap();
-    return Command::new(executable).output().unwrap();
+    return Command::new(executable)
+        .args(arguments.unwrap_or(&[]))
+        .output()
+        .unwrap();
 }

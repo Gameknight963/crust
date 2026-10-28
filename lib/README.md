@@ -57,6 +57,7 @@ The [container project](../examples/container_project/) and
 `ByteBuffer::try_copy(bytes)` copies a borrowed byte slice. Its `try_append`
 preserves the buffer on allocation failure. Use `view()` for shared access and
 `view_mut()` to edit arbitrary bytes.
+`try_push(byte)` grows fallibly and returns `Result<Unit, AllocError>`.
 
 `String::try_copy(bytes)` validates and copies counted UTF-8 bytes.
 `String::try_from_bytes(move(buffer))` validates an owned buffer and returns it
@@ -78,6 +79,12 @@ rewinding, and closing have `try_` methods that return operation errors.
 `try_read_byte()` returns `Result<FileRead, FileError>`, with `byte` and `end`
 variants distinguishing data from end-of-file. Moving a file transfers ownership,
 and its destructor closes the stream.
+
+`File::try_open(path, mode)` accepts a bounded, zero-terminated `const char[]&`.
+`FileMode::Read` opens an existing file, `Write` creates or truncates it, `Append`
+creates or appends, and `ReadWrite` opens an existing file for both operations.
+All modes use binary I/O. Unterminated paths return `FileError::InvalidPath`.
+Paths use the native C runtime's filename encoding.
 
 Compile `native/file.c` as a native source in the consuming target.
 The [file project](../examples/file_project/) shows the configuration and the

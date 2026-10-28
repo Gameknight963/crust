@@ -61,6 +61,14 @@ struct ByteBuffer {
     void clear() { this.data.clear(); }
     void push(uint8_t value) { this.data.push(value); }
 
+    Result<Unit, AllocError> try_push(uint8_t value) {
+        Result<Unit, AllocationFailure<uint8_t>> result = this.data.try_push(value);
+        if (!result.is_ok()) {
+            return Result<Unit, AllocError>::failure(result.error_value().reason());
+        }
+        return Result<Unit, AllocError>::success(Unit::Value);
+    }
+
     void truncate(size_t length) {
         if (length > this.data.count()) { unsafe { abort(); } }
         while (this.data.count() > length) { this.data.pop(); }
