@@ -2212,3 +2212,140 @@ fn rejects_incomplete_duplicate_and_conflicting_cli_options() {
     }
     assert!(crust::project::Project::discover(Path::new(".")).is_err());
 }
+
+#[test]
+fn local_path_dependencies_deduplicate_diamonds_and_keep_builds_in_the_consumer() {
+    let fixture = Fixture::new();
+    fixture.manifest("[dependencies]\nleft={path='left'}\nright={path='right'}\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['left:api', 'right:api']\n");
+    fixture.write("main.cr", "import \"common/helpers.cr\"; extern int left_value(); extern int right_value(); int main() { unsafe { print(twice<int>(left_value() + right_value())); } return 0; }");
+    fixture.write(
+        "common/helpers.cr",
+        "T twice<T>(T value) { return value + value; }",
+    );
+    fixture.write("common/value.h", "#define VALUE 10\n");
+    fixture.write(
+        "common/value.c",
+        "#include \"value.h\"\nint common_value(void) { return VALUE; }\n",
+    );
+    fixture.write("common/api.cr", "extern int common_value();");
+    fixture.write("common/crust.toml", "[project]\nname='common'\n[[targets]]\nname='api'\nkind='static-library'\nentry='api.cr'\n[targets.native]\nsources=['value.c']\n");
+    for (side, offset) in [("left", 1), ("right", 2)] {
+        fixture.write(&format!("{side}/crust.toml"), &format!("[project]\nname='{side}'\n[dependencies]\ncommon={{path='../common'}}\n[[targets]]\nname='api'\nkind='static-library'\nentry='api.cr'\n[targets.native]\nlink-targets=['common:api']\n"));
+        fixture.write(&format!("{side}/api.cr"), &format!("extern int common_value(); extern int {side}_value() {{ unsafe {{ return common_value() + {offset}; }} }}"));
+    }
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    assert_eq!(project.manifests.len(), 4);
+    assert_eq!(project.targets.len(), 4);
+    assert_eq!(project.select(None, true).unwrap()[0].name, "app");
+    assert_eq!(project.metadata().unwrap().targets.len(), 1);
+    let left_common = project.select(Some("left:common:api"), true).unwrap()[0];
+    let right_common = project.select(Some("right:common:api"), true).unwrap()[0];
+    assert!(std::ptr::eq(left_common, right_common));
+    let native = project.resolved_native(&project.targets[0]).unwrap();
+    assert_eq!(native.link_inputs.len(), 3);
+    assert_eq!(
+        native.link_inputs.last().unwrap(),
+        &left_common
+            .kind
+            .link_path(&project.output_base(left_common))
+            .unwrap()
+    );
+    success(&fixture.invoke(&["run"]));
+    let output = Command::new(executable(&fixture)).output().unwrap();
+    success(&output);
+    assert_eq!(text(&output), "46\n");
+    fixture.write("common/value.h", "#define VALUE 20\n");
+    success(&fixture.invoke(&["run"]));
+    assert_eq!(
+        text(&Command::new(executable(&fixture)).output().unwrap()),
+        "86\n"
+    );
+    fixture.write(
+        "common/value.c",
+        "#include \"value.h\"\nint common_value(void) { return VALUE + 1; }\n",
+    );
+    success(&fixture.invoke(&["run"]));
+    assert_eq!(
+        text(&Command::new(executable(&fixture)).output().unwrap()),
+        "90\n"
+    );
+    for dependency in ["left", "right", "common"] {
+        assert!(!fixture.directory.join(dependency).join("target").exists());
+    }
+    let output = fixture.invoke(&["metadata", "--target", "right:common:api"]);
+    success(&output);
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(metadata["targets"].as_array().unwrap().len(), 1);
+    assert_eq!(metadata["targets"][0]["name"], left_common.name);
+}
+
+#[test]
+fn local_path_dependencies_report_configuration_and_graph_errors() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    let app = "[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n";
+    for (dependencies, expected) in [
+        (
+            "[dependencies]\nsupport={path='missing'}\n",
+            "dependency 'support'",
+        ),
+        ("[dependencies]\nsupport={url='remote'}\n", "unknown field"),
+        (
+            "[dependencies]\n'bad:name'={path='.'}\n",
+            "dependency names",
+        ),
+        (
+            "[dependencies]\nSUPPORT={path='support'}\nsupport={path='support'}\n",
+            "dependency names",
+        ),
+    ] {
+        fixture.write("support/api.cr", "extern int answer();");
+        fixture.write("support/crust.toml", "[project]\nname='support'\n[[targets]]\nname='api'\nkind='static-library'\nentry='api.cr'\n");
+        fixture.manifest(&format!("{dependencies}{app}"));
+        let error = crust::project::Project::load(&fixture.directory).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+    for link in ["support:missing", "unknown:api", "support:api"] {
+        fixture.manifest(&format!("[dependencies]\nsupport={{path='support'}}\n{app}[targets.native]\nlink-targets=['{link}']\n"));
+        fixture.write("support/api.cr", "int main() { return 0; }");
+        fixture.write("support/crust.toml", "[project]\nname='support'\n[[targets]]\nname='api'\nkind='executable'\nentry='api.cr'\n");
+        let error = crust::project::Project::load(&fixture.directory).unwrap_err();
+        assert!(
+            error.contains(if link == "support:api" {
+                "must be a static-library or shared-library"
+            } else {
+                "unknown target"
+            }),
+            "{error}"
+        );
+    }
+    fixture.manifest(&format!(
+        "[dependencies]\nsupport={{path='support'}}\n{app}"
+    ));
+    fixture.write("support/crust.toml", "[project]\nname='support'\n[dependencies]\nparent={path='..'}\n[[targets]]\nname='api'\nkind='executable'\nentry='api.cr'\n");
+    let error = crust::project::Project::load(&fixture.directory).unwrap_err();
+    assert!(error.contains("project dependency cycle"), "{error}");
+}
+
+#[test]
+fn local_shared_dependencies_supply_runtime_files() {
+    let fixture = Fixture::new();
+    fixture.manifest("[dependencies]\nsupport={path='support'}\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['support:api']\n");
+    fixture.write(
+        "main.cr",
+        "extern int answer(); int main() { unsafe { print(answer()); } return 0; }",
+    );
+    fixture.write("support/api.cr", "extern int answer() { return 42; }");
+    fixture.write("support/crust.toml", "[project]\nname='support'\n[[targets]]\nname='api'\nkind='shared-library'\nentry='api.cr'\n");
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "42\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let metadata = project.metadata().unwrap();
+    assert_eq!(metadata.targets[0].runtime_libraries.len(), 1);
+    assert!(
+        metadata.targets[0].runtime_libraries[0]
+            .starts_with(project.directory.join("target/crust/dependencies"))
+    );
+    assert!(!fixture.directory.join("support/target").exists());
+}

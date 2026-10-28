@@ -36,5 +36,5 @@ the current file in an owned byte buffer.
 - `native/console.c` formats counts and reports output failures
 
 The target uses the shared library's file, vector, byte-buffer, string, and
-result types. Its native configuration compiles the C file wrapper and console
-helpers. Paths use the host C runtime's argument and filename encoding.
+result types. A local path dependency supplies the C file wrapper, and the
+target compiles its console helpers. Paths use the host C runtime's argument and filename encoding.

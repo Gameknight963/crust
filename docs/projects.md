@@ -40,6 +40,46 @@ instances that target uses.
 An optional [`.crproj` file](../editors/msbuild/) adds MSBuild and Visual Studio
 solution integration alongside the manifest.
 
+## Local dependencies
+
+Declare neighboring projects by path, relative to the manifest:
+
+```toml
+[dependencies]
+support = { path = "../support" }
+
+[[targets]]
+name = "app"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+link-targets = ["support:api"]
+```
+
+`support:api` selects the `api` library target from that project. Dependencies
+can declare their own path dependencies. Native libraries, search directories,
+sanitizers, and runtime files propagate through the linked targets.
+
+Source imports keep their relative paths and shared names. Import the Crust
+API declarations or generic sources separately, for example
+`import "../../support/src/api.cr";`.
+
+- Default commands select the consuming project's targets
+- Linked dependency targets build before their consumers
+- A project reached through several paths shares one set of targets and artifacts
+- `--target support:api` selects a dependency target explicitly
+- Nested targets use `support:helper:api`
+- Dependency artifacts go in `<consumer>/target/crust/dependencies/<dependency>/<target>/`
+- Dependency checkouts supply inputs and retain their own build directories
+- Project dependency cycles and native target-link cycles produce diagnostics
+
+Builds compile selected targets and their dependencies afresh. Changes to
+Crust source, C source, headers, and native link inputs take effect on the next
+build. The [file example](../examples/file_project/) and
+[crustwc](../examples/crustwc/) link the file wrapper from
+[the library project](../lib/crust.toml).
+
 ## Commands
 
 ```text
@@ -101,7 +141,8 @@ or missing imports. `--target name` filters the target list.
 | `targets[].runtimeLibraries` | Runtime library files required by the target and its dependencies |
 | `targets[].debug` | Whether native debug information is enabled |
 
-Metadata preserves target order from the manifest. The command works before a
+Metadata lists the consuming project's targets in manifest order. An explicit
+`--target` can select a dependency target. The command works before a
 build and requires project configuration. `Project::metadata` exposes the same
 information to Rust callers.
 
@@ -364,8 +405,6 @@ cargo run -- run --project examples/native_project
 
 ## Planned additions
 
-- Module namespaces and visibility
-- Path dependencies between Crust projects
 - Build profiles and platform-specific settings
 - Workspaces containing related projects
 

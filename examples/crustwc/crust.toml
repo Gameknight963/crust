@@ -1,10 +1,14 @@
 [project]
 name = "crustwc"
 
+[dependencies]
+crust = { path = "../../lib" }
+
 [[targets]]
 name = "crustwc"
 kind = "executable"
 entry = "src/main.cr"
 
 [targets.native]
-sources = ["../../lib/native/file.c", "native/console.c"]
+link-targets = ["crust:files"]
+sources = ["native/console.c"]

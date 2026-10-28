@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod dependencies;
 mod links;
 mod metadata;
 pub use metadata::{ProjectMetadata, TargetMetadata};
@@ -12,6 +13,14 @@ pub use metadata::{ProjectMetadata, TargetMetadata};
 struct Manifest {
     project: Metadata,
     targets: Vec<Target>,
+    #[serde(default)]
+    dependencies: std::collections::BTreeMap<String, Dependency>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Dependency {
+    path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +95,9 @@ pub struct Project {
     pub directory: PathBuf,
     pub name: String,
     pub targets: Vec<Target>,
+    pub manifests: Vec<PathBuf>,
+    root_targets: usize,
+    aliases: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -125,6 +137,12 @@ impl Project {
     }
 
     pub(crate) fn load_diagnostic(path: &Path) -> Result<Project, LoadError> {
+        return dependencies::load(path);
+    }
+
+    fn load_one(
+        path: &Path,
+    ) -> Result<(Project, std::collections::BTreeMap<String, Dependency>), LoadError> {
         let path = if path.is_dir() {
             path.join("crust.toml")
         } else {
@@ -276,36 +294,40 @@ impl Project {
                 }
             }
         }
+        let root_targets = targets.len();
         let project = Project {
+            manifests: vec![manifest.clone()],
+            root_targets,
+            aliases: HashMap::new(),
             manifest,
             directory,
             name: parsed.project.name,
             targets,
         };
-        project.ordered_targets(&project.targets.iter().collect::<Vec<_>>())?;
-        return Ok(project);
+        return Ok((project, parsed.dependencies));
     }
 
     pub fn select(&self, name: Option<&str>, single: bool) -> Result<Vec<&Target>, String> {
         if let Some(name) = name {
+            let resolved = self.aliases.get(name).map_or(name, String::as_str);
             return self
                 .targets
                 .iter()
-                .find(|target| target.name == name)
+                .find(|target| target.name == resolved)
                 .map(|target| vec![target])
                 .ok_or_else(|| format!("{}: unknown target '{name}'", self.manifest.display()));
         }
-        if single && self.targets.len() != 1 {
+        if single && self.root_targets != 1 {
             return Err(format!(
                 "{}: select a target with --target <name>: {}",
                 self.manifest.display(),
-                self.targets
+                self.targets[..self.root_targets]
                     .iter()
                     .map(|target| target.name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
         }
-        return Ok(self.targets.iter().collect());
+        return Ok(self.targets[..self.root_targets].iter().collect());
     }
 }

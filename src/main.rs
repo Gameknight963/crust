@@ -170,10 +170,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
     );
     let targets = project.select(options.target.as_deref(), single)?;
     if options.mode == Mode::Metadata {
-        let mut metadata = project.metadata()?;
-        if let Some(name) = &options.target {
-            metadata.targets.retain(|target| &target.name == name);
-        }
+        let metadata = project.metadata_for(&targets)?;
         let json = serde_json::to_string_pretty(&metadata)
             .map_err(|error| format!("could not serialize project metadata: {error}"))?;
         println!("{json}");
@@ -204,7 +201,7 @@ fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> 
                 .chain(target.native.link_inputs.clone())
                 .chain(target.native.runtime_libraries.clone())
         })
-        .chain(std::iter::once(project.manifest.clone()))
+        .chain(project.manifests.iter().cloned())
         .collect();
     if matches!(options.mode, Mode::Build | Mode::Run) {
         for target in &project.targets {

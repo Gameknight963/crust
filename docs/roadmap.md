@@ -83,6 +83,7 @@
 - Static-library targets with C exports, private helpers, native object inputs, and fresh archive builds
 - C header generation for scalar, enum, opaque-pointer, and callback exports
 - Native target links with dependency builds, transitive archive ordering, and cycle diagnostics
+- Local path dependencies with qualified target links, shared diamond dependencies, and consumer-owned artifacts
 - Transitive native library names and search directories supplied by linked library targets
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
@@ -111,7 +112,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
 - [x] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
 - [ ] Migrate examples and tests from BoxInt and remove the built-in type
-- [ ] Project dependencies, library-supplied native dependencies, and reliable rebuilds
+- [x] Project dependencies, library-supplied native dependencies, and reliable rebuilds
 - [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
 - [x] Compiler, LSP, and editor release packages with native compiler setup

@@ -1,10 +1,13 @@
 [project]
 name = "files"
 
+[dependencies]
+crust = { path = "../../lib" }
+
 [[targets]]
 name = "files"
 kind = "executable"
 entry = "src/main.cr"
 
 [targets.native]
-sources = ["../../lib/native/file.c"]
+link-targets = ["crust:files"]

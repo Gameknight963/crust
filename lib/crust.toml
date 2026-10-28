@@ -1,0 +1,10 @@
+[project]
+name = "crust-library"
+
+[[targets]]
+name = "files"
+kind = "static-library"
+entry = "native/file_bindings.cr"
+
+[targets.native]
+sources = ["native/file.c"]

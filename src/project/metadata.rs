@@ -25,8 +25,12 @@ pub struct TargetMetadata {
 
 impl Project {
     pub fn metadata(&self) -> Result<ProjectMetadata, String> {
+        return self.metadata_for(&self.select(None, false)?);
+    }
+
+    pub fn metadata_for(&self, selected: &[&Target]) -> Result<ProjectMetadata, String> {
         let mut targets = Vec::new();
-        for target in &self.targets {
+        for target in selected {
             let runtime_libraries = self.runtime_libraries(target)?;
             targets.push(TargetMetadata {
                 name: target.name.clone(),

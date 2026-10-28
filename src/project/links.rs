@@ -2,11 +2,15 @@ use super::*;
 
 impl Project {
     pub fn output_base(&self, target: &Target) -> PathBuf {
-        return self
-            .directory
-            .join("target/crust")
-            .join(&target.name)
-            .join(&target.name);
+        let mut output = self.directory.join("target/crust");
+        if target.name.contains(':') {
+            output.push("dependencies");
+        }
+        for segment in target.name.split(':') {
+            output.push(segment);
+        }
+        output.push(target.name.rsplit(':').next().unwrap());
+        return output;
     }
 
     pub fn ordered_targets(&self, selected: &[&Target]) -> Result<Vec<&Target>, String> {
