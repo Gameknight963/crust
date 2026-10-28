@@ -841,7 +841,9 @@ are present. Methods can name `this` in the clause. Generic functions use the
 same syntax. Reborrowing and forwarding preserve all possible origins.
 
 Returning a reference to a local or an owned value parameter produces a compiler
-diagnostic. Borrowing a temporary owner requires further temporary-lifetime rules.
+diagnostic. A temporary struct value can be borrowed within the expression that
+creates it. Its destructor runs when that expression finishes. Saving the
+reference in a local or another value requires a named owner.
 
 ## Methods
 

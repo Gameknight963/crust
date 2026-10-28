@@ -58,6 +58,7 @@ fn main() {
         "int& choose(int& a, int& b) borrows(a,b) { if (a > b) return a; return b; } int main() { int a=1; int b=2; print(choose(&a,&b)); return 0; }",
         "tagged union Value { double number; int integer; }; int main() { Value value = {.number=1.5}; switch(value) { case number: print(value.number); break; case integer: print(value.integer); break; } return 0; }",
         "int main() { uint8_t[3] bytes={65,0,66}; const uint8_t[]& view=&bytes; print(view); return 0; }",
+        "struct Temporary { int value; static Self create(int value) { return (Self){.value=value}; } const int& get() const { return &const this.value; } ~Temporary() {} }; int main() { print(Temporary::create(42).get()); return 0; }",
         library.as_str(),
     ];
     let fragments: &[&[u8]] = &[

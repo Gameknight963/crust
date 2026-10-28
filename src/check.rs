@@ -6,6 +6,7 @@ use crate::types::Types;
 mod captures;
 mod drop_borrows;
 mod storage;
+mod temporaries;
 
 fn return_borrow_sources(
     function: &Function,
@@ -133,6 +134,7 @@ pub(crate) struct AnalyzedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub temporary_owners: HashMap<Span, Type>,
     // Reference-producing calls and bindings retain pointer storage in C.
     // Value contexts read their referents without consuming an owner.
     pub reference_reads: HashMap<Span, Type>,
@@ -615,6 +617,7 @@ fn analyze(
         }
         let mut analysis = FunctionAnalysis::default();
         let mut checker = FunctionChecker {
+            temporary_owners: &mut analysis.temporary_owners,
             reference_reads: &mut analysis.reference_reads,
             place_volatile: &mut analysis.place_volatile,
             calls: &mut analysis.calls,
@@ -740,6 +743,7 @@ fn analyze(
 }
 
 struct FunctionChecker<'program> {
+    temporary_owners: &'program mut HashMap<Span, Type>,
     reference_reads: &'program mut HashMap<Span, Type>,
     place_volatile: &'program mut HashMap<Span, bool>,
     calls: &'program mut HashMap<Span, CallSite>,
@@ -801,7 +805,10 @@ impl FunctionChecker<'_> {
     }
 
     fn release_temporaries(&mut self) {
-        self.loans.retain(|loan| loan.scope.is_some());
+        self.loans
+            .retain(|loan| loan.scope.is_some() && loan.scope != Some(usize::MAX));
+        self.capture_bindings
+            .retain(|root, _| !root.1.starts_with("!temporary:"));
     }
 
     fn adopt_reference(&mut self, id: usize, scope: usize) {
@@ -870,6 +877,7 @@ impl FunctionChecker<'_> {
                 if ty.is_borrow() {
                     let id = self.references[&initializer.span];
                     let scope = self.scopes.len() - 1;
+                    self.check_named_reference(id, initializer.span)?;
                     self.adopt_reference(id, scope);
                     self.scopes
                         .last_mut()
@@ -1005,7 +1013,7 @@ impl FunctionChecker<'_> {
                         .common(self.integer(actual, value.span)?);
                     self.convert(value, actual, Type::Integer(common))?;
                 }
-                self.loans.truncate(previous_loans);
+                self.end_loans_since(previous_loans);
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
             }
             StatementKind::Store { target, value } => {
@@ -1603,7 +1611,7 @@ impl FunctionChecker<'_> {
                     self.require_type(argument, *expected)?;
                 }
                 self.variadic_arguments(&arguments[signature.parameters.len()..])?;
-                self.loans.truncate(previous_loans);
+                self.end_loans_since(previous_loans);
                 return Ok(signature.result);
             }
             ExpressionKind::StaticReference {
@@ -1642,7 +1650,7 @@ impl FunctionChecker<'_> {
                 if *ty == Type::Void {
                     let previous_loans = self.loans.len();
                     self.expression(operand)?;
-                    self.loans.truncate(previous_loans);
+                    self.end_loans_since(previous_loans);
                     return Ok(Type::Void);
                 }
                 if matches!(ty, Type::Pointer(_)) {
@@ -2194,7 +2202,7 @@ impl FunctionChecker<'_> {
                     {
                         self.integer(actual, arguments[0].span)?;
                     }
-                    self.loans.truncate(previous_loans);
+                    self.end_loans_since(previous_loans);
                     return Ok(Type::Void);
                 }
 
@@ -2217,7 +2225,7 @@ impl FunctionChecker<'_> {
                         signature.return_type,
                     )?;
                 } else {
-                    self.loans.truncate(previous_loans);
+                    self.end_loans_since(previous_loans);
                 }
                 return Ok(signature.return_type);
             }
@@ -2315,7 +2323,7 @@ impl FunctionChecker<'_> {
                 let left_type = self.expression(left)?;
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
                     self.scalar_condition(left_type, left.span)?;
-                    self.loans.truncate(before_left_loans);
+                    self.end_loans_since(before_left_loans);
                     let before_right = self.scopes.clone();
                     let right_type = self.expression(right)?;
                     self.scalar_condition(right_type, right.span)?;
@@ -2754,7 +2762,7 @@ impl FunctionChecker<'_> {
         let condition_loans = self.loans.len();
         let condition_type = self.expression(condition)?;
         self.scalar_condition(condition_type, condition.span)?;
-        self.loans.truncate(condition_loans);
+        self.end_loans_since(condition_loans);
         let before = self.scopes.clone();
         let loan_count = self.loans.len();
         let then_type = self.conditional_branch(then_value, expected)?;
@@ -3535,9 +3543,14 @@ impl FunctionChecker<'_> {
         match &expression.kind {
             ExpressionKind::Call { .. }
             | ExpressionKind::MethodCall { .. }
-            | ExpressionKind::StaticCall { .. } => {
+            | ExpressionKind::StaticCall { .. }
+            | ExpressionKind::StructLiteral { .. }
+            | ExpressionKind::Conditional { .. } => {
                 let place = self.temporary_place(expression)?;
-                if self.expression_types[&expression.span].is_borrow() {
+                if self.expression_types[&expression.span].is_borrow()
+                    || self.temporary_owners.contains_key(&expression.span)
+                    || (self.unevaluated && matches!(place.ty, Type::Struct(_)))
+                {
                     return Ok(place);
                 }
                 return Err(Diagnostic::new(
@@ -3579,7 +3592,7 @@ impl FunctionChecker<'_> {
                 } else {
                     self.pointer_offset(place.ty, index, index_type)?;
                 }
-                self.loans.truncate(previous_loans);
+                self.end_loans_since(previous_loans);
                 let mutable = if let Type::Pointer(id) = place.ty {
                     self.types.pointers[id].mutable
                 } else {
@@ -3679,6 +3692,9 @@ impl FunctionChecker<'_> {
 
     fn temporary_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
         let ty = self.reference_expression(expression)?;
+        if matches!(ty, Type::Struct(_)) {
+            return self.owner_temporary(expression, ty);
+        }
         if !ty.is_borrow() && !matches!(ty, Type::Pointer(_)) {
             return Err(Diagnostic::new(
                 expression.span,
@@ -3924,9 +3940,10 @@ impl FunctionChecker<'_> {
                 .expect("borrowed argument has a loan");
             origins.push((loan.root.clone(), loan.fields.clone()));
             origins.extend(loan.alternatives.clone());
-            if self.loans[..previous_loans]
-                .iter()
-                .any(|existing| existing.id == id)
+            if loan.scope == Some(usize::MAX)
+                || self.loans[..previous_loans]
+                    .iter()
+                    .any(|existing| existing.id == id)
             {
                 parents.push(id);
             }
@@ -3936,9 +3953,13 @@ impl FunctionChecker<'_> {
                 if !seen.insert(id) {
                     continue;
                 }
-                if self.loans[..previous_loans]
+                if self
+                    .loans
                     .iter()
-                    .any(|loan| loan.id == id)
+                    .any(|loan| loan.id == id && loan.scope == Some(usize::MAX))
+                    || self.loans[..previous_loans]
+                        .iter()
+                        .any(|loan| loan.id == id)
                 {
                     parents.push(id);
                 } else if let Some(loan) = self.loans.iter().find(|loan| loan.id == id) {
@@ -3950,7 +3971,7 @@ impl FunctionChecker<'_> {
         origins.retain(|origin| unique.insert(origin.clone()));
         parents.sort_unstable();
         parents.dedup();
-        self.loans.truncate(previous_loans);
+        self.end_loans_since(previous_loans);
         for (root, fields) in &origins {
             self.access_through(root, fields, mutable, &parents, span)?;
         }

@@ -87,8 +87,13 @@ containing value move-only. Shared access to a holder freezes those fields.
 Local replacement retains every possible source until the holder's block ends.
 See [reference fields](language.md#reference-fields) for storage restrictions.
 
-Heap-backed reference storage and borrowed temporary owners remain in the
-[roadmap](roadmap.md).
+Temporary struct values can supply borrows to calls and value computations.
+Temporary owners are destroyed in reverse construction order at the end of
+the enclosing statement expression, initializer, return expression, or control
+condition. Short-circuit operands and conditional branches share that cleanup
+boundary. Saving a reference to a temporary requires a named owner.
+
+Heap-backed reference storage remains in the [roadmap](roadmap.md).
 
 ## Cleanup
 

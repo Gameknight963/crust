@@ -400,3 +400,11 @@ whole-container moves, and recovery of rejected values after allocation failure.
 The comparison checks contents and destructor order after each operation. The
 allocator tracker checks that every allocation is freed exactly once. Sanitizer
 CI runs the same test.
+
+## Temporary owners
+
+Borrowable temporary values have per-function storage slots. Construction adds
+owning slots to a cleanup stack, which drops them in reverse construction order
+at each expression boundary. This also handles temporaries created inside
+conditional branches. The checker keeps references captured by temporary owners
+live through the same boundary and rejects escaping references to their slots.

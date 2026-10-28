@@ -234,7 +234,6 @@ fn rejects_invalid_declarations_receivers_and_method_lookup() {
         "int main() { int n = 1; n.missing(); return 0; }",
         "struct A { int n; }; int main() { struct A a = { .n = 1 }; a.missing(); return 0; }",
         "struct A { int n; int f() const { return 1; } }; int main() { struct A a = { .n = 1 }; a.f(2); return 0; }",
-        "struct A { int n; int f() const { return 1; } }; struct A make() { return (struct A){ .n = 1 }; } int main() { return make().f(); }",
         "Self f() { return 0; } int main() { return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

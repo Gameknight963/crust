@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 mod globals;
 mod names;
+mod temporaries;
 
 use crate::ast::*;
 use crate::check::{CheckedProgram, FunctionAnalysis};
@@ -86,6 +87,8 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
             })
             .collect(),
         function_values: &empty_analysis.function_values,
+        temporary_owners: &empty_analysis.temporary_owners,
+        materializing: None,
     };
     let source_declaration_position = emitter.output.len();
     emitter.type_names(program);
@@ -205,6 +208,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
     }
     emitter.global_definitions(checked);
     emitter.drop_functions();
+    emitter.temporary_runtime();
     for function in &program.functions {
         if function.external || function.name.starts_with('?') {
             continue;
@@ -217,6 +221,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         emitter.conversions = &analysis.conversions;
         emitter.constants = &analysis.constants;
         emitter.function_values = &analysis.function_values;
+        emitter.temporary_owners = &analysis.temporary_owners;
         emitter.line("");
         emitter.debug_names.begin_function();
         for (index, parameter) in function.parameters.iter().enumerate() {
@@ -381,6 +386,8 @@ impl Scope {
 }
 
 struct Emitter<'checked> {
+    materializing: Option<(Span, Type)>,
+    temporary_owners: &'checked HashMap<Span, Type>,
     source_files: &'checked [Source],
     source_offset: Option<usize>,
     mapped_location: Option<(usize, usize)>,
@@ -633,6 +640,9 @@ impl Emitter<'_> {
         let previous = self.source_offset.replace(block.span.start);
         self.line("{");
         self.indent += 1;
+        if self.scopes.len() == 1 {
+            self.temporary_slots();
+        }
         for name in &scope.declaration_order {
             if let Some(live) = &scope.variables[name].live {
                 self.line(&format!("int {live} = 1;"));
@@ -653,6 +663,7 @@ impl Emitter<'_> {
     fn statement(&mut self, statement: &Statement) {
         let previous = self.source_offset.replace(statement.span.start);
         self.statement_inner(statement);
+        self.cleanup_temporaries();
         self.source_offset = previous;
     }
 
@@ -795,6 +806,7 @@ impl Emitter<'_> {
                 let value = value
                     .as_ref()
                     .map(|expression| self.value_expression(expression));
+                self.cleanup_temporaries();
                 for index in (0..self.scopes.len()).rev() {
                     self.cleanup_scope(index);
                 }
@@ -810,6 +822,7 @@ impl Emitter<'_> {
                 else_block,
             } => {
                 let condition = self.value_expression(condition);
+                self.cleanup_temporaries();
                 self.line(&format!("if ({condition})"));
                 self.block(then_block);
                 if let Some(block) = else_block {
@@ -871,6 +884,7 @@ impl Emitter<'_> {
                 } else {
                     self.value_expression(value)
                 };
+                self.cleanup_temporaries();
                 self.line(&format!("switch ({tag}) {{"));
                 self.loops.push(LoopContext {
                     is_switch: true,
@@ -924,6 +938,7 @@ impl Emitter<'_> {
                 self.line("while (1) {");
                 self.indent += 1;
                 let condition = self.value_expression(condition);
+                self.cleanup_temporaries();
                 self.line(&format!("if (!{condition}) {{ break; }}"));
                 self.loops.push(LoopContext {
                     is_switch: false,
@@ -953,6 +968,7 @@ impl Emitter<'_> {
                 self.loops.pop();
                 self.line(&format!("{label}: ;"));
                 let condition = self.value_expression(condition);
+                self.cleanup_temporaries();
                 self.line(&format!("if (!{condition}) {{ break; }}"));
                 self.indent -= 1;
                 self.line("}");
@@ -1662,6 +1678,11 @@ impl Emitter<'_> {
     }
 
     fn expression_type(&self, expression: &Expression) -> Type {
+        if let Some((span, ty)) = self.materializing
+            && span == expression.span
+        {
+            return ty;
+        }
         return self.expression_types[&expression.span];
     }
 
@@ -1690,6 +1711,18 @@ impl Emitter<'_> {
     }
 
     fn place(&mut self, expression: &Expression) -> String {
+        if let Some(ty) = self.temporary_owners.get(&expression.span).copied()
+            && matches!(
+                expression.kind,
+                ExpressionKind::Call { .. }
+                    | ExpressionKind::StaticCall { .. }
+                    | ExpressionKind::MethodCall { .. }
+                    | ExpressionKind::StructLiteral { .. }
+                    | ExpressionKind::Conditional { .. }
+            )
+        {
+            return self.materialize_temporary(expression, ty);
+        }
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
                 let base_type = self.place_type(base);

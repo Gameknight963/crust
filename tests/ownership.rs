@@ -96,7 +96,6 @@ fn rejects_copying_and_using_moved_owners_across_control_flow() {
         ("Box<int> a = 1;", "found int"),
         ("int a = Box<int>::create(1);", "found struct Box<int>"),
         ("int a = 1; print(*a);", "dereference"),
-        ("print(Box<int>::create(1).get());", "dereference"),
     ];
     for (body, message) in cases {
         let source = format!("{prelude} int main(void) {{ {body} return 0; }}");

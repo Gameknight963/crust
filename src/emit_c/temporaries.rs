@@ -1,0 +1,64 @@
+use super::*;
+
+fn slot(span: Span) -> String {
+    return format!("crust_temporary_{}_{}", span.start, span.end);
+}
+fn drop_name(ty: Type) -> String {
+    return match ty {
+        Type::Struct(id) => format!("crust_temporary_drop_struct_{id}"),
+        _ => unreachable!(),
+    };
+}
+
+impl Emitter<'_> {
+    pub(super) fn temporary_runtime(&mut self) {
+        self.line(
+            "struct crust_temporary { void *value; void (*drop)(void *); };
+static inline void crust_cleanup_temporaries(struct crust_temporary *values, size_t *count) {
+    while (*count > 0) { --*count; values[*count].drop(values[*count].value); }
+}",
+        );
+        for id in 0..self.types.structs.len() {
+            if self.types.owns(Type::Struct(id)) {
+                self.line(&format!("static inline void {}(void *value) {{ crust_drop_struct_{id}((crust_type_{id} *)value); }}", drop_name(Type::Struct(id))));
+            }
+        }
+    }
+
+    pub(super) fn temporary_slots(&mut self) {
+        if self.temporary_owners.is_empty() {
+            return;
+        }
+        self.line(&format!(
+            "struct crust_temporary crust_temporaries[{}]; size_t crust_temporary_count = 0;",
+            self.temporary_owners.len()
+        ));
+        let mut entries: Vec<_> = self
+            .temporary_owners
+            .iter()
+            .map(|(span, ty)| (*span, *ty))
+            .collect();
+        entries.sort_by_key(|(span, _)| (span.start, span.end));
+        for (span, ty) in entries {
+            self.line(&format!("{} {};", c_type(ty), slot(span)));
+        }
+    }
+
+    pub(super) fn cleanup_temporaries(&mut self) {
+        if !self.temporary_owners.is_empty() {
+            self.line("crust_cleanup_temporaries(crust_temporaries, &crust_temporary_count);");
+        }
+    }
+
+    pub(super) fn materialize_temporary(&mut self, expression: &Expression, ty: Type) -> String {
+        let previous = self.materializing.replace((expression.span, ty));
+        let value = self.expression(expression).expect("temporary owner value");
+        self.materializing = previous;
+        let slot = slot(expression.span);
+        self.line(&format!("{slot} = {value};"));
+        if self.types.owns(ty) {
+            self.line(&format!("crust_temporaries[crust_temporary_count++] = (struct crust_temporary){{ &{slot}, {} }};", drop_name(ty)));
+        }
+        return slot;
+    }
+}
