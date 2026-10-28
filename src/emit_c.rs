@@ -198,6 +198,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         emitter.scopes[0].insert(
             variable.name.clone(),
             Local {
+                mutable: !variable.readonly,
                 name: variable.link_name.clone(),
                 ty: variable.ty,
                 live: None,
@@ -238,6 +239,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
             scope.insert(
                 parameter.name.clone(),
                 Local {
+                    mutable: true,
                     name: format!("crust_arg_{index}"),
                     ty: parameter.ty,
                     live: if matches!(parameter.ty, Type::Struct(_) | Type::Array(_))
@@ -369,6 +371,7 @@ fn header(function: &Function, kind: crate::ProgramKind) -> String {
 
 #[derive(Clone)]
 struct Local {
+    mutable: bool,
     name: String,
     ty: Type,
     // Named owning structs can be moved without changing their public layout.
@@ -532,7 +535,7 @@ impl Emitter<'_> {
                     continue;
                 }
                 self.line(&format!(
-                    "struct crust_array_{id} {{ {} crust_elements[{}]; }};",
+                    "struct __attribute__((__may_alias__)) crust_array_{id} {{ {} crust_elements[{}]; }};",
                     c_type(array.element),
                     array.length
                 ));
@@ -711,6 +714,7 @@ impl Emitter<'_> {
                 self.scopes.last_mut().unwrap().insert(
                     name.clone(),
                     Local {
+                        mutable: true,
                         name: local,
                         ty: *ty,
                         live,
@@ -721,9 +725,11 @@ impl Emitter<'_> {
                 name, global, ty, ..
             } => {
                 let storage = self.scopes[0].variables[global].name.clone();
+                let mutable = self.scopes[0].variables[global].mutable;
                 self.scopes.last_mut().unwrap().insert(
                     name.clone(),
                     Local {
+                        mutable,
                         name: storage,
                         ty: *ty,
                         live: None,
@@ -1254,39 +1260,50 @@ impl Emitter<'_> {
                     None
                 } else {
                     let result = self.fresh_name("conditional");
-                    self.line(&format!("{} {result};", c_type(ty)));
+                    self.line(&format!("{} *{result};", c_type(ty)));
                     Some(result)
                 };
-                self.line(&format!("if ({condition}) {{"));
-                self.indent += 1;
+                let alternative = self.fresh_name("alternative");
+                let finished = self.fresh_name("conditional_end");
+                self.line(&format!("if (!({condition})) goto {alternative};"));
                 if let Some(result) = &result {
                     let value = self.value_expression(then_value);
-                    self.line(&format!("{result} = {value};"));
+                    let value = self.temporary(ty, &value);
+                    self.line(&format!("{result} = &{value};"));
                 } else {
                     self.expression(then_value);
                 }
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
+                self.line(&format!("goto {finished};\n{alternative}: ;"));
                 if let Some(result) = &result {
                     let value = self.value_expression(else_value);
-                    self.line(&format!("{result} = {value};"));
+                    let value = self.temporary(ty, &value);
+                    self.line(&format!("{result} = &{value};"));
                 } else {
                     self.expression(else_value);
                 }
-                self.indent -= 1;
-                self.line("}");
-                return result;
+                self.line(&format!("{finished}: ;"));
+                return result.map(|result| self.temporary(ty, &format!("*{result}")));
             }
             ExpressionKind::Storage { pointer, value } => {
                 let Type::Pointer(id) = self.expression_type(pointer) else {
                     unreachable!()
                 };
                 let ty = self.types.pointers[id].pointee;
+                let volatile = self.types.pointers[id].volatile;
                 let pointer = self.value_expression(pointer);
                 if let Some(value) = value {
                     let value = self.value_expression(value);
-                    self.line(&format!("*({pointer}) = {value};"));
+                    if self.types.assignable(ty) {
+                        self.line(&format!("*({pointer}) = {value};"));
+                    } else {
+                        let value = self.temporary(ty, &value);
+                        if volatile {
+                            let index = self.fresh_name("init_byte");
+                            self.line(&format!("for (size_t {index}=0; {index}<sizeof({value}); ++{index}) ((volatile unsigned char *)({pointer}))[{index}] = ((const unsigned char *)&{value})[{index}];"));
+                        } else {
+                            self.line(&format!("memcpy(({pointer}), &{value}, sizeof({value}));"));
+                        }
+                    }
                 } else {
                     self.drop_value(ty, &format!("*({pointer})"));
                 }
@@ -1380,12 +1397,44 @@ impl Emitter<'_> {
                     && self.types.structs[id].native_name.is_some()
                 {
                     let local = self.fresh_name("native_record");
-                    self.line(&format!("{} {local} = {{0}};", c_type(ty)));
+                    let mut initializers = Vec::new();
+                    let mut arrays = Vec::new();
                     for field in fields {
                         let value = self.value_expression(&field.value);
+                        let value = self.temporary(self.expression_type(&field.value), &value);
+                        let info = self.types.structs[id]
+                            .fields
+                            .iter()
+                            .find(|info| info.name == field.name)
+                            .unwrap();
+                        if matches!(info.ty, Type::Array(_))
+                            && !info.readonly
+                            && self.types.assignable(info.ty)
+                        {
+                            arrays.push((field.name.clone(), value));
+                        } else {
+                            let value = if matches!(info.ty, Type::Array(_)) {
+                                self.native_array_copy_initializer(info.ty, &value)
+                            } else {
+                                value
+                            };
+                            initializers.push(format!(
+                                ".{} = {value}",
+                                info.native_name.as_ref().unwrap_or(&info.name)
+                            ));
+                        }
+                    }
+                    self.native_field_macros(false);
+                    let values = if initializers.is_empty() {
+                        "0".to_owned()
+                    } else {
+                        initializers.join(", ")
+                    };
+                    self.line(&format!("{} {local} = {{ {values} }};", c_type(ty)));
+                    self.native_field_macros(true);
+                    for (name, value) in arrays {
                         self.line(&format!(
-                            "*crust_native_field_mut_{id}_{}(&{local}) = {value};",
-                            field.name
+                            "*crust_native_field_mut_{id}_{name}(&{local}) = {value};"
                         ));
                     }
                     return Some(local);
@@ -1654,12 +1703,11 @@ impl Emitter<'_> {
                     } else {
                         format!("!{result}")
                     };
-                    self.line(&format!("if ({condition}) {{"));
-                    self.indent += 1;
+                    let finished = self.fresh_name("logical_end");
+                    self.line(&format!("if (!({condition})) goto {finished};"));
                     let right = self.value_expression(right);
                     self.line(&format!("{result} = ({right} != 0);"));
-                    self.indent -= 1;
-                    self.line("}");
+                    self.line(&format!("{finished}: ;"));
                     return Some(result);
                 }
                 if (matches!(self.expression_type(left), Type::Pointer(_))
@@ -1728,10 +1776,17 @@ impl Emitter<'_> {
         if let Type::Struct(id) = self.place_type(base)
             && self.types.structs[id].native_name.is_some()
         {
-            let access = if self.place_mutable(base) {
-                "mut"
-            } else {
-                "const"
+            let access = match (
+                self.place_mutable(base),
+                self.place_volatile
+                    .get(&base.span)
+                    .copied()
+                    .unwrap_or(false),
+            ) {
+                (true, false) => "mut",
+                (false, false) => "const",
+                (true, true) => "mutv",
+                (false, true) => "constv",
             };
             return format!("(*crust_native_field_{access}_{id}_{name}(&({place})))");
         }
@@ -1913,7 +1968,7 @@ impl Emitter<'_> {
             ExpressionKind::Variable { name, .. } => {
                 return match self.local(name).ty {
                     Type::Borrow { mutable, .. } => mutable,
-                    _ => true,
+                    _ => self.local(name).mutable,
                 };
             }
             ExpressionKind::Index { base, .. }
@@ -1930,6 +1985,7 @@ impl Emitter<'_> {
                     .field(self.place_type(base), name, expression.span)
                     .expect("checked field");
                 return self.place_mutable(base)
+                    && !matches!(self.place_type(base),Type::Struct(id) if self.types.structs[id].fields.iter().any(|field|field.name==*name&&field.readonly))
                     && !matches!(ty, Type::Borrow { mutable: false, .. });
             }
             ExpressionKind::Index { base, .. } => {

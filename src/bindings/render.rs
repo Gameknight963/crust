@@ -168,16 +168,17 @@ impl Renderer {
                     .find(|node| node["name"] == *probe)
                     .and_then(|node| type_children(node).next())
                     .ok_or("Clang omitted a record field type")?;
-                let qualified = Self::unwrap(node)?;
-                if kind(qualified) == "QualType" {
-                    return Err(format!(
-                        "qualified C field '{}.{native}' requires a native accessor",
-                        record.name
-                    ));
-                }
+                let (element, dimensions, qualifiers) = self.record_array_type(node)?;
                 let ty = self
-                    .object_type(node)
+                    .object_type(element)
                     .map_err(|error| format!("C field '{}.{native}': {error}", record.name))?;
+                let ty = if qualifiers.is_empty() {
+                    ty
+                } else if kind(Self::unqualified(element)?) == "PointerType" {
+                    format!("{ty} {}", qualifiers.trim())
+                } else {
+                    format!("{}{ty}", qualifiers)
+                };
                 let tokens = crate::lexer::tokenize(native).ok();
                 let plain=tokens.is_some_and(|tokens|tokens.len()==2&&matches!(&tokens[0].kind,crate::lexer::Token::Identifier(value) if value==native));
                 let field = if plain {
@@ -195,12 +196,61 @@ impl Renderer {
                 } else {
                     format!(" = \"{native}\"")
                 };
-                declaration.push_str(&format!("    {ty} {field}{link};\n"));
+                declaration.push_str(&format!("    {ty} {field}{dimensions}{link};\n"));
             }
             declaration.push_str("};");
             self.declarations.push((None, declaration));
         }
         return Ok(());
+    }
+
+    fn record_array_type<'a>(
+        &self,
+        mut node: &'a Value,
+    ) -> Result<(&'a Value, String, String), String> {
+        let mut dimensions = String::new();
+        let mut qualifiers = String::new();
+        loop {
+            let unwrapped = Self::unwrap(node)?;
+            if kind(unwrapped) == "QualType" {
+                let text = unwrapped["qualifiers"].as_str().unwrap_or("");
+                if text
+                    .split_whitespace()
+                    .any(|q| !matches!(q, "const" | "volatile"))
+                {
+                    return Err("unsupported native field qualifier".to_owned());
+                }
+                for qualifier in text.split_whitespace() {
+                    if !qualifiers
+                        .split_whitespace()
+                        .any(|previous| previous == qualifier)
+                    {
+                        qualifiers.push_str(qualifier);
+                        qualifiers.push(' ');
+                    }
+                }
+                node = type_children(unwrapped)
+                    .next()
+                    .ok_or("Clang omitted a qualified field type")?;
+                continue;
+            }
+            if kind(unwrapped) != "ConstantArrayType" {
+                if matches!(kind(unwrapped), "IncompleteArrayType" | "VariableArrayType") {
+                    return Err(
+                        "flexible and variable C array fields require a native accessor".to_owned(),
+                    );
+                }
+                return Ok((node, dimensions, qualifiers));
+            }
+            let length = unwrapped["size"]
+                .as_u64()
+                .filter(|length| *length > 0)
+                .ok_or("native array fields require a positive constant length")?;
+            dimensions.push_str(&format!("[{length}]"));
+            node = type_children(unwrapped)
+                .next()
+                .ok_or("Clang omitted an array element type")?;
+        }
     }
 
     pub fn declarations(&self, public: bool) -> String {

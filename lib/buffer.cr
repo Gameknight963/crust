@@ -21,7 +21,7 @@ struct Buffer<T> {
                     (AllocationFailure<T>){ .out_of_memory = move(initial) });
             }
             for (size_t i = 0; i < length; i += 1) {
-                data[i] = initial;
+                init(data + i, initial);
             }
             return Result<Self, AllocationFailure<T>>::success(
                 (Self){ .data = data, .length = length });

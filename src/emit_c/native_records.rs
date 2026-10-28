@@ -15,6 +15,33 @@ pub(super) fn unaligned_name(ty: Type) -> String {
 }
 
 impl Emitter<'_> {
+    pub(super) fn native_array_copy_initializer(&self, ty: Type, value: &str) -> String {
+        let Type::Array(id) = ty else {
+            return value.to_owned();
+        };
+        let array = self.types.arrays[id];
+        let elements = (0..array.length)
+            .map(|index| {
+                self.native_array_copy_initializer(
+                    array.element,
+                    &format!("({value}).crust_elements[{index}]"),
+                )
+            })
+            .collect::<Vec<_>>();
+        return format!("{{ {} }}", elements.join(", "));
+    }
+    fn native_field_pointer(&self, mut ty: Type, qualifiers: &str) -> String {
+        let mut dimensions = String::new();
+        while let Type::Array(id) = ty {
+            let array = self.types.arrays[id];
+            dimensions.push_str(&format!("[{}]", array.length));
+            ty = array.element;
+        }
+        if dimensions.is_empty() {
+            return format!("{} {qualifiers}*", c_type(ty));
+        }
+        return format!("{} {qualifiers}(*){dimensions}", c_type(ty));
+    }
     pub(super) fn unaligned_type(&mut self, ty: Type) {
         self.line(&format!(
             "typedef {} {} __attribute__((__aligned__(1)));",
@@ -64,7 +91,15 @@ impl Emitter<'_> {
             }
             for (index, field) in info.fields.iter().enumerate() {
                 let native = field.native_name.as_ref().unwrap_or(&field.name);
-                self.line(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__(&((crust_type_{id} *)0)->{}), {} *), \"native field type mismatch: {}.{}\");",native,c_type(field.ty),info.name,field.name));
+                let qualifiers = format!(
+                    "{}{}",
+                    if field.readonly { "const " } else { "" },
+                    if field.volatile { "volatile " } else { "" }
+                );
+                self.line(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__(&((crust_type_{id} *)0)->{}), {}), \"native field type mismatch: {}.{}\");",native,self.native_field_pointer(field.ty,&qualifiers),info.name,field.name));
+                if matches!(field.ty, Type::Array(_)) {
+                    self.line(&format!("_Static_assert(sizeof({}) == sizeof(((crust_type_{id} *)0)->{native}), \"native array layout mismatch\");",c_type(field.ty)));
+                }
                 if !info.is_union && index > 0 {
                     let previous = info.fields[index - 1]
                         .native_name
@@ -74,8 +109,37 @@ impl Emitter<'_> {
                 }
                 let record = unaligned_name(Type::Struct(id));
                 let ty = unaligned_name(field.ty);
-                self.line(&format!("static inline {ty} *crust_native_field_mut_{id}_{}({record} *crust_record) {{ return &crust_record->{}; }}",field.name,native));
-                self.line(&format!("static inline {ty} const *crust_native_field_const_{id}_{}({record} const *crust_record) {{ return &crust_record->{}; }}",field.name,native));
+                for (access, readonly, volatile) in [
+                    ("mut", false, false),
+                    ("const", true, false),
+                    ("mutv", false, true),
+                    ("constv", true, true),
+                ] {
+                    let record_qualifiers = format!(
+                        "{}{}",
+                        if readonly { "const " } else { "" },
+                        if volatile { "volatile " } else { "" }
+                    );
+                    let field_qualifiers = format!(
+                        "{}{}",
+                        if readonly || field.readonly {
+                            "const "
+                        } else {
+                            ""
+                        },
+                        if volatile || field.volatile {
+                            "volatile "
+                        } else {
+                            ""
+                        }
+                    );
+                    let cast = if matches!(field.ty, Type::Array(_)) {
+                        format!("({ty} {field_qualifiers}*)")
+                    } else {
+                        String::new()
+                    };
+                    self.line(&format!("static inline {ty} {field_qualifiers}*crust_native_field_{access}_{id}_{}({record} {record_qualifiers}*crust_record) {{ return {cast}&crust_record->{native}; }}",field.name));
+                }
             }
             for name in names.iter().rev() {
                 self.line(&format!("#pragma pop_macro(\"{name}\")"));

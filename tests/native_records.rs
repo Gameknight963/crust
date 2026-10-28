@@ -319,10 +319,6 @@ fn selected_records_validate_tags_fields_and_complete_dependencies() {
             ..Default::default()
         },
         crust::bindings::Options {
-            structs: vec!["Qualified".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
             structs: vec!["Bits".to_owned()],
             ..Default::default()
         },
@@ -420,5 +416,198 @@ fn records_project_example_imports_its_native_layout() {
         "42\n5\n1\n43\n",
         "",
         false,
+    );
+}
+
+#[test]
+fn native_arrays_preserve_layout_copies_borrows_and_static_initializers() {
+    let path = header(
+        "struct Item { int n; };\n#pragma pack(push,1)\nstruct Packet { char tag; int values[3]; int matrix[2][2]; char text[4]; struct Item items[2]; };\n#pragma pack(pop)\nstatic inline int read_packet(struct Packet p) { return p.values[1]+p.values[2]; }\n",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Packet".to_owned(), "Item".to_owned()],
+            functions: vec!["read_packet".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(bindings.contains("matrix[2][2]"), "{bindings}");
+    let source = format!(
+        r#"{bindings}
+        const Packet template = {{.tag=1,.values={{1,2,3}},.matrix={{{{4,5}},{{6,7}}}},.text="abc",.items={{{{.n=8}},{{.n=9}}}}}};
+        const int* address = &template.matrix[1][0];
+        Packet echo(Packet value) {{ return value; }}
+        int main() {{
+            Packet packet=echo(template);
+            packet.values[1]=40;packet.values[2]=2;
+            {{ int[3]& values=&packet.values;values[0]=10; }}
+            print(packet.values[1]+packet.values[2]);print(packet.matrix[1][0]);
+            print(packet.items[1].n);print(packet.text[2]);
+            unsafe {{ const int* actual=&template.matrix[1][0];if(address != actual) return 1; }}
+            print(template.matrix[1][0]);unsafe {{ print(read_packet(packet)); }}
+            int copy[3]=packet.values;copy[1]=1;
+            print(packet.values[1]);packet.values=copy;print(packet.values[1]);
+            return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n6\n9\n99\n6\n42\n40\n1\n"
+    );
+}
+
+#[test]
+fn native_qualified_fields_preserve_const_permissions_and_volatile_borrows() {
+    let path = header(
+        "#pragma pack(push,1)\nstruct Sample { const int id; volatile int ticks; const int frozen[2]; volatile int samples[2]; int *const pointer; };\n#pragma pack(pop)\n",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Sample".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = format!(
+        r#"{bindings}
+        void increment(volatile int& value) {{ value++; }}
+        int read(const Sample& value) {{ return value.ticks + value.samples[0]; }}
+        int read_volatile(const volatile Sample& value) {{ return value.ticks + value.samples[0]; }}
+        int main() {{
+            int target=8;
+            Sample value={{.id=42,.ticks=1,.frozen={{3,4}},.samples={{5,6}},.pointer=&target}};
+            increment(&value.ticks);increment(&value.samples[0]);
+            print(value.id);print(value.frozen[1]);print(read(&const value));
+            unsafe {{ volatile Sample* raw=&value;print(read_volatile(&const *raw));*value.pointer=9; }} print(target);
+            Sample copied=value;print(copied.id);print(copied.samples[0]);return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n4\n8\n8\n9\n42\n6\n"
+    );
+    for operation in [
+        "value.id=1;",
+        "value.id++;",
+        "value.id+=1;",
+        "value.frozen[0]=1;",
+        "value.pointer=0;",
+        "int& writable=&value.id;",
+        "int[2]& writable=&value.frozen;",
+        "value=value;",
+        "Sample& alias=&value;alias=value;",
+        "int& writable=&value.ticks;",
+        "int[2]& writable=&value.samples;",
+    ] {
+        let source = format!(
+            "{bindings} int main() {{ int target=0;Sample value={{.id=42,.ticks=0,.frozen={{1,2}},.samples={{3,4}},.pointer=&target}};{operation} return 0; }}"
+        );
+        assert!(crust::check(&source).is_err(), "{operation}");
+    }
+}
+
+#[test]
+fn native_field_restrictions_report_frontend_errors() {
+    for source in [
+        "struct Owner { ~Owner() {} };extern struct Native {const Owner owner;};int main(){return 0;}",
+        "struct Owner { ~Owner() {} };extern struct Native {volatile Owner owner;};int main(){return 0;}",
+        "extern struct Native {const int values[4097];};int main(){Native value={.values={1}};return 0;}",
+    ] {
+        assert!(crust::check(source).is_err(), "{source}");
+    }
+    for declaration in [
+        "struct Native {int count;int values[];};",
+        "struct Native {int values[0];};",
+    ] {
+        let path = header(declaration);
+        assert!(
+            crust::bindings::generate(
+                &path,
+                &crust::bindings::Options {
+                    structs: vec!["Native".to_owned()],
+                    ..Default::default()
+                },
+            )
+            .is_err(),
+            "{declaration}"
+        );
+    }
+}
+
+#[test]
+fn const_native_records_support_factory_returns_temporaries_and_heap_initialization() {
+    let path = header("struct Frozen { const int id; };\n");
+    let memory = include_str!("../lib/memory.cr");
+    let allocation = common::allocation_source();
+    let boxed = include_str!("../lib/box.cr")
+        .replace("import \"memory.cr\";", memory)
+        .replace("import \"allocation.cr\";", &allocation);
+    let buffer = include_str!("../lib/buffer.cr")
+        .replace("import \"memory.cr\";", "")
+        .replace("import \"allocation.cr\";", "");
+    let source = format!(
+        r#"{} {boxed} {buffer}
+        extern struct Frozen {{const int id;int get() const {{return this.id;}}}};
+        Frozen create(int value) {{return (Frozen){{.id=value}};}}
+        int read(const Frozen& value) {{return value.id;}}
+        int main() {{
+            Frozen selected=true?create(42):create(7);print(selected.id);
+            print(read(&(true?create(3):create(4))));print(create(5).get());
+            bool test=true&&create(6).get()==6;print(test);
+            for(int i=0;i<2;i++) {{print(create(i).get());}}
+            Box<Frozen> box=Box<Frozen>::create(create(8));print(box.get().id);
+            Buffer<Frozen> values=Buffer<Frozen>::create(2,create(9));print(values.at(1).id);
+            return 0;
+        }}
+    "#,
+        native_header(&path)
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n3\n5\n1\n0\n1\n8\n9\n"
+    );
+}
+
+#[test]
+fn native_array_fields_preserve_typedefs_callbacks_and_const_pointer_objects() {
+    let path = header(
+        "typedef int Row[2];struct Table { Row init[2]; int (*callbacks[1])(int); int *const targets[1]; const int *shared[1]; };\n",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Table".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = format!(
+        r#"{bindings}
+        int increment(int value) {{return value+1;}}
+        int main() {{
+            int target=1;
+            Table table={{.c_init={{{{2,3}},{{4,5}}}},.callbacks={{increment}},.targets={{&target}},.shared={{&target}}}};
+            print(table.c_init[1][1]);
+            unsafe {{print(table.callbacks[0](41));*table.targets[0]=9;print(*table.shared[0]);}}
+            return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "5\n42\n9\n"
     );
 }

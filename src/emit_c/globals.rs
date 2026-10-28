@@ -83,7 +83,14 @@ impl<'checked> Emitter<'checked> {
                             } else {
                                 format!("crust_field_{}", field.name)
                             };
-                            format!(".{name} = {}", self.static_value(&field.value, constants))
+                            let value = if self.types.structs[id].native_name.is_some()
+                                && matches!(self.expression_type(&field.value), Type::Array(_))
+                            {
+                                self.native_array_initializer(&field.value, constants)
+                            } else {
+                                self.static_value(&field.value, constants)
+                            };
+                            format!(".{name} = {value}")
                         })
                         .collect::<Vec<_>>();
                     if self.types.structs[id].tagged {
@@ -174,11 +181,53 @@ impl<'checked> Emitter<'checked> {
                 format!("({}).{name}", self.static_place(base, constants))
             }
             ExpressionKind::Index { base, index } => format!(
-                "({}).crust_elements[{}]",
+                "({}){}[{}]",
                 self.static_place(base, constants),
+                if self.native_array_place(base) {
+                    ""
+                } else {
+                    ".crust_elements"
+                },
                 self.static_value(index, constants)
             ),
             _ => unreachable!("checked static address"),
         };
+    }
+
+    fn native_array_place(&self, expression: &Expression) -> bool {
+        return match &expression.kind {
+            ExpressionKind::Field { base, .. } => {
+                matches!(self.place_type(base), Type::Struct(id) if self.types.structs[id].native_name.is_some())
+            }
+            ExpressionKind::Index { base, .. } => self.native_array_place(base),
+            _ => false,
+        };
+    }
+
+    fn native_array_initializer(
+        &self,
+        expression: &Expression,
+        constants: &HashMap<Span, i128>,
+    ) -> String {
+        let values = match &expression.kind {
+            ExpressionKind::ArrayLiteral { elements, .. } => elements
+                .iter()
+                .map(|element| {
+                    if matches!(self.expression_type(element), Type::Array(_)) {
+                        self.native_array_initializer(element, constants)
+                    } else {
+                        self.static_value(element, constants)
+                    }
+                })
+                .collect::<Vec<_>>(),
+            ExpressionKind::StringLiteral { bytes, .. } => bytes
+                .iter()
+                .copied()
+                .chain(std::iter::once(0))
+                .map(|byte| byte.to_string())
+                .collect(),
+            _ => unreachable!("native static array initializer"),
+        };
+        return format!("{{ {} }}", values.join(", "));
     }
 }

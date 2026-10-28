@@ -1181,10 +1181,16 @@ impl Parser {
             let unsafe_prefix = self.consume(&Token::Unsafe);
             let is_static = self.consume(&Token::Static);
             let requires_unsafe = self.consume(&Token::Unsafe) || unsafe_prefix;
-            let ty = self.type_name()?;
+            let (ty, qualifiers) = self.qualified_type_name(self.native_tags.contains_key(&id))?;
             let convention = self.calling_convention()?;
             let (name, span) = self.identifier()?;
             if self.at(&Token::LeftParen) {
+                if qualifiers.readonly || qualifiers.volatile {
+                    return Err(Diagnostic::new(
+                        span,
+                        "object qualifiers apply to native fields",
+                    ));
+                }
                 if private {
                     return Err(Diagnostic::new(span, "private currently applies to fields"));
                 }
@@ -1237,6 +1243,8 @@ impl Parser {
             };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                readonly: qualifiers.readonly,
+                volatile: qualifiers.volatile,
                 native_name,
                 declaration_span,
                 name,

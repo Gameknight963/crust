@@ -247,7 +247,42 @@ impl Types {
         for function_type in &types.function_types {
             types.check_function_type(function_type)?;
         }
+        for info in &types.structs {
+            for field in &info.fields {
+                if (field.readonly || field.volatile) && types.owns(field.ty) {
+                    return Err(Diagnostic::new(
+                        field.span,
+                        "const and volatile native fields require copyable values",
+                    ));
+                }
+            }
+        }
         return Ok(types);
+    }
+
+    pub fn assignable(&self, ty: Type) -> bool {
+        let mut pending = vec![ty];
+        let mut visited = HashSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match ty {
+                Type::Struct(id) => {
+                    for field in &self.structs[id].fields {
+                        if field.readonly {
+                            return false;
+                        }
+                        pending.push(field.ty);
+                    }
+                }
+                Type::Array(id) if self.arrays[id].length != 0 => {
+                    pending.push(self.arrays[id].element)
+                }
+                _ => {}
+            }
+        }
+        return true;
     }
 
     fn visit(

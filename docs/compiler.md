@@ -403,11 +403,12 @@ CI runs the same test.
 
 ## Temporary owners
 
-Borrowable temporary values have per-function storage slots. Construction adds
-owning slots to a cleanup stack, which drops them in reverse construction order
-at each expression boundary. This also handles temporaries created inside
-conditional branches. The checker keeps references captured by temporary owners
-live through the same boundary and rejects escaping references to their slots.
+Borrowable temporary values are initialized at their construction points.
+Expression branches use labels within the enclosing C block, keeping selected
+temporary storage alive through the full expression. Construction adds owners
+to a cleanup stack, which drops them in reverse construction order at each
+expression boundary. The checker keeps captured references live through that
+boundary and rejects escaping references to temporary storage.
 
 ## Stored-reference inference
 
@@ -436,6 +437,12 @@ checks member types and nonoverlapping declaration order. Small field accessors
 shield C member names from header macros. Their pointer types and reference
 types use pointee typedefs with alignment one, preserving ordinary reference
 behavior for packed fields.
+
+Fixed-array field views use alias-permitted array wrappers with checked native
+element types and sizes. Static initializers and addresses use the native array
+layout directly. Field accessors combine the field's qualifiers with those of
+the containing record. Const-containing values use fresh C initialization, and
+raw-storage initialization copies their representation into uninitialized storage.
 
 Generic allocation helpers use malloc for fundamental alignments. Over-aligned
 allocations reserve extra space, align the payload, and save the base pointer

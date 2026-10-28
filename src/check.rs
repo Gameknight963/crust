@@ -944,6 +944,7 @@ impl FunctionChecker<'_> {
             } => {
                 // Assignment may reinitialize an owner that has been moved.
                 let target = self.lookup(name, statement.span)?;
+                self.require_assignable(target.ty.referent(), *name_span)?;
                 if !target.mutable {
                     return Err(Diagnostic::new(
                         *name_span,
@@ -1054,6 +1055,7 @@ impl FunctionChecker<'_> {
             }
             StatementKind::Store { target, value } => {
                 let target_type = self.receiver_type(target)?;
+                self.require_assignable(target_type, target.span)?;
                 self.require_type(value, target_type)?;
                 let place = self.checked_place_access(target, true)?;
                 if !place.mutable || place.ty.is_borrow() {
@@ -3402,6 +3404,7 @@ impl FunctionChecker<'_> {
                 let base_type = self.receiver_type(base)?;
                 let ty = self.field_type(base_type, name, expression.span)?;
                 Ok(self.probe_mutability(base)?
+                    && !matches!(base_type,Type::Struct(id) if self.types.structs[id].fields.iter().any(|field|field.name==*name&&field.readonly))
                     && !matches!(ty, Type::Borrow { mutable: false, .. }))
             }
             ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
@@ -3496,6 +3499,16 @@ impl FunctionChecker<'_> {
         return Ok(ty);
     }
 
+    fn require_assignable(&self, ty: Type, span: Span) -> Result<(), Diagnostic> {
+        if !self.types.assignable(ty) {
+            return Err(Diagnostic::new(
+                span,
+                "a value containing const native fields can be initialized but cannot be assigned",
+            ));
+        }
+        return Ok(());
+    }
+
     fn struct_literal(
         &mut self,
         expression: &Expression,
@@ -3537,6 +3550,23 @@ impl FunctionChecker<'_> {
                 ));
             }
             let ty = self.declared_field_type(Type::Struct(id), &field.name, field.span)?;
+            if self.types.structs[id].native_name.is_some()
+                && declared.iter().any(|info| {
+                    info.name == field.name && (info.readonly || !self.types.assignable(info.ty))
+                })
+            {
+                let (mut count, mut element) = (1usize, ty);
+                while let Type::Array(array) = element {
+                    count = count.saturating_mul(self.types.arrays[array].length);
+                    element = self.types.arrays[array].element;
+                }
+                if count > 4096 {
+                    return Err(Diagnostic::new(
+                        field.span,
+                        "native const array initialization exceeds 4096 elements. Use a native factory for larger arrays",
+                    ));
+                }
+            }
             self.record_field_symbol(Type::Struct(id), &field.name, field.name_span);
             self.require_type(&field.value, ty)?;
             let mut nested = if ty.is_borrow() && !self.unevaluated {
@@ -3705,10 +3735,20 @@ impl FunctionChecker<'_> {
                 };
                 let mut fields = place.fields;
                 fields.push(projection.to_owned());
+                let field = if let Type::Struct(id) = place.ty {
+                    self.types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|field| field.name == *name)
+                } else {
+                    None
+                };
                 return Ok(Place {
                     ty,
                     mutable: place.mutable
+                        && !field.is_some_and(|field| field.readonly)
                         && !matches!(place.ty, Type::Array(id) if self.types.arrays[id].length == 0),
+                    volatile: place.volatile || field.is_some_and(|field| field.volatile),
                     fields,
                     ..place
                 });

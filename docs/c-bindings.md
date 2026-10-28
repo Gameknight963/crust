@@ -49,6 +49,8 @@ command protects its input header from replacement.
 - Function pointers, callback returns, and variadic functions
 - Header-defined static functions, including `static inline` and callback APIs
 - Header-local static variables with native initialization
+- Fixed-array record fields, including nested arrays, callbacks, and qualified elements
+- Const and volatile record fields with preserved access permissions
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
 - [Native calling conventions](language.md#calling-conventions)
@@ -205,8 +207,27 @@ extern struct Local = "NativeRecord" { int c_init = "init"; };
 ```
 
 Header macros are preserved around native field access. Source rename adds an
-alias when needed to preserve the C declaration. Array fields, qualified fields,
-bitfields, and named fields with anonymous aggregate types use native accessors.
+alias when needed to preserve the C declaration. Bitfields, flexible arrays,
+and named fields with anonymous aggregate types use native accessors.
+
+```c
+extern struct Readings {
+    const int id;
+    volatile int updates;
+    int values[3];
+};
+```
+
+Fixed arrays support value copies, field assignment, checked indexing, and
+ordinary array references. Const fields allow initialization and shared borrows.
+A record containing const fields supports fresh copies and function returns.
+Whole-value assignment is rejected because C treats that record as nonmodifiable.
+Other fields remain writable through mutable references. Volatile fields preserve
+volatile reads, writes, and reference qualifiers, including inside packed arrays.
+
+Const and volatile fields require copyable values. Source initialization of a
+const native array is limited to 4096 elements. Larger const arrays can be supplied
+by a native factory. Flexible and zero-length C array fields use native accessors.
 
 ## Native macro wrappers
 

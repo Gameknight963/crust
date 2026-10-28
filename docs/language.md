@@ -1358,3 +1358,9 @@ Packed records use ordinary struct access and borrowing rules. Generated
 references support unaligned storage. Native C calls through raw pointers retain
 their own alignment requirements. Generic heap containers allocate storage with
 at least their element type's alignment.
+
+Native fields accept `const` and `volatile`, including array elements and pointer
+objects. Const fields can be initialized and copied into fresh values. Records
+and arrays containing them cannot be assigned as whole values. Mutable references
+can still modify the record's other fields. Volatile fields retain volatile
+accesses and borrows through indexing and nested field projection.

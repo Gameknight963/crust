@@ -66,6 +66,7 @@ fn main() {
         "struct View { const int& value; }; void store(View& target, const int& value) { target=(View){.value=value}; } int main() { int a=1; int b=42; View view={.value=&const a}; store(&view,&const b); print(view.value); return 0; }",
         heap_views.as_str(),
         "extern struct NativePoint { int x; int y; int sum() const { return this.x + this.y; } }; int main() { NativePoint value={.x=40,.y=2}; print(value.sum()); return 0; }",
+        "extern struct NativeFields { const int id; volatile int ticks; int values[2][2]; }; NativeFields create(int id) { return (NativeFields){.id=id,.ticks=0,.values={{1,2},{3,4}}}; } int main() { NativeFields value=true?create(42):create(7); value.ticks++; value.values[1][0]=5; print(value.id); return 0; }",
         library.as_str(),
     ];
     let fragments: &[&[u8]] = &[

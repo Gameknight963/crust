@@ -33,15 +33,6 @@ static inline void crust_cleanup_temporaries(struct crust_temporary *crust_value
             "struct crust_temporary crust_temporaries[{}]; size_t crust_temporary_count = 0;",
             self.temporary_owners.len()
         ));
-        let mut entries: Vec<_> = self
-            .temporary_owners
-            .iter()
-            .map(|(span, ty)| (*span, *ty))
-            .collect();
-        entries.sort_by_key(|(span, _)| (span.start, span.end));
-        for (span, ty) in entries {
-            self.line(&format!("{} {};", c_type(ty), slot(span)));
-        }
     }
 
     pub(super) fn cleanup_temporaries(&mut self) {
@@ -55,7 +46,7 @@ static inline void crust_cleanup_temporaries(struct crust_temporary *crust_value
         let value = self.expression(expression).expect("temporary owner value");
         self.materializing = previous;
         let slot = slot(expression.span);
-        self.line(&format!("{slot} = {value};"));
+        self.line(&format!("{} {slot} = {value};", c_type(ty)));
         if self.types.owns(ty) {
             self.line(&format!("crust_temporaries[crust_temporary_count++] = (struct crust_temporary){{ &{slot}, {} }};", drop_name(ty)));
         }
