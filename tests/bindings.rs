@@ -916,7 +916,9 @@ fn assembler_labels_retain_native_headers_and_link_to_the_declared_symbol() {
     ))
     .unwrap();
     let output = common::tracked_generated_c(
-        &format!("{generated}\nint actual_symbol(void) {{ return 42; }}"),
+        &format!(
+            "{generated}\nint implementation(void) __asm__(\"actual_symbol\");\nint implementation(void) {{ return 42; }}"
+        ),
         false,
     );
     assert!(output.status.success(), "{:?}", output);

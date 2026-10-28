@@ -795,14 +795,14 @@ fn enum_rename_preserves_native_tags_with_implicit_and_explicit_aliases() {
         .join(std::process::id().to_string());
     std::fs::create_dir_all(&root).unwrap();
     let header = root.join("native.h");
-    std::fs::write(&header, "#ifndef ENUM_RENAME_HEADER\n#define ENUM_RENAME_HEADER\nenum NativeMode { Off = 0, On = 42 };\n#endif\n").unwrap();
+    std::fs::write(&header, "#ifndef ENUM_RENAME_HEADER\n#define ENUM_RENAME_HEADER\nenum NativeMode { Invalid = -1, Off = 0, On = 42 };\n#endif\n").unwrap();
     let header = header.to_string_lossy().replace('\\', "/");
     for declaration in ["NativeMode", "LocalMode = \"NativeMode\""] {
         let name = declaration.split_whitespace().next().unwrap();
         let source = format!(
             r#"
 extern header "{header}";
-extern enum {declaration} : int {{ Off = 0, On = 42 }};
+extern enum {declaration} : int {{ Invalid = -1, Off = 0, On = 42 }};
 extern {name} choose({name} value) {{ return value; }}
 extern int native_check();
 int main() {{ unsafe {{ print((int)choose({name}::On)); print(native_check()); }} return 0; }}

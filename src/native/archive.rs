@@ -57,11 +57,15 @@ pub fn compile_static_library(
         for directory in &options.include_dirs {
             command.arg("-I").arg(paths.input(directory));
         }
+        // Absolute source paths cannot be interpreted as compiler options.
+        // GCC does not accept a standalone '--' delimiter here.
+        let source_path = env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(source);
         command
             .arg("-o")
             .arg(paths.output(&object))
-            .arg("--")
-            .arg(paths.input(source));
+            .arg(paths.input(&source_path));
         let result = command.output().map_err(|error| {
             format!(
                 "could not start C compiler '{}': {error}",
@@ -131,4 +135,39 @@ pub fn compile_static_library(
     fs::rename(&temporary, archive)
         .map_err(|error| format!("could not write {}: {error}", archive.display()))?;
     return Ok(());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archives_and_links_a_source_with_an_option_like_filename() {
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/archive-source-tests")
+            .join(std::process::id().to_string());
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("--source.c");
+        fs::write(&source, "int answer(void) { return 42; }").unwrap();
+        let archive = directory.join("answer.a");
+        compile_static_library(&source, &archive, &Options::default()).unwrap();
+        let consumer = directory.join("consumer.c");
+        fs::write(
+            &consumer,
+            "int answer(void); int main(void) { return answer() == 42 ? 0 : 1; }",
+        )
+        .unwrap();
+        let executable = directory.join(format!("consumer{}", std::env::consts::EXE_SUFFIX));
+        compile_file_with_options(
+            &consumer,
+            &executable,
+            &Options {
+                link_inputs: vec![archive],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let status = Command::new(executable).status().unwrap();
+        assert!(status.success(), "{status:?}");
+    }
 }

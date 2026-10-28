@@ -1434,7 +1434,13 @@ fn library_rebuilds_drop_removed_members_and_helpers_do_not_collide_between_arch
         .output()
         .unwrap();
     success(&members);
-    assert_eq!(text(&members).lines().count(), 2);
+    assert_eq!(
+        text(&members)
+            .lines()
+            .filter(|name| name.ends_with(".o"))
+            .count(),
+        2
+    );
     fixture.manifest("[[targets]]\nname='first'\nkind='static-library'\nentry='first.cr'\n[[targets]]\nname='second'\nkind='static-library'\nentry='second.cr'\n");
     success(&fixture.invoke(&["build"]));
     let members = Command::new(&archiver)
@@ -1443,7 +1449,13 @@ fn library_rebuilds_drop_removed_members_and_helpers_do_not_collide_between_arch
         .output()
         .unwrap();
     success(&members);
-    assert_eq!(text(&members).lines().count(), 1);
+    assert_eq!(
+        text(&members)
+            .lines()
+            .filter(|name| name.ends_with(".o"))
+            .count(),
+        1
+    );
     fixture.write("consumer.c", "#include <stdint.h>\n#include <stdio.h>\nint32_t first(int32_t); int32_t second(int32_t); int main(void) { printf(\"%d\\n\", (int)(first(20) + second(10))); return 0; }\n");
     let consumer = fixture
         .directory

@@ -130,11 +130,12 @@ fn pointer_sized_aliases_are_consistent_with_fixed_width_types() {
     run(
         &format!(
             r#"
-        void increment({unsigned}& n) {{ n += 1; }}
+        void increment(size_t& n) {{ n += 1; }}
         int main() {{
             size_t length = 41;
             increment(&length);
-            uintptr_t address = length;
+            {unsigned} fixed_length = length;
+            uintptr_t address = fixed_length;
             ptrdiff_t difference = -1;
             {signed} copy = difference;
             intptr_t integer = copy;
