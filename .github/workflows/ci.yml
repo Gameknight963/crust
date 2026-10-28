@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cc: clang
+          - os: ubuntu-latest
+            cc: clang
+          - os: ubuntu-latest
+            cc: gcc
+          - os: macos-latest
+            cc: clang
+    env:
+      CC: ${{ matrix.cc }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Add Windows LLVM tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $crustLlvmBin = Join-Path $env:ProgramFiles 'LLVM/bin'
+          if (Test-Path -LiteralPath $crustLlvmBin) {
+            Add-Content -LiteralPath $env:GITHUB_PATH -Value $crustLlvmBin
+          }
+      - run: cargo fetch --locked
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --offline --all-targets -- -D warnings
+      - run: cargo test --locked --offline
+      - run: cargo run --locked --offline --example fuzz_frontend -- 2000 42
+      - name: Preserve mutation failure input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-input-${{ matrix.os }}-${{ matrix.cc }}
+          path: target/fuzz-frontend/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CRUST_TEST_SANITIZERS: address,undefined
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fetch --locked
+      - run: cargo test --locked --offline --test sanitizers --test floats --test library --test storage --test slices --test reference_aliases --test borrow_contracts --test tagged_unions
+
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run check
+        working-directory: editors/vscode
+      - run: npm test
+        working-directory: editors/vscode
+      - run: npm run package
+        working-directory: editors/vscode
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vscode-extension
+          path: target/crust-language.vsix
+          if-no-files-found: error
+
+  visualstudio:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Visual Studio package
+        shell: pwsh
+        run: ./editors/visualstudio/build.ps1
+      - name: Test packaged client
+        shell: pwsh
+        run: ./editors/visualstudio/test.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: visualstudio-extension
+          path: target/crust-visualstudio.vsix
+          if-no-files-found: error

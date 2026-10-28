@@ -97,6 +97,13 @@ impl Project {
     pub fn resolved_native(&self, target: &Target) -> Result<crate::native::Options, String> {
         let mut native = target.native.clone();
         native.link_targets.clear();
+        for dependency in self.ordered_targets(&[target])? {
+            for sanitizer in &dependency.native.sanitizers {
+                if !native.sanitizers.contains(sanitizer) {
+                    native.sanitizers.push(*sanitizer);
+                }
+            }
+        }
         if target.kind != TargetKind::StaticLibrary {
             for dependency in self.ordered_targets(&[target])?.into_iter().rev() {
                 if dependency.name != target.name {

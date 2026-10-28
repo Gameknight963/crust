@@ -90,6 +90,20 @@ pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
         }
     "#;
     fs::write(&path, format!("{prefix}\n{generated}\n{suffix}")).unwrap();
-    crust::native::compile_file(&path, &executable).unwrap();
+    let sanitizers = match std::env::var("CRUST_TEST_SANITIZERS").as_deref() {
+        Ok("address") => vec![crust::native::Sanitizer::Address],
+        Ok("undefined") => vec![crust::native::Sanitizer::Undefined],
+        Ok("address,undefined") => vec![
+            crust::native::Sanitizer::Address,
+            crust::native::Sanitizer::Undefined,
+        ],
+        Ok("") | Err(_) => Vec::new(),
+        Ok(value) => panic!("unsupported CRUST_TEST_SANITIZERS value: {value}"),
+    };
+    let options = crust::native::Options {
+        sanitizers,
+        ..Default::default()
+    };
+    crust::native::compile_file_with_options(&path, &executable, &options).unwrap();
     return Command::new(executable).output().unwrap();
 }

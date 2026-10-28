@@ -47,6 +47,7 @@ pub fn compile_static_library(
         let mut command = paths.command(&compiler);
         configure_windows_toolchain(&mut command);
         command.args(["-std=c11", "-c", "-x", "c"]);
+        super::instrumentation(&mut command, options);
         if options.debug {
             command.arg("-g");
         }

@@ -191,6 +191,22 @@ one target and calls it from another:
 cargo run -- run --project examples/shared_project --target app
 ```
 
+## Sanitizers
+
+Enable native instrumentation per target:
+
+```toml
+[targets.native]
+sanitizers = ["address", "undefined"]
+```
+
+The driver instruments generated C and native sources. Sanitizer settings from
+linked library targets propagate to their consumers. AddressSanitizer checks
+memory access, and UndefinedBehaviorSanitizer checks native undefined behavior.
+Detected errors terminate execution. The C toolchain must supply the requested
+sanitizer runtimes. On Windows, deploy the ASan runtime DLL through
+`runtime-libraries` or make its directory available on `PATH`.
+
 ## Native debug information
 
 Enable debug information on each target whose code you want to inspect:
@@ -222,7 +238,7 @@ exports to stdout. It checks the source and imports through the compiler fronten
 The output includes C++ linkage guards, callback declarations, const pointer
 levels, and native calling conventions.
 
-- Integer and boolean exports use their native C representations
+- Integer, floating-point, and boolean exports use their native C representations
 - Ordinary Crust enums use their integer representations
 - Native enums retain their C tag identity and include their source C headers
 - Opaque struct and union pointers retain their native tags

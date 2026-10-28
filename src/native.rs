@@ -23,6 +23,7 @@ pub use shared::{application_manifest, compile_shared_library, import_library};
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
+    pub sanitizers: Vec<Sanitizer>,
     pub debug: bool,
     pub defines: Vec<String>,
     pub sources: Vec<PathBuf>,
@@ -34,6 +35,31 @@ pub struct Options {
     #[serde(skip)]
     pub runtime_dirs: Vec<PathBuf>,
     pub runtime_libraries: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sanitizer {
+    Address,
+    Undefined,
+}
+
+impl Sanitizer {
+    fn name(self) -> &'static str {
+        return match self {
+            Self::Address => "address",
+            Self::Undefined => "undefined",
+        };
+    }
+}
+
+fn instrumentation(command: &mut Command, options: &Options) {
+    for sanitizer in &options.sanitizers {
+        command.arg(format!("-fsanitize={}", sanitizer.name()));
+    }
+    if !options.sanitizers.is_empty() {
+        command.args(["-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]);
+    }
 }
 
 // The caller controls artifact locations. This driver never invokes a shell.
@@ -150,6 +176,7 @@ fn invoke_compiler(
     let mut command = paths.command(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
+    instrumentation(&mut command, options);
     if options.debug {
         command.arg("-g");
     }

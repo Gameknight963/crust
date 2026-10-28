@@ -109,6 +109,7 @@ cargo run -- examples/ownership.cr
 - [Language reference](docs/language.md)
 - [Projects](docs/projects.md)
 - [C header bindings](docs/c-bindings.md)
+- [C compatibility](docs/c-compatibility.md)
 - [Editor setup](docs/editors.md)
 - [Compiler and development](docs/compiler.md)
 - [Roadmap](docs/roadmap.md)

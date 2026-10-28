@@ -84,6 +84,8 @@
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
 - Source line mapping in generated C for native function, expression, and cleanup locations
 - Per-target native debug information with PDB validation, debug bundle recovery, and protected symbol outputs
+- Native address/undefined sanitizer instrumentation with transitive library settings and executed sanitizer probes
+- CI configuration for Windows, Linux, macOS, native compiler coverage, mutation tests, sanitizers, and editor packages
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links

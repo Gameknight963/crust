@@ -86,6 +86,24 @@ fn assert_no_build_staging(fixture: &Fixture) {
     );
 }
 
+#[test]
+fn sanitizer_settings_propagate_from_native_library_dependencies() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "int main() { return 0; }");
+    fixture.write("lib.cr", "extern int value() { return 1; }");
+    fixture.manifest("[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['library']\n[[targets]]\nname='library'\nkind='static-library'\nentry='lib.cr'\n[targets.native]\nsanitizers=['address','undefined']\n");
+    let project = crust::project::Project::load(&fixture.directory).unwrap();
+    let app = project.select(Some("app"), true).unwrap()[0];
+    let options = project.resolved_native(app).unwrap();
+    assert_eq!(
+        options.sanitizers,
+        vec![
+            crust::native::Sanitizer::Address,
+            crust::native::Sanitizer::Undefined
+        ]
+    );
+}
+
 fn compiler_stub(fixture: &Fixture, writes_output: bool, code: u8) -> PathBuf {
     let name = if cfg!(windows) {
         "compiler.cmd"

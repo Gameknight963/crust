@@ -67,6 +67,19 @@ ownership checking, C generation, and native compilation.
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
 | `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
 
+## Continuous integration
+
+The [CI workflow](../.github/workflows/ci.yml) runs formatting, Clippy, compiler
+tests, and mutation tests on Windows, Linux, and macOS. Linux jobs exercise both
+Clang and GCC. Separate jobs build the VS Code package and build and test the
+Visual Studio package. Failed mutation runs retain their latest input as an
+artifact.
+
+A Linux job runs native ownership and borrowing tests under AddressSanitizer
+and UndefinedBehaviorSanitizer. To run the same tests locally, set
+`CRUST_TEST_SANITIZERS=address,undefined` before invoking Cargo. This setting
+instruments generated C executed by `tests/common/mod.rs`.
+
 ## Frontend mutation testing
 
 Run the repeatable mutation harness with an iteration count and a nonzero seed:
