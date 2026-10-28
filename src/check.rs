@@ -1026,20 +1026,31 @@ impl FunctionChecker<'_> {
             }
             StatementKind::Empty => {}
             StatementKind::Switch { value, cases } => {
-                let place = self.checked_place(value)?;
-                let Type::Struct(id) = place.ty else {
-                    return Err(Diagnostic::new(
-                        value.span,
-                        "switch requires a tagged union",
-                    ));
+                let selector_type = self.probe_receiver_type(value)?;
+                let tagged = match selector_type.referent() {
+                    Type::Struct(id) if self.types.structs[id].tagged => Some(id),
+                    _ => None,
                 };
-                if !self.types.structs[id].tagged {
-                    return Err(Diagnostic::new(
-                        value.span,
-                        "switch requires a tagged union",
-                    ));
-                }
-                self.access(&place.root, &place.fields, false, place.via, value.span)?;
+                let numeric = if tagged.is_none() {
+                    let actual = self.expression(value)?;
+                    let kind = self
+                        .types
+                        .integer_representation(actual)
+                        .ok_or_else(|| {
+                            Diagnostic::new(
+                                value.span,
+                                "switch requires an integer, enum, or tagged union",
+                            )
+                        })?
+                        .promoted();
+                    self.conversions.insert(value.span, Type::Integer(kind));
+                    self.release_temporaries();
+                    Some(kind)
+                } else {
+                    let place = self.checked_place(value)?;
+                    self.access(&place.root, &place.fields, false, place.via, value.span)?;
+                    None
+                };
                 let before = self.scopes.clone();
                 let mut seen = HashSet::new();
                 let mut default = false;
@@ -1051,19 +1062,95 @@ impl FunctionChecker<'_> {
                 });
                 let mut fallthrough = None;
                 for case in cases {
-                    if let Some((name, span)) = &case.label {
-                        if !self.types.structs[id]
-                            .fields
-                            .iter()
-                            .any(|field| field.name == *name)
-                            || !seen.insert(name.clone())
-                        {
-                            return Err(Diagnostic::new(
-                                *span,
-                                "unknown or duplicate tagged-union case",
-                            ));
+                    if let Some(label) = &case.label {
+                        if let Some(id) = tagged {
+                            let CaseLabel::Named { name, span } = label else {
+                                return Err(Diagnostic::new(
+                                    case.body.span,
+                                    "a tagged-union case names a payload",
+                                ));
+                            };
+                            if !self.types.structs[id]
+                                .fields
+                                .iter()
+                                .any(|field| field.name == *name)
+                                || !seen.insert(name.clone())
+                            {
+                                return Err(Diagnostic::new(
+                                    *span,
+                                    "unknown or duplicate tagged-union case",
+                                ));
+                            }
+                            self.record_field_symbol(Type::Struct(id), name, *span);
+                        } else {
+                            let (expression, constant) = match label {
+                                CaseLabel::Constant { expression, value } => {
+                                    (expression.clone(), *value)
+                                }
+                                CaseLabel::Named { name, span } => {
+                                    if self
+                                        .scopes
+                                        .iter()
+                                        .rev()
+                                        .any(|scope| scope.contains_key(name))
+                                    {
+                                        return Err(Diagnostic::new(
+                                            *span,
+                                            "a local value cannot be used as a case constant",
+                                        ));
+                                    }
+                                    let expression = Expression {
+                                        kind: ExpressionKind::Variable {
+                                            name: name.clone(),
+                                            name_span: *span,
+                                        },
+                                        span: *span,
+                                    };
+                                    let constant = self
+                                        .types
+                                        .enumerator(name)
+                                        .map(|(_, variant)| variant.value)
+                                        .ok_or_else(|| {
+                                            Diagnostic::new(
+                                                *span,
+                                                "case requires an integer constant expression",
+                                            )
+                                        })?;
+                                    (expression, constant)
+                                }
+                            };
+                            let actual = self.expression(&expression)?;
+                            if actual.integer().is_none() && !matches!(actual, Type::Enum(_)) {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "case requires an integer or enum constant",
+                                ));
+                            }
+                            if let (Type::Enum(a), Type::Enum(b)) =
+                                (selector_type.referent(), actual)
+                                && a != b
+                            {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "case belongs to a different enum type",
+                                ));
+                            }
+                            if matches!(label, CaseLabel::Named { .. })
+                                && !matches!(actual, Type::Enum(_))
+                            {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "a local value cannot be used as a case constant",
+                                ));
+                            }
+                            let constant = numeric.unwrap().wrap_constant(constant);
+                            if !seen.insert(constant.to_string()) {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "duplicate case value after integer conversion",
+                                ));
+                            }
                         }
-                        self.record_field_symbol(Type::Struct(id), name, *span);
                     } else if default {
                         return Err(Diagnostic::new(case.body.span, "duplicate default case"));
                     } else {
@@ -1080,7 +1167,9 @@ impl FunctionChecker<'_> {
                 if let Some(state) = fallthrough {
                     exits.push(state);
                 }
-                if !default && seen.len() != self.types.structs[id].fields.len() {
+                if !default
+                    && tagged.is_none_or(|id| seen.len() != self.types.structs[id].fields.len())
+                {
                     exits.push(before.clone());
                 }
                 let Some(mut after) = exits.pop() else {

@@ -84,6 +84,23 @@ See [the slice example](../examples/slices.cr).
 
 ## Functions and control flow
 
+`switch` accepts integers and enum values as well as tagged unions. Integer
+selectors undergo integer promotion. Case labels use integer constant
+expressions or enum members, with duplicates checked after conversion to the
+promoted selector type. Scoped enum members require qualification. Cases support
+fallthrough, `break`, and `default`. `continue` targets an enclosing loop.
+
+```c
+switch (status) {
+    case Status::Ready:
+        print(1);
+        break;
+    default:
+        print(0);
+        break;
+}
+```
+
 - Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names
 - Functions support named parameters, forward calls, and recursion
 - Executable targets use `int main()` or `int main(void)` as their entry point

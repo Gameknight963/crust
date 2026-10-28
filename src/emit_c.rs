@@ -792,14 +792,29 @@ impl Emitter<'_> {
                 }
             }
             StatementKind::Switch { value, cases } => {
-                let Type::Struct(id) = self.place_type(value) else {
-                    unreachable!()
+                let tagged = match self.place_type(value) {
+                    Type::Struct(id) if self.types.structs[id].tagged => Some(id),
+                    _ => None,
                 };
-                let place = self.place(value);
-                let tag = self.temporary(
-                    Type::Integer(IntType::named("size_t").unwrap()),
-                    &format!("({place}).crust_tag"),
-                );
+                let numeric = if tagged.is_none() {
+                    Some(
+                        self.types
+                            .integer_representation(self.expression_type(value))
+                            .unwrap()
+                            .promoted(),
+                    )
+                } else {
+                    None
+                };
+                let tag = if tagged.is_some() {
+                    let place = self.place(value);
+                    self.temporary(
+                        Type::Integer(IntType::named("size_t").unwrap()),
+                        &format!("({place}).crust_tag"),
+                    )
+                } else {
+                    self.value_expression(value)
+                };
                 self.line(&format!("switch ({tag}) {{"));
                 self.loops.push(LoopContext {
                     is_switch: true,
@@ -808,19 +823,34 @@ impl Emitter<'_> {
                     continue_label: None,
                 });
                 for case in cases {
-                    if let Some((name, _)) = &case.label {
-                        let index = self.types.structs[id]
-                            .fields
-                            .iter()
-                            .position(|field| field.name == *name)
-                            .unwrap();
-                        self.line(&format!("case {}:", index + 1));
+                    if let Some(label) = &case.label {
+                        if let Some(id) = tagged {
+                            let CaseLabel::Named { name, .. } = label else {
+                                unreachable!()
+                            };
+                            let index = self.types.structs[id]
+                                .fields
+                                .iter()
+                                .position(|field| field.name == *name)
+                                .unwrap();
+                            self.line(&format!("case {}:", index + 1));
+                        } else {
+                            let constant = match label {
+                                CaseLabel::Constant { value, .. } => *value,
+                                CaseLabel::Named { name, .. } => {
+                                    self.types.enumerator(name).unwrap().1.value
+                                }
+                            };
+                            let kind = numeric.unwrap();
+                            let bits = kind.wrap_constant(constant) as u64;
+                            self.line(&format!("case (({})UINT64_C({bits})):", kind.c_name()));
+                        }
                     } else {
                         self.line("default:");
                     }
                     self.block(&case.body);
                 }
-                if cases.len() == self.types.structs[id].fields.len()
+                if tagged.is_some_and(|id| cases.len() == self.types.structs[id].fields.len())
                     && cases.iter().all(|case| case.label.is_some())
                 {
                     self.line("break;");

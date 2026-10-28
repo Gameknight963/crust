@@ -18,6 +18,15 @@ pub enum IntType {
 }
 
 impl IntType {
+    pub fn wrap_constant(self, value: i128) -> i128 {
+        let modulus = 1i128 << self.bits();
+        let wrapped = value & (modulus - 1);
+        return if self.signed() && wrapped > self.maximum() {
+            wrapped - modulus
+        } else {
+            wrapped
+        };
+    }
     pub fn bits(self) -> u8 {
         return match self {
             Self::Char | Self::I8 | Self::U8 => 8,
@@ -580,8 +589,14 @@ pub struct Expression {
 
 #[derive(Debug, Clone)]
 pub struct SwitchCase {
-    pub label: Option<(String, Span)>,
+    pub label: Option<CaseLabel>,
     pub body: Block,
+}
+
+#[derive(Debug, Clone)]
+pub enum CaseLabel {
+    Named { name: String, span: Span },
+    Constant { expression: Expression, value: i128 },
 }
 
 impl Expression {

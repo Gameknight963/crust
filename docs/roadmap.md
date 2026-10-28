@@ -93,12 +93,22 @@
 
 ## Compiler work
 
-1. Add reusable Crust libraries and project dependencies using shared names and file-local static helpers
-2. Build generic owners, slices, containers, and resource wrappers using Crust and C allocation
-3. Extend C header importing and ABI coverage to layout attributes and further C declarations
+The release target is a maintained command-line application using multiple Crust
+files, a native C library, containers, files, and recoverable errors.
 
-A substantial validation target is a multi-file program using a generic container
-backed by C allocation, with automatic cleanup and safe access to its contents.
+- [ ] Floating-point types, literals, arithmetic, conversions, and C calls
+- [x] Integer and enum switch statements
+- [ ] Global definitions and static variables
+- [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
+- [ ] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
+- [ ] Migrate examples and tests from BoxInt and remove the built-in type
+- [ ] Project dependencies, library-supplied native dependencies, and reliable rebuilds
+- [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
+- [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
+- [ ] Compiler, LSP, and editor release packages with native compiler setup
+- [ ] VS Code native debugger launch and original source names in debug information
+- [ ] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
+- [ ] Build and maintain the release validation application
 
 ## Editor support
 
