@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 mod enums;
+mod macros;
 mod render;
 
 #[derive(Debug, Default)]
@@ -18,6 +19,7 @@ pub struct Options {
     pub variables: Vec<String>,
     pub enums: Vec<String>,
     pub typedefs: Vec<String>,
+    pub macros: Vec<String>,
 }
 
 fn identifier(name: &str) -> bool {
@@ -165,8 +167,8 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .chain(&options.typedefs)
         .cloned()
         .collect();
-    if names.is_empty() && options.enums.is_empty() {
-        return Err("select at least one C function, variable, enum, or typedef".to_owned());
+    if names.is_empty() && options.enums.is_empty() && options.macros.is_empty() {
+        return Err("select at least one C function, variable, enum, typedef, or macro".to_owned());
     }
     let mut selected = HashSet::new();
     for name in &names {
@@ -175,6 +177,16 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         }
         if !selected.insert(name) {
             return Err(format!("C declaration '{name}' was selected twice"));
+        }
+    }
+    for name in &options.macros {
+        if !identifier(name) || name == "main" || name.starts_with("__builtin_") {
+            return Err(format!("invalid C macro selection '{name}'"));
+        }
+        if !selected.insert(name) {
+            return Err(format!(
+                "C declaration or macro '{name}' was selected twice"
+            ));
         }
     }
     let mut selected_enums = HashSet::new();
@@ -293,7 +305,8 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .into_iter()
         .collect::<Result<_, _>>()
         .map_err(|error| error.to_string())?;
-    let mut renderer = render::Renderer::new(&declarations, &probes, &names);
+    let reserved: Vec<_> = names.iter().chain(&options.macros).cloned().collect();
+    let mut renderer = render::Renderer::new(&declarations, &probes, &reserved);
     let enums = enums::load(&header, options, &probes)?;
     let has_native_types = !enums.is_empty();
     renderer.enums(enums)?;
@@ -352,6 +365,26 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         locals.push_str(&format!("{}* {check_name} = {name};\n", signature.alias));
         checks.push((name, native));
     }
+    let existing = format!(
+        "{}\n{}",
+        renderer.declarations(false),
+        declarations.join("\n")
+    );
+    let mut occupied: HashSet<_> = crate::lexer::tokenize(&existing)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter_map(|token| match token.kind {
+            crate::lexer::Token::Identifier(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    let mut macro_checks = String::new();
+    for constant in macros::load(&header, options)? {
+        let name = renderer.constant_name(&constant.name, &occupied);
+        occupied.insert(name.clone());
+        declarations.push(constant.declaration(&name));
+        macro_checks.push_str(&constant.verification());
+    }
     let mut output = if has_native_types {
         format!(
             "extern header {};\n",
@@ -394,6 +427,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     // Native enum emission includes the header again. Its macros must not
     // replace selected typedef names in the checks appended below.
     verification.push_str(&undefines);
+    verification.push_str(&macro_checks);
     let analysis = &checked.analyses["main"];
     for (name, native) in checks {
         let (span, _) = analysis

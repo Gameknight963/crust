@@ -15,7 +15,7 @@ files to work with C libraries. Generated code targets C11 and uses the host ABI
 | Packing, explicit alignment, and bitfields | Through native C wrappers | Import and verify these layouts directly |
 | External variables, including DLL data | Yes | Source globals use generated symbols and can expose access through exported functions |
 | Source globals and local static storage | Constant initialization and copyable types | Resource-owning static storage requires initialization and shutdown rules |
-| C preprocessor definitions and header preprocessing | Yes | Import selected macro constants and provide bridges for function macros |
+| C preprocessor definitions and header preprocessing | Definitions, preprocessing, and selected integer/boolean macro constants | Native wrappers for function, string, and floating macros |
 | Header inline functions | Through native C wrappers | Generate callable bridges for internal-linkage functions |
 | Atomics and thread-local storage | Through native C wrappers | Expose checked synchronization and storage APIs |
 | Complex numbers and extended integer types | Through native C wrappers | Add direct types and ABI validation |

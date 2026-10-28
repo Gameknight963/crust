@@ -25,6 +25,140 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn cli_imports_macro_constants_using_the_selected_header_configuration() {
+    let path = header("#define FEATURE_VALUE (FEATURE + 1u)\n");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("import-c")
+        .arg(&path)
+        .args(["--macro", "FEATURE_VALUE", "--define", "FEATURE=41u"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bindings = String::from_utf8(output.stdout).unwrap();
+    let output = common::tracked_run(&format!(
+        "{bindings} int main() {{ print(FEATURE_VALUE); return 0; }}"
+    ));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n"
+    );
+    assert!(
+        crust::compile(&format!(
+            "{bindings} int main() {{ unsafe {{ FEATURE_VALUE=1; }} return 0; }}"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn imports_integer_and_boolean_macros_with_native_types_and_exact_values() {
+    let path = header(
+        r#"
+        #include <stdint.h>
+        #define COUNT (2 + 3 * 4)
+        #define NEGATIVE ((short)-7)
+        #define MAXIMUM UINT64_C(18446744073709551615)
+        #define MINIMUM (-9223372036854775807LL - 1LL)
+        #define FLAG ((_Bool)1)
+        #define unsafe 42u
+        #define NATIVE_LONG ((unsigned long)123)
+    "#,
+    );
+    let options = Options {
+        macros: [
+            "COUNT",
+            "NEGATIVE",
+            "MAXIMUM",
+            "MINIMUM",
+            "FLAG",
+            "unsafe",
+            "NATIVE_LONG",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        ..Options::default()
+    };
+    let bindings = generate(&path, &options).unwrap();
+    assert!(bindings.contains("const unsigned long NATIVE_LONG"));
+    let output = common::tracked_run(&format!(
+        "{bindings} int main() {{ print(COUNT); print(NEGATIVE); print(MAXIMUM); print(MINIMUM); print(FLAG); print(c_unsafe); print(NATIVE_LONG); return 0; }}"
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "14\n-7\n18446744073709551615\n-9223372036854775808\n1\n42\n123\n"
+    );
+}
+
+#[test]
+fn macro_bindings_reserve_selected_names_and_resolve_enum_member_collisions() {
+    let path = header(
+        r#"
+        enum Values { SAME=3 };
+        #define SAME 5
+        #define unsafe 7
+        #define c_unsafe 9
+    "#,
+    );
+    let options = Options {
+        enums: vec!["Values".to_owned()],
+        macros: ["SAME", "unsafe", "c_unsafe"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        ..Options::default()
+    };
+    let bindings = generate(&path, &options).unwrap();
+    let output = common::tracked_run(&format!(
+        "{bindings} int main() {{ print((int)Values::SAME); print(c_SAME); print(c_unsafe_); print(c_unsafe); return 0; }}"
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "3\n5\n7\n9\n"
+    );
+}
+
+#[test]
+fn macro_imports_reject_missing_nonconstant_and_noninteger_definitions() {
+    let path = header(
+        "#define FLOATING 1.5\n#define TEXT \"text\"\n#define APPLY(x) ((x)+1)\nint runtime();\n#define RUNTIME runtime()\n#define VALID 1\n",
+    );
+    for name in [
+        "MISSING", "FLOATING", "TEXT", "APPLY", "RUNTIME", "bad-name",
+    ] {
+        let options = Options {
+            macros: vec![name.to_owned()],
+            ..Options::default()
+        };
+        assert!(generate(&path, &options).is_err(), "accepted {name}");
+    }
+    let options = Options {
+        macros: vec!["VALID".to_owned(), "VALID".to_owned()],
+        ..Options::default()
+    };
+    assert!(
+        generate(&path, &options)
+            .unwrap_err()
+            .contains("selected twice")
+    );
+}
+
+#[test]
 fn imports_floating_functions_and_callbacks_with_native_abi_types() {
     let path = header(
         "float native_scale(float value); double native_apply(double (*callback)(double), double value); long double native_widen(long double value);",

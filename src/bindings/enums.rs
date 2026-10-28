@@ -24,7 +24,7 @@ fn discover(node: &Value, names: &mut std::collections::BTreeSet<String>) -> Res
     return Ok(());
 }
 
-fn descendants<'a>(node: &'a Value, expected: &str) -> Vec<&'a Value> {
+pub(super) fn descendants<'a>(node: &'a Value, expected: &str) -> Vec<&'a Value> {
     let mut found = Vec::new();
     if kind(node) == expected {
         found.push(node);
@@ -35,7 +35,7 @@ fn descendants<'a>(node: &'a Value, expected: &str) -> Vec<&'a Value> {
     return found;
 }
 
-fn constant(node: &Value) -> Result<i128, String> {
+pub(super) fn constant(node: &Value) -> Result<i128, String> {
     return descendants(node, "ConstantExpr")
         .into_iter()
         .find_map(|node| node["value"].as_str())
@@ -44,7 +44,7 @@ fn constant(node: &Value) -> Result<i128, String> {
         .map_err(|_| "C enum value exceeds the supported integer range".to_owned());
 }
 
-fn representation(code: i128) -> Result<IntType, String> {
+pub(super) fn representation(code: i128) -> Result<IntType, String> {
     return match code {
         1 => Ok(IntType::Char),
         2 => Ok(IntType::I8),

@@ -1,7 +1,7 @@
 # C header bindings
 
 `crust import-c` reads a C header through Clang and writes declarations for selected
-functions, external variables, named enums, and typedefs. Ordinary Crust source imports the
+functions, external variables, named enums, typedefs, and integer macro constants. Ordinary Crust source imports the
 generated file.
 
 ```powershell
@@ -24,6 +24,7 @@ Crust struct with a destructor.
 | `--variable <name>` | Select external C storage, repeated for each variable |
 | `--enum <tag>` | Select a named C enum, repeated for each tag |
 | `--typedef <name>` | Select a C typedef, repeated for each alias |
+| `--macro <name>` | Select an object-like integer or boolean macro constant |
 | `--output <file.cr>` | Write UTF-8 bindings to a file |
 | `--force` | Replace an existing output file |
 | `--include-dir <path>` | Add a C header search directory |
@@ -46,6 +47,7 @@ command protects its input header from replacement.
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
 - [Native calling conventions](language.md#calling-conventions)
+- Integer and boolean macro constants with their native scalar types
 
 Clang preprocesses includes and macros before Crust reads the function types.
 Typedefs resolve to their native types. Structs and unions are exposed through
@@ -66,6 +68,28 @@ returning them. Types requiring further compiler support produce a diagnostic.
 Aggregates passed by value and header-local static functions need a native C
 wrapper with an exported pointer-based interface.
 Thread-local data require native C accessor functions.
+
+## Macro constants
+
+```text
+crust import-c native.h --macro API_LIMIT --macro API_FLAGS --output bindings.cr
+```
+
+Integer and boolean object-like macros become `const` globals with their native
+scalar types. Clang evaluates casts, arithmetic, size queries, and macros reached
+through includes or `--define`. Generation checks the type and full-width value,
+including negative values and unsigned 64-bit limits.
+
+Bindings retain the native name when available. Reserved names and collisions
+with selected enum members receive a `c_` prefix and a suffix when needed.
+Regenerate bindings when the header configuration or target changes.
+
+These bindings are read-only values. Array lengths and enum initializers require
+integer constant expressions, so they cannot use these globals. Import C enum
+values with `--enum` when those values need constant-expression use.
+
+Function-like macros and macros producing pointers, strings, or floating values
+use native C wrappers.
 
 ## Typedefs
 

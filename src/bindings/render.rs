@@ -72,6 +72,18 @@ impl Renderer {
         return alias;
     }
 
+    pub fn constant_name(&mut self, native: &str, occupied: &HashSet<String>) -> String {
+        let name = self.binding_name(native);
+        if !occupied.contains(&name) {
+            return name;
+        }
+        let mut alias = format!("c_{name}");
+        while !crust_identifier(&alias) || !self.names.insert(alias.clone()) {
+            alias.push('_');
+        }
+        return alias;
+    }
+
     pub fn alias_type(&mut self, node: &Value) -> Result<(String, bool), String> {
         let qualified = Self::unwrap(node)?;
         if kind(qualified) == "QualType" {
