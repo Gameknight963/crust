@@ -91,7 +91,7 @@ impl Renderer<'_> {
                     "C header generation for arrays requires a native wrapper",
                 ));
             }
-            Type::BoxInt | Type::Borrow { .. } => {
+            Type::Borrow { .. } => {
                 return Err(Diagnostic::new(
                     span,
                     "C headers require copyable C values and raw pointers",

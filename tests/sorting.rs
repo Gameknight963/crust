@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn library() -> String {
     let vector = include_str!("../lib/vector.cr")
@@ -45,21 +46,21 @@ fn stable_sorting_preserves_equal_key_order_and_handles_inconsistent_comparisons
         r#"
         {}
         struct Resource {{
-            BoxInt key;
-            BoxInt id;
-            static Self create(int key, int id) {{ return (Self){{ .key = box_int(key), .id = box_int(id) }}; }}
+            Box<int> key;
+            Box<int> id;
+            static Self create(int key, int id) {{ return (Self){{ .key = Box<int>::create(key), .id = Box<int>::create(id) }}; }}
             int compare(const Self& other) const {{
-                int first = *this.key; int second = *other.key;
+                int first = this.key.get(); int second = other.key.get();
                 return (first > second) - (first < second);
             }}
-            ~Resource() {{ print(*this.id); }}
+            ~Resource() {{ print(this.id.get()); }}
         }};
         int main() {{
             Vector<Resource> values = Vector<Resource>::create(); values.reserve(4);
             values.push(Resource::create(3, 0)); values.push(Resource::create(1, 1));
             values.push(Resource::create(2, 2)); values.push(Resource::create(1, 3));
             sort<Resource>(&values);
-            for (size_t i = 0; i < values.count(); i += 1) {{ print(*values.at(i).id); }}
+            for (size_t i = 0; i < values.count(); i += 1) {{ print(values.at(i).id.get()); }}
             return 0;
         }}
     "#,

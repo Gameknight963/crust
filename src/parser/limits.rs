@@ -26,7 +26,6 @@ pub(super) fn ty(parser: &Parser, root: Type, span: Span) -> Result<(), Diagnost
             | Type::Float(_)
             | Type::Bool
             | Type::Void
-            | Type::BoxInt
             | Type::Struct(_)
             | Type::Enum(_) => {}
         }

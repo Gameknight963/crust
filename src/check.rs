@@ -318,7 +318,7 @@ fn analyze(
         }
         if matches!(
             global.name.as_str(),
-            "Self" | "this" | "print" | "move" | "box_int" | "slice"
+            "Self" | "this" | "print" | "move" | "slice"
         ) || types.enumerator(&global.name).is_some()
             || function_declarations.contains_key(&global.name)
         {
@@ -371,8 +371,7 @@ fn analyze(
     }
     for (name, return_type, parameters) in [
         ("print", Type::Void, vec![Type::Integer(IntType::I32)]),
-        ("box_int", Type::BoxInt, vec![Type::Integer(IntType::I32)]),
-        ("move", Type::BoxInt, vec![Type::BoxInt]),
+        ("move", Type::Void, vec![Type::Void]),
         (
             "slice",
             Type::Void,
@@ -2823,7 +2822,7 @@ impl FunctionChecker<'_> {
     }
 
     fn function_reference(&mut self, name: &str, span: Span) -> Result<Type, Diagnostic> {
-        if matches!(name, "print" | "box_int" | "move" | "slice") {
+        if matches!(name, "print" | "move" | "slice") {
             return Err(Diagnostic::new(
                 span,
                 "compiler builtins do not have callback addresses",
@@ -3208,11 +3207,10 @@ impl FunctionChecker<'_> {
                 operand,
             } => {
                 return match self.receiver_type(operand)? {
-                    Type::BoxInt => Ok(Type::Integer(IntType::I32)),
                     Type::Pointer(id) => Ok(self.types.pointers[id].pointee),
                     _ => Err(Diagnostic::new(
                         expression.span,
-                        "dereference needs a BoxInt or a borrow",
+                        "dereference requires a raw pointer",
                     )),
                 };
             }
@@ -3350,7 +3348,6 @@ impl FunctionChecker<'_> {
             } => match self.receiver_type(operand)? {
                 Type::Pointer(id) => Ok(self.types.pointers[id].volatile),
                 Type::Borrow { volatile, .. } => Ok(volatile),
-                Type::BoxInt => Ok(false),
                 _ => self.probe_volatile(operand),
             },
             _ => Err(Diagnostic::new(
@@ -3618,7 +3615,6 @@ impl FunctionChecker<'_> {
                     self.temporary_place(operand)?
                 };
                 let (ty, mutable, volatile) = match place.ty {
-                    Type::BoxInt => (Type::Integer(IntType::I32), place.mutable, false),
                     Type::Pointer(id) => {
                         self.require_unsafe(expression.span, "dereferencing a raw pointer")?;
                         let pointer = self.types.pointers[id];
@@ -3633,7 +3629,7 @@ impl FunctionChecker<'_> {
                     _ => {
                         return Err(Diagnostic::new(
                             expression.span,
-                            "dereference requires a raw pointer or a heap owner",
+                            "dereference requires a raw pointer",
                         ));
                     }
                 };

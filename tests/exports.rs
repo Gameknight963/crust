@@ -1,8 +1,9 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn library_frontend_omits_main_and_preserves_rename_contracts() {
-    let source = "int helper(int value) { return value + 1; } extern int exported(int value) { BoxInt saved = box_int(value); return helper(*saved); }";
+    let source = "int helper(int value) { return value + 1; } extern int exported(int value) { Box<int> saved = Box<int>::create(value); return helper(saved.get()); }";
     let kind = crust::ProgramKind::Library;
     crust::check_with_kind(source, kind).unwrap();
     assert!(crust::check(source).is_err());
@@ -39,8 +40,8 @@ fn native_names_prototypes_aliases_recursion_and_callbacks_reach_defined_exports
         extern int increment(int);
         extern int renamed(int value) = "native_double" { return value * 2; }
         extern int increment(int value) {
-            BoxInt local = box_int(value);
-            return *local + 1;
+            Box<int> local = Box<int>::create(value);
+            return local.get() + 1;
         }
         extern int increment(int value);
         extern int alternate(int) = "increment";
@@ -87,10 +88,10 @@ fn exports_check_bodies_c_abi_contracts_and_native_definition_uniqueness() {
         "extern int f(int value) { }",
         "extern int f(int) { return 0; }",
         "extern int f(int value, ...) { return value; }",
-        "extern BoxInt f() { return box_int(1); }",
+        "extern Box<int> f() { return Box<int>::create(1); }",
         "extern int f(int& value) { return value; }",
         "extern int& f(int& value) { return value; }",
-        "extern int f(BoxInt value) { return *value; }",
+        "extern int f(Box<int> value) { return value.get(); }",
         "extern int f() { return 1; } extern int f() { return 2; }",
         "extern int first() = \"native\" { return 1; } extern int second() = \"native\" { return 2; }",
         "extern char f(int); extern int f(int value) { return value; }",

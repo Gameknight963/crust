@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
@@ -105,9 +106,9 @@ fn union_initializers_select_one_field_and_field_operations_require_unsafe() {
         assert!(crust::check(&source).is_err(), "should reject {body}");
     }
     for source in [
-        "union U { BoxInt value; }; int main() { return 0; }",
-        "struct Owner { BoxInt value; }; union U { Owner value; }; int main() { return 0; }",
-        "union U { BoxInt values[2]; }; int main() { return 0; }",
+        "union U { Box<int> value; }; int main() { return 0; }",
+        "struct Owner { Box<int> value; }; union U { Owner value; }; int main() { return 0; }",
+        "union U { Box<int> values[2]; }; int main() { return 0; }",
         "union U { int value; }; struct U; int main() { return 0; }",
         "struct U; union U { int value; }; int main() { return 0; }",
         "union U { int value; }; int main() { struct U* value = 0; return 0; }",

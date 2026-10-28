@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 use std::path::Path;
 

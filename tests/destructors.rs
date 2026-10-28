@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -32,8 +33,8 @@ fn destructor_runs_before_fields_and_nested_fields_drop_in_reverse_order() {
         r#"
         struct Child {
             int id;
-            BoxInt value;
-            ~Child() { print(this.id); print(*this.value); }
+            Box<int> value;
+            ~Child() { print(this.id); print(this.value.get()); }
         };
         struct Parent {
             struct Child first;
@@ -41,13 +42,13 @@ fn destructor_runs_before_fields_and_nested_fields_drop_in_reverse_order() {
             ~Parent() {
                 print(100);
                 this.first.id = 11;
-                print(*this.second.value);
+                print(this.second.value.get());
             }
         };
         int main() {
             struct Parent parent = {
-                .first = { .id = 1, .value = box_int(21) },
-                .second = { .id = 2, .value = box_int(22) }
+                .first = { .id = 1, .value = Box<int>::create(21) },
+                .second = { .id = 2, .value = Box<int>::create(22) }
             };
             return 0;
         }
@@ -62,15 +63,15 @@ fn return_from_destructor_still_cleans_fields_and_destructor_locals() {
     run(
         r#"
         struct A {
-            BoxInt value;
+            Box<int> value;
             ~A() {
-                BoxInt temporary = box_int(9);
-                print(*this.value);
+                Box<int> temporary = Box<int>::create(9);
+                print(this.value.get());
                 return;
             }
         };
         int main() {
-            struct A a = { .value = box_int(7) };
+            struct A a = { .value = Box<int>::create(7) };
             return 0;
         }
     "#,
@@ -180,13 +181,13 @@ fn destructor_has_exclusive_this_and_can_call_methods_and_replace_owning_fields(
     run(
         r#"
         struct A {
-            BoxInt value;
+            Box<int> value;
             ~A() { this.replace(8); print(this.get()); }
-            int get() const { return *this.value; }
-            void replace(int n) { this.value = box_int(n); }
+            int get() const { return this.value.get(); }
+            void replace(int n) { this.value = Box<int>::create(n); }
         };
         int main() {
-            struct A a = { .value = box_int(7) };
+            struct A a = { .value = Box<int>::create(7) };
             return 0;
         }
     "#,

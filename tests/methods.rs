@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -63,17 +64,17 @@ fn consuming_methods_transfer_whole_receivers_through_chains_and_returns() {
     run(
         r#"
         struct Owner {
-            BoxInt value;
+            Box<int> value;
             Self forward(Self this) { return move(this); }
-            int finish(Self this) { return *this.value; }
+            int finish(Self this) { return this.value.get(); }
         };
-        struct Owner make(int n) { return (struct Owner){ .value = box_int(n) }; }
+        struct Owner make(int n) { return (struct Owner){ .value = Box<int>::create(n) }; }
         int main() {
             struct Owner a = make(7);
             print(move(a).forward().finish());
             print(make(8).finish());
             make(9).forward();
-            print(((struct Owner){ .value = box_int(10) }).finish());
+            print(((struct Owner){ .value = Box<int>::create(10) }).finish());
             return 0;
         }
     "#,
@@ -87,21 +88,21 @@ fn evaluates_receivers_before_arguments_and_cleans_up_consuming_parameters_on_re
     run(
         r#"
         struct Resource {
-            BoxInt value;
-            int finish(Self this, BoxInt extra, int early) {
-                print(*extra);
-                if (early) { return *this.value; }
+            Box<int> value;
+            int finish(Self this, Box<int> extra, int early) {
+                print(extra.get());
+                if (early) { return this.value.get(); }
                 return 0;
             }
         };
         struct Resource make(int n) {
             print(n);
-            return (struct Resource){ .value = box_int(n) };
+            return (struct Resource){ .value = Box<int>::create(n) };
         }
         int mark(int n) { print(n); return n; }
         int main() {
-            print(make(11).finish(box_int(mark(12)), mark(1)));
-            print(make(21).finish(box_int(mark(22)), mark(0)));
+            print(make(11).finish(Box<int>::create(mark(12)), mark(1)));
+            print(make(21).finish(Box<int>::create(mark(22)), mark(0)));
             return 0;
         }
     "#,
@@ -115,13 +116,13 @@ fn methods_borrow_fields_and_replace_owned_fields_without_dropping_the_receiver(
     run(
         r#"
         struct Owner {
-            BoxInt value;
-            void replace(int n) { this.value = box_int(n); }
-            int get() const { return *this.value; }
+            Box<int> value;
+            void replace(int n) { this.value = Box<int>::create(n); }
+            int get() const { return this.value.get(); }
         };
         struct Outer { struct Owner inner; };
         int main() {
-            struct Outer o = { .inner = { .value = box_int(1) } };
+            struct Outer o = { .inner = { .value = Box<int>::create(1) } };
             o.inner.replace(2);
             print(o.inner.get());
             return 0;
@@ -156,13 +157,13 @@ fn rejects_mutation_replacement_and_mutable_reborrows_through_const_this() {
         "void bad() const { this.n = 1; }",
         "void bad() const { this.set(1); }",
         "void bad() const { set_value(&this.n); }",
-        "void bad() const { this.owner = box_int(1); }",
-        "void bad() const { *this.owner = 1; }",
+        "void bad() const { this.owner = Box<int>::create(1); }",
+        "void bad() const { this.owner.get_mut() = 1; }",
     ] {
         let source = format!(
             r#"
             void set_value(int& n) {{ n = 1; }}
-            struct A {{ int n; BoxInt owner; void set(int n) {{ this.n = n; }} {method} }};
+            struct A {{ int n; Box<int> owner; void set(int n) {{ this.n = n; }} {method} }};
             int main() {{ return 0; }}
         "#
         );
@@ -202,14 +203,14 @@ fn receiver_loans_cover_later_arguments_and_enclosing_calls() {
 
 #[test]
 fn owning_receivers_require_moves_and_cannot_be_used_after_consumption() {
-    let prelude = "struct A { BoxInt n; int finish(Self this) { return *this.n; } };";
+    let prelude = "struct A { Box<int> n; int finish(Self this) { return this.n.get(); } };";
     for body in [
         "a.finish();",
-        "move(a).finish(); print(*a.n);",
+        "move(a).finish(); print(a.n.get());",
         "move(a).finish(); move(a).finish();",
     ] {
         let error = crust::check(&format!(
-            "{prelude} int main() {{ struct A a = {{ .n = box_int(1) }}; {body} return 0; }}"
+            "{prelude} int main() {{ struct A a = {{ .n = Box<int>::create(1) }}; {body} return 0; }}"
         ))
         .unwrap_err();
         assert!(

@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -95,12 +96,12 @@ fn boolean_control_flow_preserves_owner_cleanup_and_short_circuiting() {
         r#"
         int mark() { print(999); return 1; }
         int main() {
-            BoxInt value = box_int(7);
+            Box<int> value = Box<int>::create(7);
             bool flag = false;
             if (flag && mark()) { print(0); }
-            if (true || mark()) { print(*value); }
+            if (true || mark()) { print(value.get()); }
             for (bool once = true; once; once = false) {
-                BoxInt temporary = box_int(8);
+                Box<int> temporary = Box<int>::create(8);
                 continue;
             }
             return 0;

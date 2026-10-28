@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn integers_enums_fallthrough_and_selector_side_effects_execute() {
@@ -50,7 +51,7 @@ fn switch_rejects_duplicate_converted_values_and_nonconstant_labels() {
 #[test]
 fn integer_switch_cleans_up_owners_and_continues_the_enclosing_for_loop() {
     let output = common::tracked_run(
-        "int main() { for (int i=0;i<3;i++) { BoxInt outer=box_int(i); switch(i) { case 1: { BoxInt inner=box_int(11); continue; } default: print(i); break; } } return 0; }",
+        "int main() { for (int i=0;i<3;i++) { Box<int> outer=Box<int>::create(i); switch(i) { case 1: { Box<int> inner=Box<int>::create(11); continue; } default: print(i); break; } } return 0; }",
     );
     assert!(
         output.status.success(),

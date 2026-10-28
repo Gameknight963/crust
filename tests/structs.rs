@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 use common::tracked_run;
 
@@ -58,15 +59,15 @@ fn copyable_nested_structs_support_forward_layouts_value_parameters_and_returns(
 fn nested_owning_fields_drop_in_reverse_declaration_order_not_initializer_order() {
     assert_run(
         r#"
-        struct Inner { BoxInt first; BoxInt second; };
-        struct Outer { BoxInt before; struct Inner inner; BoxInt after; };
+        struct Inner { Box<int> first; Box<int> second; };
+        struct Outer { Box<int> before; struct Inner inner; Box<int> after; };
         int main() {
             struct Outer owner = {
-                .after = box_int(4),
-                .inner = { .second = box_int(3), .first = box_int(2) },
-                .before = box_int(1)
+                .after = Box<int>::create(4),
+                .inner = { .second = Box<int>::create(3), .first = Box<int>::create(2) },
+                .before = Box<int>::create(1)
             };
-            { struct Inner nested = { .first = box_int(5), .second = box_int(6) }; }
+            { struct Inner nested = { .first = Box<int>::create(5), .second = Box<int>::create(6) }; }
             return 0;
         }
     "#,
@@ -79,15 +80,15 @@ fn nested_owning_fields_drop_in_reverse_declaration_order_not_initializer_order(
 fn transfers_whole_structs_through_calls_returns_replacement_and_discard() {
     assert_run(
         r#"
-        struct Item { BoxInt value; };
-        struct Item make(int n) { return (struct Item){ .value = box_int(n) }; }
+        struct Item { Box<int> value; };
+        struct Item make(int n) { return (struct Item){ .value = Box<int>::create(n) }; }
         struct Item pass(struct Item item) { return move(item); }
-        int take(struct Item item) { return *item.value; }
+        int take(struct Item item) { return item.value.get(); }
         int main() {
             struct Item first = make(10);
             struct Item second = pass(move(first));
-            second = (struct Item){ .value = box_int(20) };
-            second.value = box_int(30);
+            second = (struct Item){ .value = Box<int>::create(20) };
+            second.value = Box<int>::create(30);
             make(40);
             print(take(move(second)));
             first = make(50);
@@ -104,20 +105,20 @@ fn transfers_whole_structs_through_calls_returns_replacement_and_discard() {
 fn borrows_fields_and_replaces_owned_fields_without_moving_the_parent() {
     assert_run(
         r#"
-        struct Item { int id; BoxInt value; };
+        struct Item { int id; Box<int> value; };
         void increment(int& value) { value = value + 1; }
         void update(struct Item& item) {
             increment(&item.id);
-            increment(&*item.value);
+            increment(item.value.get_mut());
         }
-        int read(const struct Item& item) { return item.id + *item.value; }
-        void replace(BoxInt& slot) { slot = box_int(9); }
+        int read(const struct Item& item) { return item.id + item.value.get(); }
+        void replace(Box<int>& slot) { slot = Box<int>::create(9); }
         int main() {
-            struct Item owner = { .id = 1, .value = box_int(2) };
+            struct Item owner = { .id = 1, .value = Box<int>::create(2) };
             update(&owner);
             print(read(&const owner));
             replace(&owner.value);
-            print(*owner.value);
+            print(owner.value.get());
             return 0;
         }
     "#,
@@ -130,8 +131,8 @@ fn borrows_fields_and_replaces_owned_fields_without_moving_the_parent() {
 fn owning_struct_states_survive_branches_loops_and_reinitialization() {
     assert_run(
         r#"
-        struct Item { BoxInt value; };
-        struct Item make(int n) { return (struct Item){ .value = box_int(n) }; }
+        struct Item { Box<int> value; };
+        struct Item make(int n) { return (struct Item){ .value = Box<int>::create(n) }; }
         void take(struct Item item) {}
         int main() {
             struct Item owner = make(0);
@@ -143,7 +144,7 @@ fn owning_struct_states_survive_branches_loops_and_reinitialization() {
             }
             if (n == 3) { take(move(owner)); }
             owner = make(42);
-            print(*owner.value);
+            print(owner.value.get());
             return 0;
         }
     "#,
@@ -156,16 +157,16 @@ fn owning_struct_states_survive_branches_loops_and_reinitialization() {
 fn initializers_evaluate_in_written_order_and_owning_substruct_replacement_is_safe() {
     assert_run(
         r#"
-        struct Inner { BoxInt value; };
+        struct Inner { Box<int> value; };
         struct Outer { int id; struct Inner inner; };
         int echo(int n) { print(n); return n; }
         int main() {
             struct Outer owner = {
-                .inner = { .value = box_int(echo(1)) },
+                .inner = { .value = Box<int>::create(echo(1)) },
                 .id = echo(2)
             };
-            owner.inner = (struct Inner){ .value = box_int(3) };
-            print(*owner.inner.value);
+            owner.inner = (struct Inner){ .value = Box<int>::create(3) };
+            print(owner.inner.value.get());
             return 0;
         }
     "#,
@@ -218,8 +219,8 @@ fn rejects_invalid_layouts_and_initializers_before_generating_c() {
             "has no field 'y'",
         ),
         (
-            "struct S { int x; }; int main() { struct S s = { .x = box_int(1) }; return 0; }",
-            "found BoxInt",
+            "struct S { int x; }; int main() { struct S s = { .x = Box<int>::create(1) }; return 0; }",
+            "found struct Box<int>",
         ),
         (
             "struct A { int x; }; struct B { int x; }; int main() { struct A a = { .x = 1 }; struct B b = a; return 0; }",
@@ -235,18 +236,18 @@ fn rejects_invalid_layouts_and_initializers_before_generating_c() {
 #[test]
 fn rejects_struct_copies_partial_moves_and_access_after_whole_value_moves() {
     let prefix = r#"
-        struct Item { int id; BoxInt value; };
-        int take(struct Item item) { return *item.value; }
+        struct Item { int id; Box<int> value; };
+        int take(struct Item item) { return item.value.get(); }
     "#;
-    let initial = "struct Item first = { .id = 1, .value = box_int(42) };";
+    let initial = "struct Item first = { .id = 1, .value = Box<int>::create(42) };";
     for (body, message) in [
         ("struct Item second = first;", "cannot be copied"),
         ("take(first);", "cannot be copied"),
         (
-            "BoxInt value = first.value;",
+            "Box<int> value = first.value;",
             "owning field cannot be copied",
         ),
-        ("BoxInt value = move(first.value);", "individual fields"),
+        ("Box<int> value = move(first.value);", "individual fields"),
         (
             "struct Item second = move(first); print(first.id);",
             "has been moved",
@@ -274,7 +275,7 @@ fn rejects_struct_copies_partial_moves_and_access_after_whole_value_moves() {
 #[test]
 fn rejects_conflicting_field_loans_and_mutation_through_shared_struct_borrows() {
     let prefix = r#"
-        struct Item { int id; BoxInt value; };
+        struct Item { int id; Box<int> value; };
         void take(const int& id, struct Item item) {}
         void set(int& value, int next) { value = next; }
     "#;
@@ -291,12 +292,12 @@ fn rejects_conflicting_field_loans_and_mutation_through_shared_struct_borrows() 
             "shared borrow",
         ),
         (
-            "void bad(const struct Item& item) { *item.value = 1; }",
+            "void bad(const struct Item& item) { item.value.get_mut() = 1; }",
             "",
             "shared borrow",
         ),
         (
-            "void bad(const struct Item& item) { item.value = box_int(1); }",
+            "void bad(const struct Item& item) { item.value = Box<int>::create(1); }",
             "",
             "shared borrow",
         ),
@@ -307,7 +308,7 @@ fn rejects_conflicting_field_loans_and_mutation_through_shared_struct_borrows() 
         ),
     ] {
         let source = format!(
-            "{prefix} {definition} int main() {{ struct Item first = {{ .id = 1, .value = box_int(42) }}; {body} return 0; }}"
+            "{prefix} {definition} int main() {{ struct Item first = {{ .id = 1, .value = Box<int>::create(42) }}; {body} return 0; }}"
         );
         let error = crust::compile(&source).unwrap_err();
         assert!(error.message.contains(message), "{source}: {error}");

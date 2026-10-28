@@ -716,12 +716,7 @@ impl Parser {
             self.type_annotations.extend(
                 validation.type_annotations[annotations_start..]
                     .iter()
-                    .filter(|(_, ty)| {
-                        matches!(
-                            ty,
-                            Type::Integer(_) | Type::Bool | Type::Void | Type::BoxInt
-                        )
-                    })
+                    .filter(|(_, ty)| matches!(ty, Type::Integer(_) | Type::Bool | Type::Void))
                     .copied(),
             );
             for member in members {
@@ -801,7 +796,6 @@ impl Parser {
             Type::Float(kind) => kind.c_name().to_owned(),
             Type::Bool => "bool".to_owned(),
             Type::Void => "void".to_owned(),
-            Type::BoxInt => "BoxInt".to_owned(),
             Type::Struct(id) => self.struct_names[id].0.clone(),
             Type::Enum(id) => self.enum_names[id].0.clone(),
             Type::Pointer(id) => {

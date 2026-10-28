@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 use crust::bindings::{Options, generate};
 use std::path::PathBuf;
@@ -1318,20 +1319,20 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
         r#"
         {bindings}
         {vector}
-        struct Resource {{ BoxInt value; ~Resource() {{ print(*this.value); }} }};
+        struct Resource {{ Box<int> value; ~Resource() {{ print(this.value.get()); }} }};
         unsafe int compare(const void* left, const void* right) {{
-            int first = *((const Resource*)left)->value;
-            int second = *((const Resource*)right)->value;
+            int first = ((const Resource*)left)->value.get();
+            int second = ((const Resource*)right)->value.get();
             return (first > second) - (first < second);
         }}
         int main() {{
             Vector<Resource> values = Vector<Resource>::create(); values.reserve(3);
-            values.push((Resource){{ .value = box_int(3) }});
-            values.push((Resource){{ .value = box_int(1) }});
-            values.push((Resource){{ .value = box_int(2) }});
+            values.push((Resource){{ .value = Box<int>::create(3) }});
+            values.push((Resource){{ .value = Box<int>::create(1) }});
+            values.push((Resource){{ .value = Box<int>::create(2) }});
             size_t count = values.count();
             unsafe {{ qsort(&values.at_mut(0), count, sizeof(Resource), compare); }}
-            for (size_t i = 0; i < count; i += 1) {{ print(*values.at(i).value); }}
+            for (size_t i = 0; i < count; i += 1) {{ print(values.at(i).value.get()); }}
             return 0;
         }}
     "#

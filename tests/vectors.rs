@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(body: &str, stdout: &str, drops: &str) {
     let definitions = include_str!("../lib/vector.cr")
@@ -45,14 +46,14 @@ fn reallocation_moves_owners_without_destroying_them_and_drops_only_live_element
     run(
         r#"
         struct Resource {
-            BoxInt value;
-            ~Resource() { print(*this.value); }
+            Box<int> value;
+            ~Resource() { print(this.value.get()); }
         };
         int main() {
             Vector<Resource> values = Vector<Resource>::create();
-            for (int i = 1; i < 4; i += 1) { values.push((Resource){ .value = box_int(i) }); }
-            Resource last = values.pop(); print(*last.value);
-            values.push((Resource){ .value = box_int(4) });
+            for (int i = 1; i < 4; i += 1) { values.push((Resource){ .value = Box<int>::create(i) }); }
+            Resource last = values.pop(); print(last.value.get());
+            values.push((Resource){ .value = Box<int>::create(4) });
             Vector<Resource> next = move(values);
             return 0;
         }
@@ -94,9 +95,9 @@ fn empty_vectors_and_fully_popped_vectors_clean_up_without_reading_unused_capaci
     run(
         r#"
         int main() {
-            Vector<BoxInt> empty = Vector<BoxInt>::create();
-            Vector<BoxInt> values = Vector<BoxInt>::create(); values.reserve(10);
-            values.push(box_int(42)); BoxInt value = values.pop(); print(*value);
+            Vector<Box<int>> empty = Vector<Box<int>>::create();
+            Vector<Box<int>> values = Vector<Box<int>>::create(); values.reserve(10);
+            values.push(Box<int>::create(42)); Box<int> value = values.pop(); print(value.get());
             print(values.count()); return 0;
         }
     "#,
@@ -146,19 +147,19 @@ fn shifting_owning_elements_transfers_values_and_clears_each_live_element_once()
     run(
         r#"
         struct Resource {
-            BoxInt value;
-            ~Resource() { print(*this.value); }
+            Box<int> value;
+            ~Resource() { print(this.value.get()); }
         };
         int main() {
             Vector<Resource> values = Vector<Resource>::create(); values.reserve(4);
-            values.push((Resource){ .value = box_int(1) });
-            values.push((Resource){ .value = box_int(3) });
-            values.insert(1, (Resource){ .value = box_int(2) });
-            values.insert(0, (Resource){ .value = box_int(0) });
-            Resource removed = values.remove(1); print(*removed.value);
-            for (size_t i = 0; i < values.count(); i += 1) { print(*values.at(i).value); }
+            values.push((Resource){ .value = Box<int>::create(1) });
+            values.push((Resource){ .value = Box<int>::create(3) });
+            values.insert(1, (Resource){ .value = Box<int>::create(2) });
+            values.insert(0, (Resource){ .value = Box<int>::create(0) });
+            Resource removed = values.remove(1); print(removed.value.get());
+            for (size_t i = 0; i < values.count(); i += 1) { print(values.at(i).value.get()); }
             values.clear(); print(values.count());
-            values.insert(0, (Resource){ .value = box_int(4) });
+            values.insert(0, (Resource){ .value = Box<int>::create(4) });
             Vector<Resource> next = move(values);
             return 0;
         }
@@ -176,15 +177,15 @@ fn inserted_and_removed_arrays_keep_nested_owners_and_reverse_element_cleanup() 
     let width = std::mem::size_of::<usize>();
     run(
         r#"
-        struct Resource { BoxInt value; ~Resource() { print(*this.value); } };
+        struct Resource { Box<int> value; ~Resource() { print(this.value.get()); } };
         typedef Resource Pair[2];
         int main() {
             Vector<Pair> values = Vector<Pair>::create(); values.reserve(3);
-            Pair first = { (Resource){ .value = box_int(1) }, (Resource){ .value = box_int(2) } };
-            Pair second = { (Resource){ .value = box_int(3) }, (Resource){ .value = box_int(4) } };
+            Pair first = { (Resource){ .value = Box<int>::create(1) }, (Resource){ .value = Box<int>::create(2) } };
+            Pair second = { (Resource){ .value = Box<int>::create(3) }, (Resource){ .value = Box<int>::create(4) } };
             values.push(move(second)); values.insert(0, move(first));
             values.swap(0, 1); values.swap(1, 1);
-            Pair result = values.remove(0); print(*result[0].value); print(*result[1].value);
+            Pair result = values.remove(0); print(result[0].value.get()); print(result[1].value.get());
             values.clear(); values.clear();
             return 0;
         }

@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
@@ -67,11 +68,11 @@ fn slices_preserve_returned_borrows_and_generic_element_types() {
 #[test]
 fn slices_borrow_owning_elements_without_copying_or_dropping_them() {
     let source = r#"
-        void show(const BoxInt[]& values) {
-            for (size_t i = 0; i < values.length; i++) { print(*values[i]); }
+        void show(const Box<int>[]& values) {
+            for (size_t i = 0; i < values.length; i++) { print(values[i].get()); }
         }
         int main() {
-            BoxInt[2] values = { box_int(10), box_int(20) };
+            Box<int>[2] values = { Box<int>::create(10), Box<int>::create(20) };
             show(&values);
             return 0;
         }

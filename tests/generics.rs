@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run_sizes(source);
@@ -101,10 +102,10 @@ fn generics_preserve_ownership_borrowed_getters_and_automatic_field_cleanup() {
         };
         T transfer<T>(T value) { return move(value); }
         int main() {
-            Holder<BoxInt> first = Holder<BoxInt>::create(box_int(42));
-            Holder<BoxInt> second = transfer<Holder<BoxInt>>(move(first));
-            print(*second.get());
-            BoxInt third = transfer<BoxInt>(box_int(7)); print(*third);
+            Holder<Box<int>> first = Holder<Box<int>>::create(Box<int>::create(42));
+            Holder<Box<int>> second = transfer<Holder<Box<int>>>(move(first));
+            print(second.get().get());
+            Box<int> third = transfer<Box<int>>(Box<int>::create(7)); print(third.get());
             return 0;
         }
     "#,
@@ -193,7 +194,7 @@ fn c_backed_generic_buffers_initialize_borrow_move_and_free_each_element_width()
     for body in [
         "Buffer<int> value = Buffer<int>::create(2, 0); const int& view = value.at(0); Buffer<int> next = move(value);",
         "Buffer<int> value = { .data = 0, .length = 2 };",
-        "Buffer<BoxInt> value = Buffer<BoxInt>::create(2, box_int(1));",
+        "Buffer<Box<int>> value = Buffer<Box<int>>::create(2, Box<int>::create(1));",
     ] {
         assert!(crust::check(&format!("{definitions} int main() {{ {body} return 0; }}")).is_err());
     }

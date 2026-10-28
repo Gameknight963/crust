@@ -1,5 +1,6 @@
 use crust::analysis::{Analysis, TextEdit};
 mod common;
+use common::compiler as crust;
 
 fn apply(analysis: &Analysis, edits: &[TextEdit]) -> Vec<String> {
     let mut texts: Vec<_> = analysis
@@ -131,7 +132,7 @@ fn method_rename_covers_generic_instances_and_rejects_collisions_and_unresolved_
 
 #[test]
 fn renamed_consuming_methods_keep_owner_cleanup() {
-    let source = "struct Item { BoxInt value; int take(Self this) { return *this.value; } }; int main() { Item item = { .value = box_int(42) }; print(move(item).take()); return 0; }";
+    let source = "struct Item { Box<int> value; int take(Self this) { return this.value.get(); } }; int main() { Item item = { .value = Box<int>::create(42) }; print(move(item).take()); return 0; }";
     let analysis = crust::analyze(source).unwrap();
     let edits = analysis
         .rename(0, source.find("take(Self").unwrap(), "consume")
@@ -439,21 +440,25 @@ int main() {
 #[test]
 fn field_rename_preserves_destructor_cleanup_and_union_layout() {
     let source = r#"
-struct Owner { BoxInt value; ~Owner() { print(*this.value); } };
+struct Owner { Box<int> value; ~Owner() { print(this.value.get()); } };
 union Bits { int value; unsigned char bytes[4]; };
 int main() {
-    Owner owner = { .value = box_int(42) };
+    Owner owner = { .value = Box<int>::create(42) };
     unsafe { Bits bits = { .value = 7 }; print(bits.value); }
     return 0;
 }
 "#;
     let analysis = crust::analyze(source).unwrap();
     let edits = analysis
-        .rename(0, source.find("BoxInt value").unwrap() + 7, "storage")
+        .rename(
+            0,
+            source.find("Box<int> value").unwrap() + "Box<int> ".len(),
+            "storage",
+        )
         .unwrap();
     let renamed = apply(&analysis, &edits).remove(0);
-    assert!(renamed.contains("~Owner() { print(*this.storage); }"));
-    assert!(renamed.contains(".storage = box_int(42)"));
+    assert!(renamed.contains("~Owner() { print(this.storage.get()); }"));
+    assert!(renamed.contains(".storage = Box<int>::create(42)"));
     let analysis = crust::analyze(&renamed).unwrap();
     let edits = analysis
         .rename(0, renamed.find("int value;").unwrap() + 4, "number")
@@ -560,10 +565,10 @@ fn struct_rename_updates_forward_declarations_destructors_and_qualified_calls() 
 struct Item;
 typedef Item Alias;
 struct Item {
-    BoxInt value;
-    ~Item() { print(*this.value); }
-    static Self create(int value) { Self result = { .value = box_int(value) }; return move(result); }
-    int read() const { return *this.value; }
+    Box<int> value;
+    ~Item() { print(this.value.get()); }
+    static Self create(int value) { Self result = { .value = Box<int>::create(value) }; return move(result); }
+    int read() const { return this.value.get(); }
 };
 int main() {
     Item first = Item::create(41);
@@ -893,8 +898,8 @@ fn type_parameter_rename_preserves_generic_owner_cleanup_and_union_access() {
 struct Holder<T> { T value; };
 union Bits<T> { T value; unsigned char byte; };
 int main() {
-    Holder<BoxInt> holder = { .value = box_int(42) };
-    print(*holder.value);
+    Holder<Box<int>> holder = { .value = Box<int>::create(42) };
+    print(holder.value.get());
     unsafe { Bits<int> bits = { .value = 7 }; print(bits.value); }
     return 0;
 }

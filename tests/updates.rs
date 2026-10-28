@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_generated_c(&crust::compile(source).unwrap(), false);
@@ -85,10 +86,10 @@ fn updates_through_borrows_and_volatile_views_preserve_owner_cleanup() {
     run(
         r#"
         int main() {
-            BoxInt owner = box_int(40);
-            print((*owner)++);
-            { int& view = &*owner; print(++view); }
-            print(*owner);
+            Box<int> owner = Box<int>::create(40);
+            print(owner.get_mut()++);
+            { int& view = owner.get_mut(); print(++view); }
+            print(owner.get());
             int value = 10;
             unsafe {
                 volatile int* view = &value;
@@ -110,7 +111,7 @@ fn updates_reject_readonly_noninteger_and_incomplete_destinations_and_conflictin
     for source in [
         "int main() { ++1; return 0; }",
         "int main() { int value = 1; value++++; return 0; }",
-        "int main() { BoxInt owner = box_int(1); owner++; return 0; }",
+        "int main() { Box<int> owner = Box<int>::create(1); owner++; return 0; }",
         "int main() { bool flag = true; flag++; return 0; }",
         "enum Color { Red }; int main() { Color color = Red; ++color; return 0; }",
         "int main() { int value = 1; const int& shared = &const value; (shared)++; return 0; }",

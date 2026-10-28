@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn scoped_enums_keep_member_names_separate_and_allow_qualified_constants() {
@@ -320,7 +321,7 @@ fn enum_arithmetic_and_integer_conversions_require_explicit_casts() {
         "print(A == B);",
         "print(A);",
         "if (A) {}",
-        "E value = (E)box_int(1);",
+        "E value = (E)Box<int>::create(1);",
         "int n = 0; set(&n);",
     ] {
         let source = format!("{prelude} int main() {{ {body} return 0; }}");

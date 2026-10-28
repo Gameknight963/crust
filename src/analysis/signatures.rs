@@ -163,7 +163,6 @@ impl Index {
         for (name, prefix, parameters) in [
             ("print", "void print", vec!["value".to_owned()]),
             ("move", "move", vec!["value".to_owned()]),
-            ("box_int", "BoxInt box_int", vec!["int value".to_owned()]),
             (
                 "slice",
                 "unsafe T[]& slice",

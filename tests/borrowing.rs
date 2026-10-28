@@ -1,3 +1,6 @@
+mod common;
+use common::compiler as crust;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,19 +12,19 @@ fn borrows_stack_values_box_contents_and_owner_slots_without_transferring_owners
         void relay(int& value) { increment(value); increment(&value); }
         int read(const int& value) { return value; }
         int sum(const int& a, const int& b) { return a + b; }
-        void replace(BoxInt& owner, int value) { owner = box_int(value); }
-        int read_box(const BoxInt& owner) { return *owner; }
+        void replace(Box<int>& owner, int value) { owner = Box<int>::create(value); }
+        int read_box(const Box<int>& owner) { return owner.get(); }
         int main(void) {
             int number = 40;
             relay(&number);
             print(read(&const number));
             print(sum(&const number, &const number));
-            BoxInt owner = box_int(7);
-            increment(&*owner);
+            Box<int> owner = Box<int>::create(7);
+            increment(owner.get_mut());
             print(read_box(&const owner));
             replace(&owner, 99);
-            print(*owner);
-            print(sum(&const *owner, &const *owner));
+            print(owner.get());
+            print(sum(owner.get(), owner.get()));
             return 0;
         }
     "#;
@@ -53,17 +56,17 @@ fn rejects_aliases_moves_and_reads_that_conflict_with_live_argument_borrows() {
         void mixed(int& a, const int& b) { a = b; }
         void value(int& a, int b) { a = b; }
         int read(const int& a) { return a; }
-        void owner_and_borrow(const BoxInt& a, BoxInt b) { print(*a + *b); }
-        void owned_first(BoxInt a, const BoxInt& b) { print(*a + *b); }
+        void owner_and_borrow(const Box<int>& a, Box<int> b) { print(a.get() + b.get()); }
+        void owned_first(Box<int> a, const Box<int>& b) { print(a.get() + b.get()); }
     "#;
     for body in [
         "int n = 1; both(&n, &n);",
         "int n = 1; mixed(&n, &const n);",
         "int n = 1; value(&n, n);",
         "int n = 1; value(&n, read(&const n));",
-        "BoxInt a = box_int(1); owner_and_borrow(&const a, move(a));",
-        "BoxInt a = box_int(1); value(&*a, owned_first(move(a), &const a));",
-        "BoxInt a = box_int(1); owned_first(move(a), &const a);",
+        "Box<int> a = Box<int>::create(1); owner_and_borrow(&const a, move(a));",
+        "Box<int> a = Box<int>::create(1); value(a.get_mut(), owned_first(move(a), &const a));",
+        "Box<int> a = Box<int>::create(1); owned_first(move(a), &const a);",
     ] {
         let error = crust::compile(&format!("{prelude} int main(void) {{ {body} return 0; }}"))
             .unwrap_err();
@@ -79,9 +82,12 @@ fn rejects_aliases_moves_and_reads_that_conflict_with_live_argument_borrows() {
 fn rejects_mutation_through_shared_borrows_and_escaping_references() {
     let cases = [
         ("void bad(const int& a) { a = 1; }", "shared borrow"),
-        ("void bad(const BoxInt& a) { *a = 1; }", "shared borrow"),
         (
-            "void bad(const BoxInt& a) { a = box_int(1); }",
+            "void bad(const Box<int>& a) { a.get_mut() = 1; }",
+            "shared borrow",
+        ),
+        (
+            "void bad(const Box<int>& a) { a = Box<int>::create(1); }",
             "shared borrow",
         ),
         (
@@ -114,10 +120,10 @@ fn releases_argument_loans_after_calls_and_allows_shared_aliases() {
             set(&n, 2);
             n = read(&const n) + 1;
             set(&n, 3);
-            BoxInt owner = box_int(n);
-            print(read(&const *owner));
-            BoxInt next = move(owner);
-            print(*next);
+            Box<int> owner = Box<int>::create(n);
+            print(read(owner.get()));
+            Box<int> next = move(owner);
+            print(next.get());
             return 0;
         }
     "#,

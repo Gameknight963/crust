@@ -805,19 +805,49 @@ impl Parser {
             | Token::Long
             | Token::Bool
             | Token::Void
-            | Token::BoxInt
             | Token::Struct
             | Token::Union
             | Token::Enum
             | Token::Const
             | Token::Volatile => true,
             Token::Identifier(name) => {
-                self.known_type(name)
-                    && !self
+                if !self.known_type(name)
+                    || self
                         .value_scopes
                         .iter()
                         .rev()
                         .any(|scope| scope.contains(name))
+                {
+                    return false;
+                }
+                let mut index = self.position + 1;
+                if self
+                    .tokens
+                    .get(index)
+                    .is_some_and(|token| token.kind == Token::Less)
+                {
+                    let mut depth = 0usize;
+                    while let Some(token) = self.tokens.get(index) {
+                        match token.kind {
+                            Token::Less => depth += 1,
+                            Token::Greater => depth = depth.saturating_sub(1),
+                            Token::GreaterGreater => depth = depth.saturating_sub(2),
+                            _ => {}
+                        }
+                        index += 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+                if self
+                    .tokens
+                    .get(index)
+                    .is_some_and(|token| token.kind == Token::ColonColon)
+                {
+                    return false;
+                }
+                true
             }
             _ => false,
         };
@@ -1538,7 +1568,6 @@ impl Parser {
             | Token::Long => self.integer_type(token.clone(), &mut qualifiers)?,
             Token::Bool => Type::Bool,
             Token::Void => Type::Void,
-            Token::BoxInt => Type::BoxInt,
             Token::Struct | Token::Union => {
                 let (name, span) = self.identifier()?;
                 if self.generics.structs.contains_key(&name) {
@@ -1570,7 +1599,7 @@ impl Parser {
             _ => {
                 return Err(Diagnostic::new(
                     token.span,
-                    "expected a type: 'int', 'bool', 'void', 'BoxInt', or a type name",
+                    "expected a type: 'int', 'bool', 'void', or a type name",
                 ));
             }
         };
@@ -1901,7 +1930,6 @@ impl Parser {
                 Token::Char | Token::Signed | Token::Unsigned | Token::Short | Token::Long
             )
             || self.at(&Token::Bool)
-            || self.at(&Token::BoxInt)
             || self.at(&Token::Const)
             || self.at(&Token::Volatile)
             || self.at(&Token::Struct)

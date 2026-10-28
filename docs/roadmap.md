@@ -3,6 +3,7 @@
 ## Implemented foundations
 
 - Ownership checking for heap values and structs
+- Source-defined Box<T> owners throughout the examples and compiler fixtures
 - Shared and exclusive call borrows
 - Instance methods, value receivers, and destructors
 - Bare struct names, basic typedefs, and static methods
@@ -114,7 +115,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Global definitions and static variables
 - [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
 - [x] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
-- [ ] Migrate examples and tests from BoxInt and remove the built-in type
+- [x] Migrate examples and tests from BoxInt and remove the built-in type
 - [x] Project dependencies, library-supplied native dependencies, and reliable rebuilds
 - [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI

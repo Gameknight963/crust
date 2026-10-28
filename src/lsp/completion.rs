@@ -217,7 +217,6 @@ fn complete(
         "import",
         "init",
         "destroy",
-        "BoxInt",
         "typedef",
         "static",
         "extern",
@@ -238,14 +237,13 @@ fn complete(
         "intptr_t",
         "uintptr_t",
         "print",
-        "box_int",
         "slice",
         "move",
     ] {
         if name.starts_with(prefix) {
             items.entry(name.to_owned()).or_insert_with(|| {
                 json!({
-                    "label": name, "kind": if matches!(name, "print" | "box_int" | "move" | "slice") { 3 } else { 14 }, "textEdit": { "range": range, "newText": name }
+                    "label": name, "kind": if matches!(name, "print" | "move" | "slice") { 3 } else { 14 }, "textEdit": { "range": range, "newText": name }
                 })
             });
         }

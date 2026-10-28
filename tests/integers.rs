@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     run_with_drops(source, expected, "");
@@ -257,7 +258,7 @@ fn c_style_casts_check_ranges_and_support_bitwise_complement() {
             int8_t negative = -128;
             print(~negative);
             (void)mark();
-            BoxInt owner = box_int(7);
+            Box<int> owner = Box<int>::create(7);
             (void)move(owner);
             int n = 1;
             (void)&n;
@@ -285,13 +286,13 @@ fn sizeof_and_alignof_query_types_without_running_expressions_or_moves() {
             print(sizeof(Packet) >= 9);
             print(alignof(Packet) >= _Alignof(uint64_t));
             print(sizeof(mark()));
-            print(sizeof(box_int(1)) == sizeof(BoxInt));
-            BoxInt owner = box_int(7);
-            print(sizeof(move(owner)) == sizeof(BoxInt));
-            print(*owner);
-            BoxInt other = move(owner);
+            print(sizeof(Box<int>::create(1)) == sizeof(Box<int>));
+            Box<int> owner = Box<int>::create(7);
+            print(sizeof(move(owner)) == sizeof(Box<int>));
+            print(owner.get());
+            Box<int> other = move(owner);
             print(sizeof(owner) == sizeof(other));
-            print(sizeof(const int&) == sizeof(BoxInt));
+            print(sizeof(const int&) == sizeof(Box<int>));
             return 0;
         }
     "#,
@@ -339,7 +340,7 @@ fn explicit_casts_retain_checked_conversion_behavior() {
         "int main() { print(alignof(void)); return 0; }",
         "int main() { print(sizeof(print(1))); return 0; }",
         "int main() { print(sizeof(missing)); return 0; }",
-        "int main() { BoxInt a = box_int(1); (void)a; return 0; }",
+        "int main() { Box<int> a = Box<int>::create(1); (void)a; return 0; }",
         "struct A { int n; }; int main() { A a = { .n = 1 }; (A)a; return 0; }",
         "int main() { int n = 1; (int&)n; return 0; }",
     ] {
@@ -360,4 +361,24 @@ fn contextual_literals_and_borrows_keep_exact_ranges_and_types() {
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }
+}
+
+#[test]
+fn sizeof_and_parentheses_distinguish_scoped_values_from_generic_types() {
+    run(
+        r#"
+enum class Code : uint8_t { Value };
+struct Pair<T> {
+    T value;
+    static int make() { print(99); return 7; }
+};
+int main() {
+    print(sizeof(Pair<Pair<int>>::make()));
+    print(sizeof(Code::Value));
+    print((Pair<int>::make()));
+    return 0;
+}
+"#,
+        "4\n1\n99\n7\n",
+    );
 }

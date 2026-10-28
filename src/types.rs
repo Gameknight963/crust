@@ -60,7 +60,7 @@ impl Types {
                     || (!definition.scoped
                         && (matches!(
                             variant.name.as_str(),
-                            "Self" | "this" | "print" | "move" | "box_int" | "slice"
+                            "Self" | "this" | "print" | "move" | "slice"
                         ) || !enumerators.insert(variant.name.clone())))
                 {
                     return Err(Diagnostic::new(
@@ -307,7 +307,6 @@ impl Types {
 
     pub fn owns(&self, ty: Type) -> bool {
         return match ty {
-            Type::BoxInt => true,
             Type::Struct(id) => self.structs[id].owns,
             Type::Array(id) => self.array_owns[id],
             _ => false,
@@ -500,7 +499,6 @@ impl Types {
             Type::Float(kind) => kind.c_name().to_owned(),
             Type::Bool => String::from("bool"),
             Type::Void => String::from("void"),
-            Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!(
                 "{} {}",
                 if self.structs[id].tagged {

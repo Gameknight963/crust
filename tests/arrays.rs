@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn constant_lengths_work_in_aliases_fields_and_nested_generic_declarations() {
@@ -29,7 +30,7 @@ fn constant_lengths_work_in_aliases_fields_and_nested_generic_declarations() {
 #[test]
 fn computed_lengths_preserve_owning_array_cleanup() {
     run(
-        "int main() { BoxInt owners[1 << 1] = { box_int(1), box_int(2) }; print(*owners[1]); return 0; }",
+        "int main() { Box<int> owners[1 << 1] = { Box<int>::create(1), Box<int>::create(2) }; print(owners[1].get()); return 0; }",
         "2\n",
         "drop:2\ndrop:1\n",
     );
@@ -174,14 +175,14 @@ fn array_borrows_support_element_access_and_nested_reborrowing() {
 fn owning_arrays_move_through_calls_returns_replacement_and_discard() {
     run(
         r#"
-        typedef BoxInt Owners[2];
-        Owners create(int n) { return (Owners){ box_int(n), box_int(n + 1) }; }
+        typedef Box<int> Owners[2];
+        Owners create(int n) { return (Owners){ Box<int>::create(n), Box<int>::create(n + 1) }; }
         Owners transfer(Owners owners) { return move(owners); }
         int main() {
             Owners first = create(1);
             Owners second = transfer(move(first));
             first = create(3);
-            second[0] = box_int(5);
+            second[0] = Box<int>::create(5);
             second = move(first);
             create(6);
             return 0;
@@ -198,10 +199,10 @@ fn array_cleanup_respects_destructors_nested_fields_and_loop_control() {
         r#"
         struct Item {
             int id;
-            BoxInt owners[2];
+            Box<int> owners[2];
             ~Item() { print(this.id); }
         };
-        Item create(int id) { return (Item){ .id = id, .owners = { box_int(id), box_int(id + 1) } }; }
+        Item create(int id) { return (Item){ .id = id, .owners = { Box<int>::create(id), Box<int>::create(id + 1) } }; }
         int main() {
             for (int i = 0; i < 2; i += 1) {
                 Item items[2] = { create(i * 10), create(i * 10 + 2) };
@@ -265,7 +266,7 @@ fn rejects_invalid_lengths_initializers_and_incompatible_array_types() {
         "int main() { int values[2] = {1, 2}; print(values[2]); return 0; }",
         "int main() { int values[2] = {1, 2}; print(values[-1]); return 0; }",
         "int main() { int n = 0; print(n[0]); return 0; }",
-        "int main() { int values[2] = {1, 2}; print(values[box_int(0)]); return 0; }",
+        "int main() { int values[2] = {1, 2}; print(values[Box<int>::create(0)]); return 0; }",
         "int main() { int a[2] = {1, 2}; int b[3] = a; return 0; }",
         "int main() { int a[2] = {1, 2}; uint32_t b[2] = a; return 0; }",
         "struct Loop { Loop elements[1]; }; int main() { return 0; }",
@@ -278,14 +279,14 @@ fn rejects_invalid_lengths_initializers_and_incompatible_array_types() {
 #[test]
 fn arrays_preserve_parent_ownership_and_borrow_permissions() {
     for source in [
-        "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b = a[0]; return 0; }",
-        "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b = move(a[0]); return 0; }",
-        "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b[1] = a; return 0; }",
-        "int main() { BoxInt a[1] = {box_int(1)}; BoxInt b[1] = move(a); print(*a[0]); return 0; }",
+        "int main() { Box<int> a[1] = {Box<int>::create(1)}; Box<int> b = a[0]; return 0; }",
+        "int main() { Box<int> a[1] = {Box<int>::create(1)}; Box<int> b = move(a[0]); return 0; }",
+        "int main() { Box<int> a[1] = {Box<int>::create(1)}; Box<int> b[1] = a; return 0; }",
+        "int main() { Box<int> a[1] = {Box<int>::create(1)}; Box<int> b[1] = move(a); print(a[0].get()); return 0; }",
         "typedef int Row[2]; void f(const Row& a) { (a)[0] = 3; } int main() { return 0; }",
         "typedef int Row[2]; void f(const Row& a) { (a)[0] += 3; } int main() { return 0; }",
         "typedef int Row[2]; void f(int& a, int& b) {} int main() { Row a = {1, 2}; f(&a[0], &a[1]); return 0; }",
-        "typedef BoxInt Owners[1]; int consume(Owners owners) { return 0; } int main() { Owners a = {box_int(1)}; print(*a[consume(move(a))]); return 0; }",
+        "typedef Box<int> Owners[1]; int consume(Owners owners) { return 0; } int main() { Owners a = {Box<int>::create(1)}; print(a[consume(move(a))].get()); return 0; }",
         "typedef int Row[2]; int change(Row& a) { (a)[0] = 2; return 0; } int main() { Row a = {1, 2}; print(a[change(&a)]); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

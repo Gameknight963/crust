@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[cfg(not(windows))]
 #[test]
@@ -103,7 +104,7 @@ fn aliases_of_a_native_object_share_the_borrow_root() {
 #[test]
 fn external_declarations_validate_types_names_and_native_symbol_consistency() {
     for source in [
-        "extern BoxInt owner; int main() { return 0; }",
+        "extern Box<int> owner; int main() { return 0; }",
         "extern int& borrow; int main() { return 0; }",
         "extern void value; int main() { return 0; }",
         "extern int values[2]; int main() { return 0; }",

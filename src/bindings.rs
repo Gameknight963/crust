@@ -37,10 +37,7 @@ fn crust_identifier(name: &str) -> bool {
     return tokens.len() == 2
         && matches!(&tokens[0].kind, crate::lexer::Token::Identifier(value) if value == name)
         && crate::ast::IntType::named(name).is_none()
-        && !matches!(
-            name,
-            "Self" | "this" | "print" | "box_int" | "move" | "slice"
-        );
+        && !matches!(name, "Self" | "this" | "print" | "move" | "slice");
 }
 
 fn children(node: &Value) -> &[Value] {

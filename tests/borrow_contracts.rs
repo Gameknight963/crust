@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn returned_borrows_select_sources_and_support_reborrowing_and_forwarding() {
@@ -85,7 +86,7 @@ fn projected_multi_origin_borrows_preserve_disjoint_fields() {
 
 #[test]
 fn choosing_an_owner_preserves_cleanup_and_freezes_both_sources() {
-    let source = "BoxInt& choose(BoxInt& a, BoxInt& b) borrows(a,b) { return b; } int main() { BoxInt a=box_int(10); BoxInt b=box_int(20); { BoxInt& selected=choose(&a,&b); selected=box_int(42); print(*selected); } print(*a); print(*b); return 0; }";
+    let source = "Box<int>& choose(Box<int>& a, Box<int>& b) borrows(a,b) { return b; } int main() { Box<int> a=Box<int>::create(10); Box<int> b=Box<int>::create(20); { Box<int>& selected=choose(&a,&b); selected=Box<int>::create(42); print(selected.get()); } print(a.get()); print(b.get()); return 0; }";
     let output = common::tracked_run(source);
     assert!(
         output.status.success(),
@@ -100,7 +101,7 @@ fn choosing_an_owner_preserves_cleanup_and_freezes_both_sources() {
         String::from_utf8_lossy(&output.stderr).replace('\r', ""),
         "drop:20\ndrop:42\ndrop:10\n"
     );
-    let invalid = "BoxInt& choose(BoxInt& a, BoxInt& b) borrows(a,b) { return b; } int main() { BoxInt a=box_int(10); BoxInt b=box_int(20); BoxInt& selected=choose(&a,&b); BoxInt consumed=move(b); print(*selected); return 0; }";
+    let invalid = "Box<int>& choose(Box<int>& a, Box<int>& b) borrows(a,b) { return b; } int main() { Box<int> a=Box<int>::create(10); Box<int> b=Box<int>::create(20); Box<int>& selected=choose(&a,&b); Box<int> consumed=move(b); print(selected.get()); return 0; }";
     assert!(crust::compile(invalid).is_err());
 }
 

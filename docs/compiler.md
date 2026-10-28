@@ -339,7 +339,6 @@ referent reads and places where needed.
 - Indexed places capture the array address and check the index before element access
 - String literals lower to numeric byte-array initializers, preserving UTF-8 bytes across C compiler execution encodings
 - Text output bounds its zero-byte scan by the array capacity
-- `BoxInt` uses a null pointer as its internal moved-value flag
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters
 - Unsafe blocks lower to ordinary C blocks with the same cleanup rules
@@ -386,3 +385,9 @@ when a larger shape or accumulation exceeds that limit.
 Cleanup checks keep returned loans live while destructors run. Same-block
 owning sources must be declared before their reference holders. Destructor
 queries visit each concrete type once, including repeated aggregate shapes.
+
+
+Compiler ownership fixtures define `Box<T>` in
+[tests/common/box.cr](../tests/common/box.cr). The test compiler facade appends
+that definition to fixtures that use it. Production compilation resolves owner
+types through their source declarations and imports.

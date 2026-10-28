@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+pub mod compiler;
 mod files;
 
 static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
@@ -54,7 +55,7 @@ pub fn tracked_run_sizes(source: &str) -> Output {
 }
 
 fn run_with_tracking(source: &str, sizes: bool) -> Output {
-    let generated = crust::compile(source).unwrap();
+    let generated = compiler::compile(source).unwrap();
     return tracked_generated_c(&generated, sizes);
 }
 

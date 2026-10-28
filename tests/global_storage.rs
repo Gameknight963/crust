@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn globals_and_static_locals_resolve_source_symbols_without_initializer_helpers() {
@@ -93,7 +94,7 @@ fn mutable_storage_and_invalid_static_initializers_are_rejected() {
         "int count=1; int copy=count; int main() { return 0; }",
         "int count=2147483647 + 1; int main() { return 0; }",
         "uint8_t count=200 + 100; int main() { return 0; }",
-        "BoxInt owner=box_int(1); int main() { return 0; }",
+        "Box<int> owner=Box<int>::create(1); int main() { return 0; }",
         "int value=1; int value=2; int main() { return 0; }",
     ] {
         assert!(crust::compile(source).is_err(), "accepted {source}");

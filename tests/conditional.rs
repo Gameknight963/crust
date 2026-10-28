@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let generated = crust::compile(source).unwrap();
@@ -58,18 +59,18 @@ fn conditional_owners_merge_moves_and_drop_only_the_selected_value() {
         }
         int main() {
             for (int index = 0; index < 2; index += 1) {
-                BoxInt first = box_int(10);
-                BoxInt second = box_int(20);
-                BoxInt selected = index == 0 ? move(first) : move(second);
-                print(*selected);
-                selected = index == 0 ? box_int(30) : box_int(40);
-                print(*selected);
-                BoxInt result = choose<BoxInt>(index == 0, box_int(50), box_int(60));
-                print(*result);
-                index == 0 ? box_int(70) : box_int(80);
-                BoxInt same = box_int(90);
-                BoxInt moved = index == 0 ? move(same) : move(same);
-                print(*moved);
+                Box<int> first = Box<int>::create(10);
+                Box<int> second = Box<int>::create(20);
+                Box<int> selected = index == 0 ? move(first) : move(second);
+                print(selected.get());
+                selected = index == 0 ? Box<int>::create(30) : Box<int>::create(40);
+                print(selected.get());
+                Box<int> result = choose<Box<int>>(index == 0, Box<int>::create(50), Box<int>::create(60));
+                print(result.get());
+                index == 0 ? Box<int>::create(70) : Box<int>::create(80);
+                Box<int> same = Box<int>::create(90);
+                Box<int> moved = index == 0 ? move(same) : move(same);
+                print(moved.get());
             }
             return 0;
         }
@@ -112,9 +113,9 @@ fn conditional_values_preserve_numeric_enum_pointer_callback_and_aggregate_types
                 print(callback(41));
             }
             print(sizeof(true ? (uint8_t)1 : (int64_t)2));
-            BoxInt owned = box_int(9);
+            Box<int> owned = Box<int>::create(9);
             print(sizeof(true ? move(owned) : move(owned)));
-            print(*owned);
+            print(owned.get());
             return 0;
         }
     "#,
@@ -152,13 +153,13 @@ fn conditional_constants_short_circuit_enum_values_and_array_lengths() {
 fn conditional_expressions_reject_invalid_types_partial_moves_and_borrow_results() {
     for source in [
         "int main() { int value = 1 ? 2; return value; }",
-        "int main() { BoxInt value = box_int(1); print(value ? 1 : 2); return 0; }",
-        "int main() { BoxInt first = box_int(1); BoxInt second = box_int(2); BoxInt selected = true ? move(first) : move(second); print(*first); return 0; }",
+        "int main() { Box<int> value = Box<int>::create(1); print(value ? 1 : 2); return 0; }",
+        "int main() { Box<int> first = Box<int>::create(1); Box<int> second = Box<int>::create(2); Box<int> selected = true ? move(first) : move(second); print(first.get()); return 0; }",
         "int main() { int first = 1; int second = 2; const int& selected = true ? &const first : &const second; return 0; }",
-        "int main() { print(true ? box_int(1) : 2); return 0; }",
+        "int main() { print(true ? Box<int>::create(1) : 2); return 0; }",
         "extern void show(); int main() { unsafe { true ? show() : 1; } return 0; }",
         "int main() { int number = 1; unsafe { int* pointer = true ? &number : 3; } return 0; }",
-        "int use(const BoxInt& first, BoxInt second) { return *first + *second; } int main() { BoxInt owner = box_int(1); return use(&const owner, true ? move(owner) : box_int(2)); }",
+        "int use(const Box<int>& first, Box<int> second) { return first.get() + second.get(); } int main() { Box<int> owner = Box<int>::create(1); return use(&const owner, true ? move(owner) : Box<int>::create(2)); }",
     ] {
         assert!(crust::check(source).is_err(), "{source}");
     }

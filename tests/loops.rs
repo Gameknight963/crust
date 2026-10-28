@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -100,18 +101,18 @@ fn single_statement_bodies_preserve_return_cleanup_and_discarded_owner_cleanup()
     run(
         r#"
         int select(bool condition) {
-            BoxInt owner = box_int(10);
-            if (condition) return *owner;
+            Box<int> owner = Box<int>::create(10);
+            if (condition) return owner.get();
             else return 20;
         }
         int main() {
             print(select(true)); print(select(false));
             int index = 0;
-            while (index++ < 2) box_int(index);
+            while (index++ < 2) Box<int>::create(index);
             print(index);
-            do box_int(index++); while (index < 5);
+            do Box<int>::create(index++); while (index < 5);
             print(index);
-            for (index = 0; index < 2; index++) box_int(index);
+            for (index = 0; index < 2; index++) Box<int>::create(index);
             print(index);
             return 0;
         }
@@ -146,15 +147,15 @@ fn single_statement_bodies_reject_declarations_without_braces_and_bound_nesting(
 fn do_while_cleans_body_owners_before_conditions_and_skips_conditions_on_break() {
     run(
         r#"
-        struct R { BoxInt value; ~R() { print(*this.value); } };
+        struct R { Box<int> value; ~R() { print(this.value.get()); } };
         int condition(int count) { print(100 + count); return count < 5; }
         int main() {
-            R outer = { .value = box_int(99) };
+            R outer = { .value = Box<int>::create(99) };
             int i = 0;
             do {
-                R a = { .value = box_int(i) };
+                R a = { .value = Box<int>::create(i) };
                 {
-                    R b = { .value = box_int(10 + i) };
+                    R b = { .value = Box<int>::create(10 + i) };
                     i += 1;
                     if (i == 1) { continue; }
                     else if (i == 3) { break; }
@@ -175,8 +176,8 @@ fn do_while_releases_body_borrows_before_the_condition_and_tracks_guaranteed_exi
         r#"
         int bump(int& value) { value += 1; return value < 2; }
         int result() {
-            BoxInt owner = box_int(8);
-            do { return *owner; } while (false);
+            Box<int> owner = Box<int>::create(8);
+            do { return owner.get(); } while (false);
         }
         int main() {
             int count = 0;
@@ -185,10 +186,10 @@ fn do_while_releases_body_borrows_before_the_condition_and_tracks_guaranteed_exi
                 print(view);
                 continue;
             } while (bump(&count));
-            BoxInt owner = box_int(7);
+            Box<int> owner = Box<int>::create(7);
             do { move(owner); break; } while (false);
-            owner = box_int(9);
-            print(*owner);
+            owner = Box<int>::create(9);
+            print(owner.get());
             print(result());
             return 0;
         }
@@ -204,7 +205,7 @@ fn do_while_rejects_invalid_syntax_scope_and_owner_backedges() {
         "do { move(a); } while (true);",
         "do { move(a); continue; } while (false);",
         "do { if (true) { move(a); continue; } } while (true);",
-        "do { move(a); break; } while (false); print(*a);",
+        "do { move(a); break; } while (false); print(a.get());",
         "do { } while (consume(move(a)));",
         "do { int local = 1; } while (local);",
         "do { } while (true)",
@@ -212,7 +213,7 @@ fn do_while_rejects_invalid_syntax_scope_and_owner_backedges() {
         "do print(1) while (true);",
     ] {
         let source = format!(
-            "int consume(BoxInt owner) {{ return 0; }} int main() {{ BoxInt a = box_int(7); {body} return 0; }}"
+            "int consume(Box<int> owner) {{ return 0; }} int main() {{ Box<int> a = Box<int>::create(7); {body} return 0; }}"
         );
         assert!(crust::check(&source).is_err(), "should reject {source}");
     }
@@ -251,14 +252,14 @@ fn for_and_while_support_break_continue_and_empty_clauses() {
 fn for_header_and_body_owners_drop_in_scope_order_on_continue_and_break() {
     run(
         r#"
-        struct R { BoxInt value; ~R() { print(*this.value); } };
+        struct R { Box<int> value; ~R() { print(this.value.get()); } };
         int main() {
-            R outer = { .value = box_int(99) };
+            R outer = { .value = Box<int>::create(99) };
             int i = 0;
-            for (R header = { .value = box_int(9) }; i < 3; i = i + 1) {
-                R a = { .value = box_int(i) };
+            for (R header = { .value = Box<int>::create(9) }; i < 3; i = i + 1) {
+                R a = { .value = Box<int>::create(i) };
                 {
-                    R b = { .value = box_int(10 + i) };
+                    R b = { .value = Box<int>::create(10 + i) };
                     if (i == 0) { continue; }
                     if (i == 1) { break; }
                 }
@@ -320,10 +321,10 @@ fn a_break_can_consume_an_outer_owner_that_is_reinitialized_after_the_loop() {
     run(
         r#"
         int main() {
-            BoxInt a = box_int(7);
+            Box<int> a = Box<int>::create(7);
             while (1) { move(a); break; }
-            a = box_int(8);
-            print(*a);
+            a = Box<int>::create(8);
+            print(a.get());
             return 0;
         }
     "#,
@@ -337,15 +338,15 @@ fn for_continue_runs_the_header_step_and_can_restore_an_outer_owner() {
     run(
         r#"
         int main() {
-            BoxInt a = box_int(7);
+            Box<int> a = Box<int>::create(7);
             int i = 0;
-            for (; i < 2; a = box_int(9)) {
-                print(*a);
+            for (; i < 2; a = Box<int>::create(9)) {
+                print(a.get());
                 move(a);
                 i = i + 1;
                 continue;
             }
-            print(*a);
+            print(a.get());
             return 0;
         }
     "#,
@@ -395,14 +396,14 @@ fn unreachable_for_steps_are_checked_and_generated_but_do_not_execute() {
 #[test]
 fn rejects_conflicting_owner_states_at_breaks_and_backedges() {
     for body in [
-        "while (1) { move(a); break; } print(*a);",
+        "while (1) { move(a); break; } print(a.get());",
         "while (1) { move(a); continue; }",
         "while (1) { if (1) { move(a); continue; } }",
         "for (int i = 0; i < 2; i = i + 1) { move(a); continue; }",
         "for (; 1; move(a)) { continue; }",
-        "while (1) { if (1) { move(a); break; } } print(*a);",
+        "while (1) { if (1) { move(a); break; } } print(a.get());",
     ] {
-        let source = format!("int main() {{ BoxInt a = box_int(7); {body} return 0; }}");
+        let source = format!("int main() {{ Box<int> a = Box<int>::create(7); {body} return 0; }}");
         assert!(crust::check(&source).is_err(), "should reject {source}");
     }
 }
@@ -418,10 +419,10 @@ fn compound_assignments_work_on_locals_fields_and_borrowed_pointees() {
             n += 5; n -= 2; n *= 3; n /= 3; n %= 5;
             n |= 8; n &= 7; n ^= 2; n += n;
             print(n);
-            BoxInt owner = box_int(5);
-            *owner += 2;
-            add(&*owner);
-            print(*owner);
+            Box<int> owner = Box<int>::create(5);
+            owner.get_mut() += 2;
+            add(owner.get_mut());
+            print(owner.get());
             A a = { .n = 10 };
             a.add(4);
             print(a.n);
@@ -481,10 +482,10 @@ fn compound_assignments_keep_runtime_arithmetic_checks() {
 fn compound_rhs_cannot_mutate_move_or_replace_the_captured_destination() {
     for source in [
         "void bad(const int& n) { n += 1; } int main() { return 0; }",
-        "int main() { BoxInt a = box_int(1); a += 1; return 0; }",
+        "int main() { Box<int> a = Box<int>::create(1); a += 1; return 0; }",
         "int main() { 1 += 2; return 0; }",
-        "int replace(BoxInt& a) { a = box_int(2); return 1; } int main() { BoxInt a = box_int(1); *a += replace(&a); return 0; }",
-        "int take(BoxInt a) { return *a; } int main() { BoxInt a = box_int(1); *a += take(move(a)); return 0; }",
+        "int replace(Box<int>& a) { a = Box<int>::create(2); return 1; } int main() { Box<int> a = Box<int>::create(1); a.get_mut() += replace(&a); return 0; }",
+        "int take(Box<int> a) { return a.get(); } int main() { Box<int> a = Box<int>::create(1); a.get_mut() += take(move(a)); return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }

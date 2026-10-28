@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -118,17 +119,17 @@ fn returned_references_are_places_for_stores_fields_methods_and_indexing() {
 fn assigning_an_owner_through_a_reference_drops_the_previous_value_once() {
     run(
         r#"
-        BoxInt& identity(BoxInt& owner) { return owner; }
+        Box<int>& identity(Box<int>& owner) { return owner; }
         int main() {
-            BoxInt owner = box_int(1);
+            Box<int> owner = Box<int>::create(1);
             {
-                BoxInt& reference = &owner;
-                reference = box_int(2);
-                identity(reference) = box_int(3);
-                print(*reference);
+                Box<int>& reference = &owner;
+                reference = Box<int>::create(2);
+                identity(reference) = Box<int>::create(3);
+                print(reference.get());
             }
-            BoxInt next = move(owner);
-            print(*next);
+            Box<int> next = move(owner);
+            print(next.get());
             return 0;
         }
     "#,
@@ -143,9 +144,9 @@ fn raw_addresses_can_be_created_and_forwarded_without_accessing_raw_memory() {
         r#"
         int* forward(int* pointer) { return pointer; }
         int main() {
-            BoxInt owner = box_int(1);
-            BoxInt* address = &owner;
-            BoxInt next = move(owner);
+            Box<int> owner = Box<int>::create(1);
+            Box<int>* address = &owner;
+            Box<int> next = move(owner);
             int value = 1;
             int* pointer = forward(&value);
             const int* view = &value;
@@ -173,9 +174,9 @@ fn shared_references_and_raw_pointers_keep_their_access_restrictions() {
         "int n = 1; int& r = &n; print(n);",
         "int n = 1; int& r = &n; int& child = &r; print(r);",
         "int n = 1; const int& r = &n; n = 2;",
-        "BoxInt owner = box_int(1); BoxInt& r = &owner; BoxInt copy = r;",
-        "BoxInt owner = box_int(1); BoxInt& r = &owner; BoxInt next = move(r);",
-        "BoxInt owner = box_int(1); BoxInt& r = &owner; BoxInt next = move(owner);",
+        "Box<int> owner = Box<int>::create(1); Box<int>& r = &owner; Box<int> copy = r;",
+        "Box<int> owner = Box<int>::create(1); Box<int>& r = &owner; Box<int> next = move(r);",
+        "Box<int> owner = Box<int>::create(1); Box<int>& r = &owner; Box<int> next = move(owner);",
     ] {
         let source = format!("int main() {{ {body} return 0; }}");
         assert!(crust::check(&source).is_err(), "should reject {body}");
@@ -199,7 +200,7 @@ fn reference_member_access_uses_dot_and_raw_member_access_uses_arrow() {
         "",
     );
     for body in [
-        "Item& reference = &item; print(reference->value);",
+        "Item& reference = &item; print(reference.get()->value);",
         "Item* pointer = &item; print(pointer.value);",
         "Item* pointer = &item; print(pointer->value);",
     ] {
@@ -300,12 +301,12 @@ fn address_operands_are_checked_and_evaluated_once() {
     run(
         r#"
         int& touch(int& value) { print(7); return value; }
-        int index(BoxInt owner) { return *owner; }
+        int index(Box<int> owner) { return owner.get(); }
         int main() {
             int number = 1;
             (void)&touch(&number);
             int values[1] = { 2 };
-            BoxInt owner = box_int(0);
+            Box<int> owner = Box<int>::create(0);
             (void)&values[index(move(owner))];
             print(number);
             return 0;

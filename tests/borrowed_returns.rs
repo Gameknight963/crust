@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -162,18 +163,18 @@ fn temporary_returned_loans_end_after_statements_conditions_and_calls() {
 fn returning_borrows_does_not_transfer_heap_ownership() {
     run(
         r#"
-        BoxInt& slot(BoxInt& owner) { return owner; }
-        const int& contents(const BoxInt& owner) { return &const *owner; }
+        Box<int>& slot(Box<int>& owner) { return owner; }
+        const int& contents(const Box<int>& owner) { return owner.get(); }
         int main() {
-            BoxInt owner = box_int(1);
-            slot(&owner) = box_int(2);
+            Box<int> owner = Box<int>::create(1);
+            slot(&owner) = Box<int>::create(2);
             print(contents(&const owner));
             {
                 const int& value = contents(&const owner);
                 print(value);
             }
-            BoxInt transferred = move(owner);
-            print(*transferred);
+            Box<int> transferred = move(owner);
+            print(transferred.get());
             return 0;
         }
     "#,
@@ -189,8 +190,8 @@ fn returned_references_cannot_outlive_or_conflict_with_their_sources() {
         "int n = 1; int& r = identity(&n); print(n);",
         "int n = 1; const int& r = view(&const n); n = 2;",
         "int n = 1; int& r = identity(&n); int& next = identity(&n);",
-        "BoxInt owner = box_int(1); const int& r = view(&const *owner); BoxInt next = move(owner);",
-        "BoxInt owner = box_int(1); const int& r = view(&const *owner); owner = box_int(2);",
+        "Box<int> owner = Box<int>::create(1); const int& r = view(owner.get()); Box<int> next = move(owner);",
+        "Box<int> owner = Box<int>::create(1); const int& r = view(owner.get()); owner = Box<int>::create(2);",
         "int n = 1; int& root = &n; int& child = identity(root); print(root);",
         "int n = 1; int& root = &n; int& child = &identity(root); print(root);",
         "int n = 1; int& r = identity(&n); r = identity(&n);",
@@ -205,7 +206,7 @@ fn rejects_dangling_and_ambiguous_return_contracts() {
     for source in [
         "const int& bad() { int n = 1; return &const n; }",
         "const int& bad(const int& input) { int n = 1; return &const n; }",
-        "const int& bad(const int& input, BoxInt owner) { return &const *owner; }",
+        "const int& bad(const int& input, Box<int> owner) { return owner.get(); }",
         "const int& bad(const int& a, const int& b) { return a; }",
         "int& bad(const int& input) { return &input; }",
         "struct Item { int n; const int& bad(Self this) { return &const this.n; } };",

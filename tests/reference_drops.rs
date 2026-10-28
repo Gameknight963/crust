@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, stderr: &str) {
     let output = common::tracked_run(source);
@@ -21,11 +22,11 @@ fn run(source: &str, stdout: &str, stderr: &str) {
 fn reference_destructors_run_once_after_moves_and_before_source_cleanup() {
     run(
         r#"
-struct Watch { const BoxInt& source; ~Watch() { print(*this.source); } };
-Watch create(const BoxInt& source) { return (Watch){.source=source}; }
+struct Watch { const Box<int>& source; ~Watch() { print(this.source.get()); } };
+Watch create(const Box<int>& source) { return (Watch){.source=source}; }
 Watch forward(Watch input) { return move(input); }
 int main() {
-    BoxInt first=box_int(1); BoxInt second=box_int(2);
+    Box<int> first=Box<int>::create(1); Box<int> second=Box<int>::create(2);
     Watch watch=forward(create(&first));
     watch=(Watch){.source=&second};
     return 0;
@@ -58,7 +59,7 @@ int main() {
 
 #[test]
 fn mutating_reference_destructors_cannot_invalidate_escaping_borrows() {
-    let prefix = "struct View { const int& value; }; struct Reset { BoxInt& owner; ~Reset() { this.owner=box_int(99); } };";
+    let prefix = "struct View { const int& value; }; struct Reset { Box<int>& owner; ~Reset() { this.owner=Box<int>::create(99); } };";
     for function in [
         "const int& bad(Reset reset) { return &*reset.owner; }",
         "View bad(Reset reset) { View result={.value=&*reset.owner}; return result; }",
@@ -82,11 +83,11 @@ int main() {
 #[test]
 fn later_owners_cannot_be_stored_in_earlier_holders() {
     let source = r#"
-struct Watch { const BoxInt& source; ~Watch() { print(*this.source); } };
+struct Watch { const Box<int>& source; ~Watch() { print(this.source.get()); } };
 int main() {
-    BoxInt initial=box_int(1);
+    Box<int> initial=Box<int>::create(1);
     Watch watch={.source=&initial};
-    BoxInt later=box_int(2);
+    Box<int> later=Box<int>::create(2);
     watch=(Watch){.source=&later};
     return 0;
 }
@@ -174,14 +175,14 @@ fn return_value_reads_finish_before_dropping_the_source_owner() {
     run(
         r#"
 struct Resource {
-    BoxInt value;
-    const int& read() const { return &*this.value; }
+    Box<int> value;
+    const int& read() const { return this.value.get(); }
     int finish(Self this) { return this.read(); }
 };
 int consume(Resource value) { return value.read(); }
 int main() {
-    print((Resource){.value=box_int(7)}.finish());
-    print(consume((Resource){.value=box_int(8)}));
+    print((Resource){.value=Box<int>::create(7)}.finish());
+    print(consume((Resource){.value=Box<int>::create(8)}));
     return 0;
 }
 "#,

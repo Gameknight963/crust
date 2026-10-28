@@ -1,3 +1,6 @@
+mod common;
+use common::compiler as crust;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -32,6 +35,13 @@ impl Fixture {
     fn write(&self, path: &str, contents: &str) {
         let path = self.directory.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let contents = if path.extension().is_some_and(|extension| extension == "cr")
+            && !contents.contains("/box.cr\"")
+        {
+            common::compiler::fixture(contents)
+        } else {
+            contents.to_owned()
+        };
         fs::write(path, contents).unwrap();
     }
 
@@ -937,7 +947,7 @@ fn shared_library_targets_link_through_static_dependencies_and_report_runtime_pa
         "bridge.cr",
         "extern int shared_add(int); extern int bridge() { return shared_add(1); }",
     );
-    fixture.write("widget.cr", "extern int base_value(); int helper(int value) { return value; } extern int add(int input) = \"shared_add\" { BoxInt value = box_int(input); return base_value() + helper(*value); }");
+    fixture.write("widget.cr", "extern int base_value(); int helper(int value) { return value; } extern int add(int input) = \"shared_add\" { Box<int> value = Box<int>::create(input); return base_value() + helper(value.get()); }");
     fixture.write("base.cr", "extern int base_value() { return 40; }");
     let output = Command::new(env!("CARGO_BIN_EXE_crust"))
         .args(["check", "--target", "app"])

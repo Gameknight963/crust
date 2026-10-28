@@ -1,14 +1,15 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn methods_factories_and_destructors_can_access_private_fields() {
     let source = r#"
         struct Item {
-            private BoxInt owner;
+            private Box<int> owner;
             int id;
-            static Self create(int id) { return (Self){ .owner = box_int(id), .id = id }; }
-            int read() const { return *this.owner; }
-            int sum(const Self& other) const { return *this.owner + *other.owner; }
+            static Self create(int id) { return (Self){ .owner = Box<int>::create(id), .id = id }; }
+            int read() const { return this.owner.get(); }
+            int sum(const Self& other) const { return this.owner.get() + other.owner.get(); }
             ~Item() { print(this.read()); }
         };
         int main() {

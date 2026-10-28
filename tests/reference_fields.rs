@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
@@ -184,11 +185,11 @@ int main() {{ return 0; }}
 fn reference_fields_coexist_with_owned_fields_and_independent_local_projections() {
     let output = common::tracked_run(
         r#"
-struct Mixed { BoxInt owner; const int& value; };
+struct Mixed { Box<int> owner; const int& value; };
 struct Pair { int& first; int& second; };
 int main() {
     int x=1; int y=2;
-    { Mixed first={.owner=box_int(7),.value=&x};
+    { Mixed first={.owner=Box<int>::create(7),.value=&x};
       const int& shared=&x; Mixed second=move(first); print(second.value); print(shared); }
     { Pair pair={.first=&x,.second=&y};
       int& first=pair.first; pair.second=42; first=3; print(first); print(pair.second); }

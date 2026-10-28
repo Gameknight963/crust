@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, native: &str, expected: &str) {
     let generated = format!("{}\n{native}", crust::compile(source).unwrap());
@@ -157,10 +158,10 @@ fn volatile_qualifiers_preserve_alias_loans_and_prevent_implicit_qualification_l
         "extern volatile int value; extern volatile int alias = \"value\"; int main() { unsafe { const volatile int& view = &const value; alias += 1; print(view); } return 0; }",
         "extern const volatile int value; int main() { unsafe { value = 1; } return 0; }",
         "int main() { volatile int value = 1; return 0; }",
-        "int main() { unsafe { volatile BoxInt* slot = 0; init(slot, box_int(1)); } return 0; }",
-        "int main() { unsafe { volatile BoxInt* slot = 0; destroy(slot); } return 0; }",
-        "int main() { unsafe { volatile BoxInt* slot = 0; BoxInt value = move(*slot); } return 0; }",
-        "int main() { unsafe { volatile BoxInt* slot = 0; *slot = box_int(1); } return 0; }",
+        "int main() { unsafe { volatile Box<int>* slot = 0; init(slot, Box<int>::create(1)); } return 0; }",
+        "int main() { unsafe { volatile Box<int>* slot = 0; destroy(slot); } return 0; }",
+        "int main() { unsafe { volatile Box<int>* slot = 0; Box<int> value = move(*slot); } return 0; }",
+        "int main() { unsafe { volatile Box<int>* slot = 0; *slot = Box<int>::create(1); } return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "{source}");
     }

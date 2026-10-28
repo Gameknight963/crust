@@ -94,10 +94,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         .insert(String::from("print"), Type::Void);
     emitter
         .return_types
-        .insert(String::from("box_int"), Type::BoxInt);
-    emitter
-        .return_types
-        .insert(String::from("move"), Type::BoxInt);
+        .insert(String::from("move"), Type::Void);
 
     emitter.line(&format!("_Static_assert(sizeof(void *) * CHAR_BIT == {}, \"C compiler target must match the Crust host\");", usize::BITS));
     emitter.line(&format!(
@@ -282,7 +279,7 @@ fn function_name(name: &str) -> String {
     if name == "main" {
         return String::from("main");
     }
-    if name == "print" || name == "box_int" {
+    if name == "print" {
         return format!("crust_rt_{name}");
     }
     return format!("crust_fn_{name}");
@@ -295,7 +292,6 @@ pub(crate) fn c_type(ty: Type) -> String {
         Type::Float(kind) => kind.c_name().to_owned(),
         Type::Bool => String::from("bool"),
         Type::Void => String::from("void"),
-        Type::BoxInt => String::from("int32_t *"),
         Type::Struct(id) => format!("crust_type_{id}"),
         Type::Array(id) => format!("struct crust_array_{id}"),
         Type::Enum(id) => format!("crust_enum_{id}"),
@@ -606,7 +602,6 @@ impl Emitter<'_> {
 
     fn drop_value(&mut self, ty: Type, place: &str) {
         match ty {
-            Type::BoxInt => self.line(&format!("crust_rt_drop(&({place}));")),
             Type::Struct(id) if self.types.owns(ty) => {
                 self.line(&format!("crust_drop_struct_{id}(&({place}));"))
             }
@@ -1431,15 +1426,10 @@ impl Emitter<'_> {
                     if !self.types.owns(local.ty) {
                         return Some(temporary);
                     }
-                    // NULL is an internal drop flag, not a usable language value.
-                    if local.ty == Type::BoxInt {
-                        self.line(&format!("{} = NULL;", local.name));
-                    } else {
-                        self.line(&format!(
-                            "{} = 0;",
-                            local.live.expect("owning struct has a drop flag")
-                        ));
-                    }
+                    self.line(&format!(
+                        "{} = 0;",
+                        local.live.expect("owning value has a drop flag")
+                    ));
                     return Some(temporary);
                 }
                 let mut values = Vec::new();
@@ -1466,9 +1456,6 @@ impl Emitter<'_> {
                             values[1]
                         ),
                     ));
-                }
-                if name == "box_int" {
-                    values.push(self.runtime_location(expression.span));
                 }
                 if name == "print"
                     && let Type::Float(kind) = self.expression_type(&arguments[0])
@@ -1836,7 +1823,6 @@ impl Emitter<'_> {
                 operand,
             } => {
                 return match self.place_type(operand) {
-                    Type::BoxInt => Type::Integer(IntType::I32),
                     Type::Pointer(id) => self.types.pointers[id].pointee,
                     _ => unreachable!("checker requires a pointer-like value"),
                 };
@@ -1878,7 +1864,6 @@ impl Emitter<'_> {
             } => {
                 return match self.place_type(operand) {
                     Type::Pointer(id) => self.types.pointers[id].mutable,
-                    Type::BoxInt => self.place_mutable(operand),
                     _ => unreachable!(),
                 };
             }
@@ -2033,20 +2018,6 @@ static inline int32_t crust_rt_rem(int32_t a, int32_t b, const char *crust_file,
 static inline void crust_rt_print(int32_t value)
 {
     printf("%" PRId32 "\n", value);
-}
-
-static inline int32_t *crust_rt_box_int(int32_t value, const char *crust_file, size_t line, size_t column)
-{
-    int32_t *owner = (int32_t *)malloc(sizeof(int32_t));
-    if (owner == NULL) { crust_rt_fail("out of memory", crust_file, line, column); }
-    *owner = value;
-    return owner;
-}
-
-static inline void crust_rt_drop(int32_t **owner)
-{
-    free(*owner);
-    *owner = NULL;
 }
 
 "#;

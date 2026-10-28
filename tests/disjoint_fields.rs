@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -57,17 +58,17 @@ fn owner_fields_can_be_replaced_while_a_sibling_is_borrowed() {
     run(
         r#"
         struct Pair {
-            BoxInt left;
-            BoxInt right;
-            ~Pair() { print(*this.left + *this.right); }
+            Box<int> left;
+            Box<int> right;
+            ~Pair() { print(this.left.get() + this.right.get()); }
         };
         int main() {
-            Pair pair = { .left = box_int(1), .right = box_int(2) };
+            Pair pair = { .left = Box<int>::create(1), .right = Box<int>::create(2) };
             {
-                int& left = &*pair.left;
-                pair.right = box_int(3);
+                int& left = pair.left.get_mut();
+                pair.right = Box<int>::create(3);
                 left += 1;
-                print(*pair.right);
+                print(pair.right.get());
             }
             return 0;
         }
@@ -134,17 +135,17 @@ fn overlapping_fields_parents_and_array_elements_still_conflict() {
         "Tree t = { .a = { .left = 1, .right = 2 }, .b = { .left = 3, .right = 4 } }; int& r = &t.a.left; Pair& p = &t.a;",
         "Tree t = { .a = { .left = 1, .right = 2 }, .b = { .left = 3, .right = 4 } }; Pair& p = &t.a; int& r = &t.a.right;",
         "int a[2] = {1, 2}; take(&a[0], &a[1]);",
-        "BoxInt a[2] = {box_int(1), box_int(2)}; int& r = &*a[0]; a[1] = box_int(3);",
+        "Box<int> a[2] = {Box<int>::create(1), Box<int>::create(2)}; int& r = a[0].get_mut(); a[1] = Box<int>::create(3);",
     ] {
         let source = format!("{prelude} int main() {{ {body} return 0; }}");
         assert!(crust::check(&source).is_err(), "should reject {source}");
     }
     for body in [
-        "BoxInt& r = &p.left; Pair moved = move(p);",
-        "int& r = &*p.left; p.left = box_int(3);",
+        "Box<int>& r = &p.left; Pair moved = move(p);",
+        "int& r = p.left.get_mut(); p.left = Box<int>::create(3);",
     ] {
         let source = format!(
-            "struct Pair {{ BoxInt left; BoxInt right; }}; int main() {{ Pair p = {{ .left = box_int(1), .right = box_int(2) }}; {body} return 0; }}"
+            "struct Pair {{ Box<int> left; Box<int> right; }}; int main() {{ Pair p = {{ .left = Box<int>::create(1), .right = Box<int>::create(2) }}; {body} return 0; }}"
         );
         assert!(crust::check(&source).is_err(), "should reject {source}");
     }

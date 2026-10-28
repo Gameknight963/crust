@@ -66,7 +66,10 @@ fn find_kind<'a>(node: &'a Value, kind: &str) -> Option<&'a Value> {
 fn native_locations_and_debug_records_follow_imported_source_and_closing_braces() {
     let directory = directory("imports");
     let module = directory.join("math ü.cr");
-    std::fs::write(&module, "// mixed newlines\r\nint add(int value) {\r    int answer = value + 1;\r\n    return answer;\r}\r\nvoid release() {\r\n    BoxInt owner = box_int(7);\r\n}\r\n").unwrap();
+    std::fs::write(&module, "// mixed newlines\r\nint add(int value) {\r    int answer = value + 1;\r\n    return answer;\r}\r\nvoid release() {\r\n    Box<int> owner = Box<int>::create(7);\r\n}\r\n").unwrap();
+    let mut text = std::fs::read_to_string(&module).unwrap();
+    text.push_str("\nimport \"../../../../tests/common/box.cr\";\n");
+    std::fs::write(&module, text).unwrap();
     let entry = directory.join("main.cr");
     std::fs::write(
         &entry,
@@ -126,7 +129,7 @@ fn native_locations_and_debug_records_follow_imported_source_and_closing_braces(
         .collect();
     let drop = release
         .iter()
-        .find(|line| line.contains("call void @crust_rt_drop("))
+        .find(|line| line.contains("call void @crust_drop_struct_"))
         .unwrap();
     let location = drop
         .split("!dbg !")

@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -154,15 +155,15 @@ fn unsafe_blocks_scope_owners_and_preserve_cleanup_on_return_and_loop_control() 
         r#"
         int get() {
             unsafe {
-                BoxInt owner = box_int(7);
-                int* pointer = &*owner;
+                Box<int> owner = Box<int>::create(7);
+                int* pointer = &owner.get_mut();
                 return *pointer;
             }
         }
         int main() {
             for (int i = 0; i < 2; i += 1) {
                 unsafe {
-                    BoxInt owner = box_int(i);
+                    Box<int> owner = Box<int>::create(i);
                     if (i == 0) { continue; }
                     break;
                 }
@@ -194,14 +195,14 @@ fn raw_pointer_operations_and_c_calls_require_explicit_unsafe_contexts() {
 #[test]
 fn pointer_type_checks_reject_invalid_casts_mutability_and_c_signatures() {
     for source in [
-        "int main() { unsafe { int* p = (int*)box_int(1); } return 0; }",
+        "int main() { unsafe { int* p = (int*)Box<int>::create(1); } return 0; }",
         "int main() { unsafe { int* p = (int*)42; } return 0; }",
         "int main() { unsafe { int* p = 0; int value = (int)p; } return 0; }",
         "int main() { unsafe { void* p = 0; print(*p); } return 0; }",
         "int main() { unsafe { const int* p = 0; *p = 1; } return 0; }",
         "int main() { unsafe { const int* p = 0; int* q = p; } return 0; }",
         "int main() { unsafe { const int* p = 0; void* q = p; } return 0; }",
-        "extern BoxInt make(); int main() { return 0; }",
+        "extern Box<int> make(); int main() { return 0; }",
         "extern void take(int&); int main() { return 0; }",
         "extern void take(int values[2]); int main() { return 0; }",
         "extern int main();",

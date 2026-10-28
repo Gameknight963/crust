@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn unsafe_functions_methods_and_generic_instances_require_an_unsafe_caller() {
@@ -43,7 +44,7 @@ fn unsafe_functions_methods_and_generic_instances_require_an_unsafe_caller() {
 fn unsafe_bodies_retain_ownership_checks_and_main_requires_a_safe_signature() {
     for source in [
         "unsafe int main() { return 0; }",
-        "unsafe void consume() { BoxInt a = box_int(1); BoxInt b = move(a); print(*a); } int main() { return 0; }",
+        "unsafe void consume() { Box<int> a = Box<int>::create(1); Box<int> b = move(a); print(a.get()); } int main() { return 0; }",
         "unsafe void mutate(const int& value) { value = 1; } int main() { return 0; }",
         "struct S { unsafe int value; }; int main() { return 0; }",
     ] {

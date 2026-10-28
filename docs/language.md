@@ -1312,10 +1312,10 @@ Variadic and fixed function pointer signatures are distinct types. See
 
 ## Lexical rules
 
-- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `do`, `for`, `break`, `continue`, `const`, `volatile`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `BoxInt`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
+- Keywords: `int`, `char`, `signed`, `unsigned`, `short`, `long`, `bool`, `true`, `false`, `void`, `return`, `if`, `else`, `while`, `do`, `for`, `break`, `continue`, `const`, `volatile`, `struct`, `union`, `enum`, `interface`, `import`, `init`, `destroy`, `typedef`, `static`, `extern`, `__declspec`, `__cdecl`, `__stdcall`, `__fastcall`, `__vectorcall`, `unsafe`, `private`, `sizeof`, `alignof`, `_Alignof`
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
-- `print`, `box_int`, and `move` tokenize as identifiers
+- `print`, `move`, and `slice` tokenize as identifiers
 - Integer literals are unsuffixed, with a separate minus token
 - Literals support decimal, `0x` hexadecimal, `0b` binary, and leading-zero octal notation
 - Character literals such as `'A'` and `'\n'` produce integer constants

@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
@@ -140,14 +141,14 @@ fn rejects_incompatible_signatures_non_c_values_and_invalid_function_objects() {
     for source in [
         "typedef int (*Callback)(int); int64_t f(int n) { return n; } int main() { Callback a = f; return 0; }",
         "typedef int (*Callback)(int); int f(int n) { return n; } int main() { Callback a = f; unsafe { a(); } return 0; }",
-        "typedef int (*Callback)(int); int f(int n) { return n; } int main() { Callback a = f; unsafe { a(box_int(1)); } return 0; }",
-        "typedef BoxInt (*Callback)(int); int main() { return 0; }",
+        "typedef int (*Callback)(int); int f(int n) { return n; } int main() { Callback a = f; unsafe { a(Box<int>::create(1)); } return 0; }",
+        "typedef Box<int> (*Callback)(int); int main() { return 0; }",
         "typedef int (*Callback)(const int&); int main() { return 0; }",
         "typedef int (*Callback)(void value); int main() { return 0; }",
         "typedef int Function(int); int main() { Function value = 0; return 0; }",
         "typedef int Function(int); int main() { print(sizeof(Function)); return 0; }",
         "typedef int Function(int); int main() { const Function* value = 0; return 0; }",
-        "int main() { (void)&box_int; return 0; }",
+        "int main() { (void)&Box<int>::create; return 0; }",
         "typedef int Function(int); int main() { Function* p = 0; unsafe { p += 1; } return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");

@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn source_names_preserve_shadowed_owner_cleanup_and_c_namespace_collisions() {
@@ -6,15 +7,15 @@ fn source_names_preserve_shadowed_owner_cleanup_and_c_namespace_collisions() {
         r#"
 struct abs { int magnitude; };
 int inspect(int value) {
-    BoxInt owner = box_int(value);
+    Box<int> owner = Box<int>::create(value);
     {
-        BoxInt owner = box_int(value + 1);
+        Box<int> owner = Box<int>::create(value + 1);
         int printf = 3;
         int int32_t = 4;
         int auto = 5;
         abs magnitude = { .magnitude = auto };
         print(printf + int32_t + magnitude.magnitude);
-        return *owner;
+        return owner.get();
     }
 }
 int main() { print(inspect(41)); return 0; }

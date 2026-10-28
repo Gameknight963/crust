@@ -1,3 +1,6 @@
+mod common;
+use common::compiler as crust;
+
 use lsp_server::{Message, Notification, Request, Response};
 use serde_json::{Value, json};
 use std::io::BufReader;
@@ -141,6 +144,7 @@ impl Server {
     }
 
     fn open(&mut self, uri: &str, version: i32, text: &str) -> Value {
+        let text = common::compiler::fixture(text);
         self.notify(
             "textDocument/didOpen",
             json!({"textDocument": {
@@ -151,6 +155,7 @@ impl Server {
     }
 
     fn change(&mut self, uri: &str, version: i32, text: &str) {
+        let text = common::compiler::fixture(text);
         self.notify("textDocument/didChange", json!({
             "textDocument": { "uri": uri, "version": version }, "contentChanges": [{"text": text}]
         }));
@@ -271,7 +276,7 @@ fn reports_borrow_errors_using_the_same_frontend_as_the_compiler() {
     let response = server.open(
         "untitled:borrow.cr",
         1,
-        "int main() { BoxInt a = box_int(1); BoxInt b = a; return 0; }",
+        "int main() { Box<int> a = Box<int>::create(1); Box<int> b = a; return 0; }",
     );
     assert!(
         response["diagnostics"][0]["message"]

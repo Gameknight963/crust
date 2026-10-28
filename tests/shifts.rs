@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
@@ -135,7 +136,7 @@ fn shift_operands_require_integers_and_mutable_compound_destinations() {
     for source in [
         "int main() { int* pointer = 0; unsafe { print(pointer << 1); } return 0; }",
         "int main() { int value = 1; const int& shared = &const value; shared <<= 1; return 0; }",
-        "int main() { BoxInt value = box_int(1); print(value >> 1); return 0; }",
+        "int main() { Box<int> value = Box<int>::create(1); print(value >> 1); return 0; }",
         "int main() { int* pointer = 0; unsafe { pointer >>= 1; } return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "{source}");

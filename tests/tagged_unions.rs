@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 #[test]
 fn tagged_payloads_initialize_switch_and_destroy_only_the_active_owner() {
@@ -14,12 +15,12 @@ fn tagged_payloads_initialize_switch_and_destroy_only_the_active_owner() {
             Value<int> a = { .item = 42 };
             Value<int> b = { .error = 7 };
             print(read(&a)); print(read(&b));
-            Value<BoxInt> owned = { .item = box_int(10) };
+            Value<Box<int>> owned = { .item = Box<int>::create(10) };
             switch (owned) {
-                case item: print(*owned.item); break;
+                case item: print(owned.item.get()); break;
                 case error: print(owned.error); break;
             }
-            Value<BoxInt> error = { .error = 99 };
+            Value<Box<int>> error = { .error = 99 };
             return 0;
         }
     "#;
@@ -51,7 +52,7 @@ fn inactive_payload_access_terminates_before_reading_storage() {
 #[test]
 fn extraction_and_switch_cases_reject_invalid_programs() {
     for source in [
-        "tagged union V { BoxInt ok; int error; }; int main() { V v = {.ok=box_int(1)}; BoxInt b = move(v.ok); print(v.error); return 0; }",
+        "tagged union V { Box<int> ok; int error; }; int main() { V v = {.ok=Box<int>::create(1)}; Box<int> b = move(v.ok); print(v.error); return 0; }",
         "tagged union V { int ok; int error; }; int main() { V v = {.ok=1,.error=2}; return 0; }",
         "tagged union V { int ok; int error; }; int main() { V v = {.ok=1}; switch(v) { case other: break; } return 0; }",
         "tagged union V { int ok; int error; }; int main() { V v = {.ok=1}; switch(v) { case ok: break; case ok: break; } return 0; }",
@@ -69,10 +70,10 @@ fn switch_control_flow_preserves_loop_steps_and_local_cleanup() {
         int main() {
             V v = {.ok=1};
             for (int i = 0; i < 3; i++) {
-                BoxInt outer = box_int(i);
+                Box<int> outer = Box<int>::create(i);
                 switch(v) {
                     case ok:
-                        BoxInt inner = box_int(10 + i);
+                        Box<int> inner = Box<int>::create(10 + i);
                         if (i == 1) continue;
                         print(i);
                         break;

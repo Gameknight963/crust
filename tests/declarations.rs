@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -68,12 +69,12 @@ fn forward_and_transitive_typedefs_resolve_to_the_underlying_types() {
 fn aliases_preserve_ownership_destructors_and_whole_value_moves() {
     run(
         r#"
-        typedef BoxInt Owned;
+        typedef Box<int> Owned;
         typedef Resource Handle;
-        struct Resource { Owned value; ~Resource() { print(*this.value); } };
+        struct Resource { Owned value; ~Resource() { print(this.value.get()); } };
         Handle relay(Handle h) { return move(h); }
         int main() {
-            Handle first = { .value = box_int(7) };
+            Handle first = { .value = Box<int>::create(7) };
             Handle second = relay(move(first));
             second = move(second);
             return 0;
@@ -84,7 +85,7 @@ fn aliases_preserve_ownership_destructors_and_whole_value_moves() {
     );
     assert!(
         crust::check(
-            "typedef BoxInt Owned; int main() { Owned a = box_int(1); Owned b = a; return 0; }"
+            "typedef Box<int> Owned; int main() { Owned a = Box<int>::create(1); Owned b = a; return 0; }"
         )
         .is_err()
     );
@@ -120,11 +121,11 @@ fn static_factories_calls_through_aliases_and_self_and_recursion_work() {
         r#"
         typedef Resource Handle;
         struct Resource {
-            BoxInt value;
-            static Self create(int n) { return (Self){ .value = box_int(Self::count(n)) }; }
+            Box<int> value;
+            static Self create(int n) { return (Self){ .value = Box<int>::create(Self::count(n)) }; }
             static int count(int n) { if (n == 0) { return 0; } return 1 + Self::count(n - 1); }
-            int get() const { return *this.value; }
-            int finish(Self this) { return *this.value; }
+            int get() const { return this.value.get(); }
+            int finish(Self this) { return this.value.get(); }
             ~Resource() { print(100); }
         };
         int main() {

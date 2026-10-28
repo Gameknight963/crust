@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, stdout: &str, drops: &str) {
     let output = common::tracked_run(source);
@@ -86,21 +87,21 @@ fn mutable_locals_forward_reborrow_and_resume_after_inner_bindings() {
 fn owner_slot_borrows_replace_values_and_preserve_cleanup() {
     run(
         r#"
-        void replace(BoxInt& owner) { owner = box_int(3); }
+        void replace(Box<int>& owner) { owner = Box<int>::create(3); }
         int main() {
-            BoxInt owner = box_int(1);
+            Box<int> owner = Box<int>::create(1);
             {
-                BoxInt& slot = &owner;
-                slot = box_int(2);
+                Box<int>& slot = &owner;
+                slot = Box<int>::create(2);
                 replace(slot);
                 {
-                    const int& value = &const *slot;
+                    const int& value = slot.get();
                     print(value);
                 }
-                *slot += 1;
+                slot.get_mut() += 1;
             }
-            BoxInt transferred = move(owner);
-            print(*transferred);
+            Box<int> transferred = move(owner);
+            print(transferred.get());
             return 0;
         }
     "#,
@@ -183,9 +184,9 @@ fn local_loans_preserve_exclusivity_and_block_owner_invalidation() {
         "int n = 1; int& a = &n; const int& b = &const a; a = 2;",
         "int n = 1; int& a = &n; pair(a, a);",
         "int n = 1; int& a = &n; mixed(a, a);",
-        "BoxInt a = box_int(1); const int& view = &const *a; BoxInt b = move(a);",
-        "BoxInt a = box_int(1); const int& view = &const *a; a = box_int(2);",
-        "BoxInt a = box_int(1); BoxInt& slot = &a; const int& view = &const *slot; slot = box_int(2);",
+        "Box<int> a = Box<int>::create(1); const int& view = a.get(); Box<int> b = move(a);",
+        "Box<int> a = Box<int>::create(1); const int& view = a.get(); a = Box<int>::create(2);",
+        "Box<int> a = Box<int>::create(1); Box<int>& slot = &a; const int& view = slot.get(); slot = Box<int>::create(2);",
         "int n = 1; const int& a = &const n; int& b = &a;",
     ] {
         let source = format!("{prelude} int main() {{ {body} return 0; }}");

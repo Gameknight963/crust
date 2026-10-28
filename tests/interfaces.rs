@@ -1,4 +1,5 @@
 mod common;
+use common::compiler as crust;
 
 fn run(source: &str, expected: &str, drops: &str) {
     let output = common::tracked_run_sizes(source);
@@ -56,20 +57,20 @@ fn interfaces_preserve_value_receivers_borrowed_returns_and_owner_cleanup() {
         r#"
         interface Resource {
             const int& get() const;
-            BoxInt take(Self this);
+            Box<int> take(Self this);
             static Self create(int value);
         };
         struct Owner {
-            BoxInt value;
-            const int& get() const { return &const *this.value; }
-            BoxInt take(Self this) { BoxInt value = box_int(*this.value); return move(value); }
-            static Self create(int value) { return (Self){ .value = box_int(value) }; }
+            Box<int> value;
+            const int& get() const { return this.value.get(); }
+            Box<int> take(Self this) { Box<int> value = Box<int>::create(this.value.get()); return move(value); }
+            static Self create(int value) { return (Self){ .value = Box<int>::create(value) }; }
         };
-        BoxInt copy_out<T: Resource>(int value) {
+        Box<int> copy_out<T: Resource>(int value) {
             T owner = T::create(value);
             print(owner.get()); return move(owner).take();
         }
-        int main() { BoxInt value = copy_out<Owner>(42); print(*value); return 0; }
+        int main() { Box<int> value = copy_out<Owner>(42); print(value.get()); return 0; }
     "#,
         "42\n42\n",
         "drop:bytes:4\ndrop:bytes:4\n",

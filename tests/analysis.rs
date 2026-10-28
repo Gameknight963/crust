@@ -1,3 +1,6 @@
+mod common;
+use common::compiler as crust;
+
 use crust::analysis::{Analysis, SymbolKind};
 
 #[test]
@@ -477,7 +480,7 @@ fn instantiated_generics_share_source_declarations_and_keep_call_site_types() {
 
 #[test]
 fn analysis_uses_the_same_frontend_errors_as_compilation() {
-    let source = "int main() { BoxInt owner = box_int(1); BoxInt moved = move(owner); print(*owner); return 0; }";
+    let source = "int main() { Box<int> owner = Box<int>::create(1); Box<int> moved = move(owner); print(owner.get()); return 0; }";
     assert_eq!(
         crust::analyze(source).unwrap_err(),
         crust::check(source).unwrap_err()
