@@ -150,10 +150,10 @@ impl Types {
                         ),
                     ));
                 }
-                if field.ty == Type::Void || field.ty.is_borrow() {
+                if field.ty == Type::Void {
                     return Err(Diagnostic::new(
                         field.span,
-                        "struct fields must be values; void and borrowed fields are not supported",
+                        "struct fields require an object type",
                     ));
                 }
             }
@@ -183,6 +183,32 @@ impl Types {
             structs,
             order: Vec::new(),
         };
+        for (id, info) in types.structs.iter().enumerate() {
+            if types.contains_borrows(Type::Struct(id)) && (info.has_destructor || info.is_union) {
+                return Err(Diagnostic::new(
+                    program.struct_names[id].1,
+                    "reference fields in structs with destructors and untagged unions are not supported yet",
+                ));
+            }
+        }
+        for pointer in &types.pointers {
+            if types.carries_borrows(pointer.pointee) {
+                return Err(Diagnostic::new(
+                    program
+                        .struct_names
+                        .first()
+                        .map(|entry| entry.1)
+                        .or_else(|| program.functions.first().map(|function| function.span))
+                        .unwrap_or(Span {
+                            start: 0,
+                            end: 0,
+                            line: 1,
+                            column: 1,
+                        }),
+                    "raw pointers to types containing references are not supported yet",
+                ));
+            }
+        }
         let mut states = vec![0; types.structs.len()];
         let mut array_states = vec![0; types.arrays.len()];
         for id in 0..states.len() {
@@ -237,7 +263,11 @@ impl Types {
         if let Type::Array(id) = ty {
             array_states[id] = 1;
             let array = self.arrays[id];
-            let owns = self.visit(array.element, states, array_states, array.span)?;
+            let owns = if array.length == 0 {
+                false
+            } else {
+                self.visit(array.element, states, array_states, array.span)?
+            };
             self.array_owns[id] = array.length != 0 && owns;
             array_states[id] = 2;
             self.order.push(ty);
@@ -252,6 +282,13 @@ impl Types {
                     field.span,
                     "struct fields require a complete object type",
                 ));
+            }
+            if let Type::Borrow {
+                pointee: crate::ast::Pointee::Slice(slice),
+                ..
+            } = field.ty
+            {
+                self.visit(Type::Array(slice), states, array_states, field.span)?;
             }
             let field_owns = self.visit(field.ty, states, array_states, field.span)?;
             if self.structs[id].is_union && field_owns {

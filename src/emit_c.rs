@@ -582,6 +582,7 @@ impl Emitter<'_> {
                     "static inline void crust_drop_struct_{id}(crust_type_{id} *value) {{"
                 ));
                 self.indent += 1;
+                self.line("(void)value;");
                 if info.has_destructor {
                     self.line(&format!("{}(value);", function_name(&destructor_name(*id))));
                 }
@@ -1377,6 +1378,20 @@ impl Emitter<'_> {
                     ),
                 ));
             }
+            ExpressionKind::Field { base, name, .. }
+                if self
+                    .types
+                    .field(self.place_type(base), name, expression.span)
+                    .expect("checked field")
+                    .is_borrow() =>
+            {
+                let ty = self
+                    .types
+                    .field(self.place_type(base), name, expression.span)
+                    .unwrap();
+                let place = self.field_storage(expression);
+                return Some(self.temporary(ty, &place));
+            }
             ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
                 let place = self.place(expression);
                 return Some(self.temporary(self.expression_type(expression), &place));
@@ -1663,6 +1678,30 @@ impl Emitter<'_> {
         return self.expression_types[&expression.span];
     }
 
+    fn field_storage(&mut self, expression: &Expression) -> String {
+        let ExpressionKind::Field { base, name, .. } = &expression.kind else {
+            unreachable!()
+        };
+        let place = self.place(base);
+        if let Type::Struct(id) = self.place_type(base)
+            && self.types.structs[id].tagged
+        {
+            let index = self.types.structs[id]
+                .fields
+                .iter()
+                .position(|field| field.name == *name)
+                .unwrap();
+            let address = self.temporary(
+                self.address_type(base, self.place_mutable(base)),
+                &format!("&({place})"),
+            );
+            let location = self.runtime_location(expression.span);
+            self.line(&format!("if (({address})->crust_tag != {}) {{ crust_rt_fail(\"inactive tagged-union payload\", {location}); }}", index));
+            return format!("({address})->crust_field_{name}");
+        }
+        return format!("({place}).crust_field_{name}");
+    }
+
     fn place(&mut self, expression: &Expression) -> String {
         match &expression.kind {
             ExpressionKind::Index { base, index } => {
@@ -1710,24 +1749,23 @@ impl Emitter<'_> {
                 return format!("({address})->crust_elements[{checked_index}]");
             }
             ExpressionKind::Field { base, name, .. } => {
-                let place = self.place(base);
-                if let Type::Struct(id) = self.place_type(base)
-                    && self.types.structs[id].tagged
-                {
-                    let index = self.types.structs[id]
-                        .fields
-                        .iter()
-                        .position(|field| field.name == *name)
-                        .unwrap();
-                    let address = self.temporary(
-                        self.address_type(base, self.place_mutable(base)),
-                        &format!("&({place})"),
-                    );
-                    let location = self.runtime_location(expression.span);
-                    self.line(&format!("if (({address})->crust_tag != {}) {{ crust_rt_fail(\"inactive tagged-union payload\", {location}); }}", index));
-                    return format!("({address})->crust_field_{name}");
-                }
-                return format!("({place}).crust_field_{name}");
+                let ty = self
+                    .types
+                    .field(self.place_type(base), name, expression.span)
+                    .expect("checked field");
+                let storage = self.field_storage(expression);
+                return if ty.is_borrow()
+                    && !matches!(
+                        ty,
+                        Type::Borrow {
+                            pointee: Pointee::Slice(_),
+                            ..
+                        }
+                    ) {
+                    format!("*({storage})")
+                } else {
+                    storage
+                };
             }
             ExpressionKind::Variable { name, .. } => {
                 let local = self.local(name);
@@ -1787,7 +1825,8 @@ impl Emitter<'_> {
                 return self
                     .types
                     .field(self.place_type(base), name, expression.span)
-                    .expect("checked field");
+                    .expect("checked field")
+                    .referent();
             }
             ExpressionKind::Variable { name, .. } => {
                 return self.local(name).ty.referent();
@@ -1822,7 +1861,15 @@ impl Emitter<'_> {
                 };
                 return self.types.pointers[id].mutable;
             }
-            ExpressionKind::Field { base, .. } | ExpressionKind::Index { base, .. } => {
+            ExpressionKind::Field { base, name, .. } => {
+                let ty = self
+                    .types
+                    .field(self.place_type(base), name, expression.span)
+                    .expect("checked field");
+                return self.place_mutable(base)
+                    && !matches!(ty, Type::Borrow { mutable: false, .. });
+            }
+            ExpressionKind::Index { base, .. } => {
                 return self.place_mutable(base);
             }
             ExpressionKind::Unary {

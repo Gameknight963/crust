@@ -65,7 +65,8 @@ branch of `?:`.
 
 ## Returned borrows
 
-One borrowed parameter supplies the inferred source of a borrowed return.
+One borrowed parameter or reference-containing value parameter supplies the
+inferred source of a borrowed return.
 With several possible sources, `borrows(a, b)` names the parameters whose
 regions the result may reference. Instance methods can name `this`.
 Every return path must originate from a declared source. Forwarding through
@@ -76,9 +77,18 @@ is live. A returned loan covers the input region passed by the caller, including
 when the callee selects one subfield. An exclusive result requires exclusive
 access to every declared source.
 
-Returning references to locals and owned value parameters is rejected.
-Stored reference fields and borrowed temporary owners require the additional
-lifetime rules tracked in the [roadmap](roadmap.md).
+References to local storage and value parameters' own fields cannot escape.
+References stored inside a value parameter can be returned through that
+parameter's borrow contract.
+
+Struct reference fields retain their loans through copies, moves, calls,
+returns, nested values, and tagged payloads. Mutable reference fields make the
+containing value move-only. Shared access to a holder freezes those fields.
+Local replacement retains every possible source until the holder's block ends.
+See [reference fields](language.md#reference-fields) for storage restrictions.
+
+Heap-backed reference storage, destructors on reference-containing types, and
+borrowed temporary owners remain in the [roadmap](roadmap.md).
 
 ## Cleanup
 

@@ -9,6 +9,7 @@ fn source_location_tables_compile_without_unused_variable_warnings() {
     for (index, source) in [
         "int main() { return 0; }",
         "int main() { int value = 41; return value + 1; }",
+        "struct View { int& value; }; int main() { int n=41; View view={.value=&n}; view.value++; return view.value; }",
     ]
     .into_iter()
     .enumerate()

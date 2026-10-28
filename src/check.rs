@@ -3,10 +3,17 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
+mod captures;
 mod storage;
 
-fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diagnostic> {
-    let Type::Borrow { mutable, .. } = function.return_type else {
+fn return_borrow_sources(
+    function: &Function,
+    types: &Types,
+) -> Result<Option<Vec<usize>>, Diagnostic> {
+    let aggregate =
+        !function.return_type.is_borrow() && types.carries_borrows(function.return_type);
+    let mutable = matches!(function.return_type, Type::Borrow { mutable: true, .. });
+    if !function.return_type.is_borrow() && !aggregate {
         if function.return_borrows.is_some() {
             return Err(Diagnostic::new(
                 function.span,
@@ -14,7 +21,7 @@ fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diag
             ));
         }
         return Ok(None);
-    };
+    }
     let sources = if let Some(names) = &function.return_borrows {
         if names.is_empty() {
             return Err(Diagnostic::new(
@@ -28,9 +35,9 @@ fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diag
             let index = function
                 .parameters
                 .iter()
-                .position(|parameter| parameter.name == *name && parameter.ty.is_borrow())
+                .position(|parameter| parameter.name == *name && types.carries_borrows(parameter.ty))
                 .ok_or_else(|| {
-                    Diagnostic::new(*span, "a borrow source must name a borrowed parameter")
+                    Diagnostic::new(*span, "a borrow source must name a borrowed parameter or a value containing references")
                 })?;
             if !seen.insert(index) {
                 return Err(Diagnostic::new(*span, "duplicate borrow source"));
@@ -43,10 +50,10 @@ fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diag
             .parameters
             .iter()
             .enumerate()
-            .filter(|(_, parameter)| parameter.ty.is_borrow())
+            .filter(|(_, parameter)| types.carries_borrows(parameter.ty))
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        if sources.len() != 1 {
+        if sources.len() != 1 && !(aggregate && sources.is_empty()) {
             return Err(Diagnostic::new(
                 function.span,
                 "borrowed return lifetime contracts require one input or an explicit borrows(...) clause",
@@ -59,7 +66,7 @@ fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diag
             !matches!(
                 function.parameters[*index].ty,
                 Type::Borrow { mutable: true, .. }
-            )
+            ) && !types.contains_mutable_borrows(function.parameters[*index].ty)
         })
     {
         return Err(Diagnostic::new(
@@ -449,7 +456,7 @@ fn analyze(
                 ));
             }
         }
-        let return_borrow = return_borrow_sources(function)?;
+        let return_borrow = return_borrow_sources(function, &types)?;
         let signature = Signature {
             calling_convention: function.calling_convention,
             link_name: function.link_name.clone(),
@@ -514,7 +521,7 @@ fn analyze(
 
     for constraint in &program.interface_checks {
         for requirement in &constraint.requirements {
-            let expected_sources = return_borrow_sources(requirement)?;
+            let expected_sources = return_borrow_sources(requirement, &types)?;
             let expected: Vec<_> = requirement
                 .parameters
                 .iter()
@@ -621,6 +628,16 @@ fn analyze(
             loans: Vec::new(),
             next_loan: 0,
             references: HashMap::new(),
+            capture_bindings: HashMap::new(),
+            capture_expressions: HashMap::new(),
+            capture_return_roots: signatures[&function.name]
+                .return_borrow
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .filter(|index| function.parameters[**index].ty.is_borrow())
+                .map(|index| (1, function.parameters[*index].name.clone()))
+                .collect(),
             types: &mut types,
             expression_types: &mut analysis.expression_types,
             method_calls: &mut analysis.method_calls,
@@ -664,6 +681,7 @@ fn analyze(
                     Some(parameter.span)
                 },
             )?;
+            checker.initialize_captures(parameter);
         }
 
         if let Some(sources) = &function.return_borrows {
@@ -727,6 +745,9 @@ struct FunctionChecker<'program> {
     loans: Vec<Loan>,
     next_loan: usize,
     references: HashMap<Span, usize>,
+    capture_bindings: HashMap<captures::Root, captures::Captures>,
+    capture_expressions: HashMap<Span, captures::Captures>,
+    capture_return_roots: HashSet<captures::Root>,
     types: &'program mut Types,
     expression_types: &'program mut HashMap<Span, Type>,
     method_calls: &'program mut HashMap<Span, Expression>,
@@ -754,6 +775,7 @@ impl FunctionChecker<'_> {
         let scope = self.scopes.len() - 1;
         self.loans.retain(|loan| loan.scope != Some(scope));
         self.scopes.pop();
+        self.capture_bindings.retain(|root, _| root.0 != scope);
         return Ok(returns);
     }
 
@@ -842,6 +864,15 @@ impl FunctionChecker<'_> {
                         .reference = Some(id);
                 }
                 self.set_state(name, State::Available);
+                let place = Place {
+                    ty: *ty,
+                    root: self.root(name),
+                    fields: Vec::new(),
+                    mutable: true,
+                    volatile: false,
+                    via: None,
+                };
+                self.bind_captures(&place, initializer)?;
             }
             StatementKind::Assign {
                 name,
@@ -872,12 +903,28 @@ impl FunctionChecker<'_> {
                             "cannot assign through a shared borrow",
                         ));
                     }
+                    if self.types.carries_borrows(place.ty) {
+                        return Err(Diagnostic::new(
+                            *name_span,
+                            "cannot replace a value containing references through a borrowed destination",
+                        ));
+                    }
                     self.require_type(value, place.ty)?;
                     self.access(&place.root, &place.fields, true, place.via, *name_span)?;
                     return Ok(false);
                 }
                 self.require_type(value, target.ty)?;
-                self.access(&self.root(name), &[], true, None, statement.span)?;
+                let place = Place {
+                    ty: target.ty,
+                    root: self.root(name),
+                    fields: Vec::new(),
+                    mutable: true,
+                    volatile: false,
+                    via: None,
+                };
+                self.access(&place.root, &[], true, None, statement.span)?;
+                self.check_capture_move(&place, statement.span)?;
+                self.bind_captures(&place, value)?;
                 self.set_state(name, State::Available);
             }
             StatementKind::CompoundAssign {
@@ -963,6 +1010,18 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
+                if self.types.carries_borrows(place.ty) {
+                    if place.via.is_some()
+                        || self.lookup(&place.root.1, target.span)?.ty.is_borrow()
+                    {
+                        return Err(Diagnostic::new(
+                            target.span,
+                            "cannot replace a value containing references through a borrowed destination",
+                        ));
+                    }
+                    self.check_capture_move(&place, target.span)?;
+                    self.bind_captures(&place, value)?;
+                }
             }
             StatementKind::Expression(expression) => {
                 let ty = self.expression(expression)?;
@@ -984,18 +1043,21 @@ impl FunctionChecker<'_> {
                     }
                     (ty, Some(expression)) => {
                         self.require_type(expression, ty)?;
-                        if let Some(expected_root) = &self.return_borrow_root {
+                        if !ty.is_borrow() && self.types.carries_borrows(ty) {
+                            self.check_capture_return(expression)?;
+                        }
+                        if ty.is_borrow() && self.return_borrow_root.is_some() {
                             let id = self.references[&expression.span];
                             let loan = self
                                 .loans
                                 .iter()
                                 .find(|loan| loan.id == id)
                                 .expect("returned reference has a loan");
-                            if !expected_root.contains(&loan.root)
+                            if !self.capture_return_roots.contains(&loan.root)
                                 || loan
                                     .alternatives
                                     .iter()
-                                    .any(|(root, _)| !expected_root.contains(root))
+                                    .any(|(root, _)| !self.capture_return_roots.contains(root))
                             {
                                 return Err(Diagnostic::new(
                                     expression.span,
@@ -1448,7 +1510,20 @@ impl FunctionChecker<'_> {
                 then_value,
                 else_value,
             } => {
-                return self.conditional(condition, then_value, else_value, None);
+                let ty = self.conditional(condition, then_value, else_value, None)?;
+                let mut captures = self
+                    .capture_expressions
+                    .get(&then_value.span)
+                    .cloned()
+                    .unwrap_or_default();
+                captures.extend(
+                    self.capture_expressions
+                        .get(&else_value.span)
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+                self.remember_captures(expression.span, captures);
+                return Ok(ty);
             }
             ExpressionKind::Storage { pointer, value } => {
                 self.require_unsafe(expression.span, "initializing or destroying raw storage")?;
@@ -1783,6 +1858,10 @@ impl FunctionChecker<'_> {
                 return self.array_literal(expression, None);
             }
             ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
+                if self.probe_receiver_type(expression)?.is_borrow() {
+                    let raw = self.check_place(expression)?;
+                    return self.stored_reference(expression, &raw);
+                }
                 let place = self.checked_place(expression)?;
                 self.access(
                     &place.root,
@@ -1791,6 +1870,7 @@ impl FunctionChecker<'_> {
                     place.via,
                     expression.span,
                 )?;
+                self.capture_value(expression.span, &place);
                 if self.types.owns(place.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -1845,6 +1925,8 @@ impl FunctionChecker<'_> {
                     }
                     _ => self.access(&self.root(name), &[], false, None, expression.span)?,
                 }
+                let place = self.place(expression)?;
+                self.capture_value(expression.span, &place);
                 return Ok(variable.ty);
             }
             ExpressionKind::Call {
@@ -1982,9 +2064,19 @@ impl FunctionChecker<'_> {
                                     "borrow bindings use reborrows rather than move",
                                 ));
                             }
-                            return self.expression(&arguments[0]);
+                            let ty = self.expression(&arguments[0])?;
+                            let captures = self
+                                .capture_expressions
+                                .get(&arguments[0].span)
+                                .cloned()
+                                .unwrap_or_default();
+                            self.remember_captures(expression.span, captures);
+                            return Ok(ty);
                         }
                         self.access(&self.root(owner), &[], true, None, arguments[0].span)?;
+                        let place = self.place(&arguments[0])?;
+                        self.check_capture_move(&place, arguments[0].span)?;
+                        self.capture_value(expression.span, &place);
                         self.set_state(owner, State::Moved);
                         return Ok(variable.ty);
                     }
@@ -2004,6 +2096,8 @@ impl FunctionChecker<'_> {
                             let place = self.checked_place(&arguments[0])?;
                             self.access(&place.root, &[], true, place.via, arguments[0].span)?;
                             self.expression_types.insert(arguments[0].span, place.ty);
+                            self.check_capture_move(&place, arguments[0].span)?;
+                            self.capture_value(expression.span, &place);
                             self.set_state(name, State::Moved);
                             return Ok(place.ty);
                         }
@@ -2094,15 +2188,12 @@ impl FunctionChecker<'_> {
                     .as_ref()
                     .filter(|_| !self.unevaluated)
                 {
-                    let Type::Borrow { mutable, .. } = signature.return_type else {
-                        unreachable!()
-                    };
                     self.returned_reference(
                         expression.span,
                         arguments,
                         sources,
                         previous_loans,
-                        mutable,
+                        signature.return_type,
                     )?;
                 } else {
                     self.loans.truncate(previous_loans);
@@ -2417,6 +2508,13 @@ impl FunctionChecker<'_> {
                 self.expression_types.insert(expression.span, actual);
                 return self.convert(expression, actual, expected);
             }
+            if matches!(expression.kind, ExpressionKind::Field { .. })
+                && self.probe_receiver_type(expression)?.is_borrow()
+            {
+                let actual = self.borrow_address(expression, expression, mutable)?;
+                self.expression_types.insert(expression.span, actual);
+                return self.convert(expression, actual, expected);
+            }
             let actual = self.reference_expression(expression)?;
             return self.convert(expression, actual, expected);
         }
@@ -2568,6 +2666,8 @@ impl FunctionChecker<'_> {
                 volatile: place.volatile,
             };
         }
+        let capture_type = place.ty;
+        let captures = self.captures_at(&place);
         let id = self.borrow(
             place.root,
             place.fields,
@@ -2575,7 +2675,45 @@ impl FunctionChecker<'_> {
             place.via,
             expression.span,
         )?;
+        let id = if !captures.is_empty() && !self.unevaluated {
+            let mut parents = vec![id];
+            parents.extend(captures.iter().map(|capture| capture.id()));
+            for capture in captures {
+                let loan = self
+                    .loans
+                    .iter()
+                    .find(|loan| loan.id == capture.id())
+                    .unwrap();
+                for (root, fields) in std::iter::once((&loan.root, &loan.fields)).chain(
+                    loan.alternatives
+                        .iter()
+                        .map(|(root, fields)| (root, fields)),
+                ) {
+                    self.access_through(
+                        root,
+                        fields,
+                        mutable && loan.mutable,
+                        &parents,
+                        expression.span,
+                    )?;
+                }
+            }
+            self.capture_loan(&parents, mutable)
+        } else {
+            id
+        };
         self.references.insert(expression.span, id);
+        if self.types.contains_borrows(capture_type) {
+            let mut fields = Vec::new();
+            captures::reference_fields(self.types, capture_type, Vec::new(), &mut fields);
+            self.remember_captures(
+                expression.span,
+                fields
+                    .into_iter()
+                    .map(|(path, _)| captures::Capture::at(path, id))
+                    .collect(),
+            );
+        }
         return Ok(ty);
     }
 
@@ -3150,7 +3288,12 @@ impl FunctionChecker<'_> {
                     _ => variable.mutable,
                 })
             }
-            ExpressionKind::Field { base, .. } => self.probe_mutability(base),
+            ExpressionKind::Field { base, name, .. } => {
+                let base_type = self.receiver_type(base)?;
+                let ty = self.field_type(base_type, name, expression.span)?;
+                Ok(self.probe_mutability(base)?
+                    && !matches!(ty, Type::Borrow { mutable: false, .. }))
+            }
             ExpressionKind::Index { base, .. } => match self.receiver_type(base)? {
                 Type::Pointer(id) => Ok(self.types.pointers[id].mutable),
                 _ => self.probe_mutability(base),
@@ -3228,9 +3371,17 @@ impl FunctionChecker<'_> {
                 ),
             ));
         }
+        let mut captures = Vec::new();
         for element in elements {
             self.require_type(element, array.element)?;
+            captures.extend(
+                self.capture_expressions
+                    .get(&element.span)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
         }
+        self.remember_captures(expression.span, captures);
         let ty = Type::Array(id);
         self.expression_types.insert(expression.span, ty);
         return Ok(ty);
@@ -3271,6 +3422,7 @@ impl FunctionChecker<'_> {
             ));
         }
         let mut seen = std::collections::HashSet::new();
+        let mut captures = Vec::new();
         for field in fields {
             if !seen.insert(field.name.as_str()) {
                 return Err(Diagnostic::new(
@@ -3281,7 +3433,24 @@ impl FunctionChecker<'_> {
             let ty = self.field_type(Type::Struct(id), &field.name, field.span)?;
             self.record_field_symbol(Type::Struct(id), &field.name, field.name_span);
             self.require_type(&field.value, ty)?;
+            let mut nested = if ty.is_borrow() && !self.unevaluated {
+                vec![captures::Capture::new(self.references[&field.value.span])]
+            } else {
+                self.capture_expressions
+                    .get(&field.value.span)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            for capture in &mut nested {
+                capture.prepend(if self.types.structs[id].tagged {
+                    "*"
+                } else {
+                    &field.name
+                });
+            }
+            captures.extend(nested);
         }
+        self.remember_captures(expression.span, captures);
         for field in &declared {
             if !is_union && !self.types.structs[id].tagged && !seen.contains(field.name.as_str()) {
                 return Err(Diagnostic::new(
@@ -3308,7 +3477,8 @@ impl FunctionChecker<'_> {
             }
         };
         let place = if place.ty.is_borrow() {
-            self.reference_place(expression, place.ty)?
+            let ty = self.stored_reference(expression, &place)?;
+            self.reference_place(expression, ty)?
         } else {
             place
         };
@@ -3566,13 +3736,19 @@ impl FunctionChecker<'_> {
         via: Option<usize>,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        return self.access_through(
-            root,
-            fields,
-            exclusive,
-            &via.into_iter().collect::<Vec<_>>(),
-            span,
-        );
+        let parents: Vec<_> = via.into_iter().collect();
+        self.access_through(root, fields, exclusive, &parents, span)?;
+        if let Some(loan) = via.and_then(|id| self.loans.iter().find(|loan| loan.id == id))
+            && &loan.root == root
+        {
+            let suffix = fields.strip_prefix(loan.fields.as_slice()).unwrap_or(&[]);
+            for (other, projection) in &loan.alternatives {
+                let mut projected = projection.clone();
+                projected.extend_from_slice(suffix);
+                self.access_through(other, &projected, exclusive, &parents, span)?;
+            }
+        }
+        return Ok(());
     }
 
     fn access_through(
@@ -3665,12 +3841,27 @@ impl FunctionChecker<'_> {
         arguments: &[Expression],
         sources: &[usize],
         previous_loans: usize,
-        mutable: bool,
+        return_type: Type,
     ) -> Result<(), Diagnostic> {
+        let mutable = matches!(return_type, Type::Borrow { mutable: true, .. })
+            || self.types.contains_mutable_borrows(return_type);
         let mut origins = Vec::new();
         let mut parents = Vec::new();
+        let mut ids = Vec::new();
         for index in sources {
-            let id = self.references[&arguments[*index].span];
+            let span = arguments[*index].span;
+            if let Some(id) = self.references.get(&span) {
+                ids.push(*id);
+            }
+            ids.extend(
+                self.capture_expressions
+                    .get(&span)
+                    .into_iter()
+                    .flatten()
+                    .map(|capture| capture.id()),
+            );
+        }
+        for id in ids {
             let loan = self
                 .loans
                 .iter()
@@ -3678,6 +3869,12 @@ impl FunctionChecker<'_> {
                 .expect("borrowed argument has a loan");
             origins.push((loan.root.clone(), loan.fields.clone()));
             origins.extend(loan.alternatives.clone());
+            if self.loans[..previous_loans]
+                .iter()
+                .any(|existing| existing.id == id)
+            {
+                parents.push(id);
+            }
             let mut pending = loan.parents.clone();
             let mut seen = HashSet::new();
             while let Some(id) = pending.pop() {
@@ -3702,6 +3899,15 @@ impl FunctionChecker<'_> {
         for (root, fields) in &origins {
             self.access_through(root, fields, mutable, &parents, span)?;
         }
+        if origins.is_empty() {
+            if return_type.is_borrow() {
+                return Err(Diagnostic::new(
+                    span,
+                    "returned reference requires a live borrow source",
+                ));
+            }
+            return Ok(());
+        }
         let (root, fields) = origins.remove(0);
         let id = self.next_loan;
         self.next_loan += 1;
@@ -3714,7 +3920,18 @@ impl FunctionChecker<'_> {
             mutable,
             scope: None,
         });
-        self.references.insert(span, id);
+        if return_type.is_borrow() {
+            self.references.insert(span, id);
+        }
+        if self.types.contains_borrows(return_type.referent()) {
+            let mut fields = Vec::new();
+            captures::reference_fields(self.types, return_type.referent(), Vec::new(), &mut fields);
+            let captures = fields
+                .into_iter()
+                .map(|(path, _)| captures::Capture::at(path, id))
+                .collect();
+            self.remember_captures(span, captures);
+        }
         return Ok(());
     }
 

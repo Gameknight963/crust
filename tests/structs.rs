@@ -199,11 +199,7 @@ fn rejects_invalid_layouts_and_initializers_before_generating_c() {
         ),
         (
             "struct S { void x; }; int main() { return 0; }",
-            "void and borrowed fields",
-        ),
-        (
-            "struct S { int& x; }; int main() { return 0; }",
-            "void and borrowed fields",
+            "struct fields require an object type",
         ),
         (
             "struct S { struct S child; }; int main() { return 0; }",

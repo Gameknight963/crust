@@ -198,7 +198,6 @@ fn reference_bindings_cannot_be_rebound_or_escape() {
         "int main() { int a = 1; int b = 2; int& r = &a; r = &b; return 0; }",
         "int main() { int n = 1; int& r = &n; int&& rr = &r; return 0; }",
         "const int& escape() { int n = 1; const int& r = &const n; return r; } int main() { return 0; }",
-        "struct Ref { const int& value; }; int main() { return 0; }",
         "int main() { int& r = r; return 0; }",
         "int main() { int a = 1; { int& r = &a; } print(r); return 0; }",
     ] {

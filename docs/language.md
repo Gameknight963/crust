@@ -610,12 +610,12 @@ int main() {
 - `private` fields can be read, written, borrowed, and initialized by methods, static factories, and destructors of their own struct
 - Private fields protect the invariants used by safe wrappers around raw pointers
 - Structs with copyable fields are copyable unless they define a destructor
-- Owning fields and custom destructors make the enclosing struct move-only
+- Owning fields, mutable reference fields, and custom destructors make the enclosing struct move-only
 - Ownership transfers use whole-struct moves
 - Owning fields are destroyed in reverse declaration order
 
 Field access and borrowed method receivers use a named variable, field, or
-pointee, including a returned borrow. Empty structs, borrowed fields, partial initialization, and
+pointee, including a returned borrow. Empty structs, partial initialization, and
 partial field moves need further language support.
 
 ### Opaque structs
@@ -735,7 +735,48 @@ print(number);
 
 Borrows distinguish separate struct fields. Array element borrows lock the whole
 array. Local references remain active to the end of the block, including after
-their last use. Borrowed fields require further lifetime rules.
+their last use. Reference fields retain their source loans through their holder.
+
+### Reference fields
+
+```c
+struct View { const int& value; };
+struct Counter { int& value; void increment() { this.value++; } };
+
+View view(const int& value) {
+    return (View){ .value = value };
+}
+
+int main() {
+    int value = 41;
+    { Counter counter = { .value = &value }; counter.increment(); }
+    { View first = view(&value); View second = first; print(second.value); }
+    return 0;
+}
+```
+
+- Reference fields act as aliases, including assignment and member access
+- Shared fields permit reads, and mutable fields permit writes through mutable holders
+- Shared access to a holder freezes its mutable reference fields
+- Structs containing mutable references are move-only
+- Copies and moves retain the stored references' source lifetimes
+- Fields can contain references to arrays and slices
+- Nested structs, arrays of views, generic types, and tagged payloads retain their loans
+- Returning a view uses the same inferred source or `borrows(...)` clause as a reference return
+- A value parameter containing references can supply its stored references to a return
+- References to a value parameter's own local storage cannot escape through that contract
+
+Replacing a local view retains both its old and new source loans until its
+block ends. Returned views conservatively retain all declared source regions.
+A holder containing references must remain within those sources' lifetimes.
+
+Reference-containing types currently support value storage. Raw pointers to
+these types, custom destructors on these types, and reference fields in untagged
+unions require further support. Whole-value replacement through borrowed
+storage also requires additional lifetime handling. Ordinary methods can read
+and modify referents through their fields.
+
+See [the reference-field example](../examples/reference_fields.cr).
 
 ### Borrowed returns
 
@@ -755,11 +796,11 @@ int main() {
 }
 ```
 
-- A function with one borrowed parameter infers that parameter as the returned borrow's source
+- A function with one borrowed parameter or reference-containing value parameter infers it as the returned borrow's source
 - An instance method's implicit receiver counts as a borrowed parameter
 - The returned reference must originate from a declared source parameter or one of its fields or pointees
 - `borrows(a, b)` declares several possible source parameters, and each source stays borrowed while the returned reference is live
-- A mutable borrowed return requires every declared source to be an exclusive borrowed input
+- A mutable borrowed return requires exclusive borrowed inputs or value inputs containing mutable references
 - Return statements can forward the input through calls and local reborrows
 - The caller's returned reference keeps its possible sources borrowed
 - A returned loan covers the full input region passed by the caller, even when the function returns one of its subfields
