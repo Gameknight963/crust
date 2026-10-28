@@ -85,6 +85,9 @@ Struct reference fields retain their loans through copies, moves, calls,
 returns, nested values, and tagged payloads. Mutable reference fields make the
 containing value move-only. Shared access to a holder freezes those fields.
 Local replacement retains every possible source until the holder's block ends.
+Functions that store references through mutable inputs infer their retained
+input lifetimes. Call sites attach those lifetimes to the destination storage,
+including arrays, nested values, and storage reached through reference fields.
 See [reference fields](language.md#reference-fields) for storage restrictions.
 
 Temporary struct values can supply borrows to calls and value computations.

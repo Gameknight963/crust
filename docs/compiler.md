@@ -408,3 +408,16 @@ owning slots to a cleanup stack, which drops them in reverse construction order
 at each expression boundary. This also handles temporaries created inside
 conditional branches. The checker keeps references captured by temporary owners
 live through the same boundary and rejects escaping references to their slots.
+
+## Stored-reference inference
+
+Function checking computes a fixed point of retained-input relationships before
+accepting a program. Each relationship identifies an input destination, a stored
+value type, and an input source. Calls propagate the relationships through local
+holders and borrowed storage. Sources from locals and value parameters' own
+storage cannot escape through an output.
+
+Branch checking snapshots loans and captured origins independently, then merges
+possible outcomes. A function can infer at most 4096 relationships, and each call
+can track at most 4096 destination regions. Lifetime tracking remains
+conservative across fields of the same stored type.

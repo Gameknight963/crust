@@ -5,7 +5,7 @@ impl FunctionChecker<'_> {
         let retained: Vec<_> = self
             .loans
             .drain(count..)
-            .filter(|loan| loan.scope == Some(usize::MAX))
+            .filter(|loan| loan.scope.is_some())
             .collect();
         self.loans.extend(retained);
     }
@@ -39,6 +39,10 @@ impl FunctionChecker<'_> {
             ),
         );
         if !self.unevaluated {
+            self.borrowed_storage_types
+                .entry(root.clone())
+                .or_default()
+                .insert(ty);
             self.temporary_owners.insert(expression.span, ty);
             let captures = self
                 .capture_expressions

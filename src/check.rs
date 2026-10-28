@@ -5,6 +5,7 @@ use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
 mod captures;
 mod drop_borrows;
+mod retention;
 mod storage;
 mod temporaries;
 
@@ -134,6 +135,7 @@ pub(crate) struct AnalyzedProgram {
 
 #[derive(Default)]
 pub(crate) struct FunctionAnalysis {
+    pub stored_borrows: HashSet<(usize, Type, usize, bool)>,
     pub temporary_owners: HashMap<Span, Type>,
     // Reference-producing calls and bindings retain pointer storage in C.
     // Value contexts read their referents without consuming an owner.
@@ -163,6 +165,7 @@ pub(crate) enum CallTarget {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Signature {
+    stored_borrows: HashSet<(usize, Type, usize, bool)>,
     calling_convention: CallingConvention,
     link_name: Option<String>,
     variadic: bool,
@@ -394,6 +397,7 @@ fn analyze(
         signatures.insert(
             name.to_owned(),
             Signature {
+                stored_borrows: HashSet::new(),
                 calling_convention: CallingConvention::C,
                 link_name: None,
                 variadic: false,
@@ -471,6 +475,7 @@ fn analyze(
         }
         let return_borrow = return_borrow_sources(function, &types)?;
         let signature = Signature {
+            stored_borrows: HashSet::new(),
             calling_convention: function.calling_convention,
             link_name: function.link_name.clone(),
             variadic: function.variadic,
@@ -611,122 +616,153 @@ fn analyze(
         }
     }
 
-    for function in &program.functions {
-        if function.external {
-            continue;
-        }
-        let mut analysis = FunctionAnalysis::default();
-        let mut checker = FunctionChecker {
-            temporary_owners: &mut analysis.temporary_owners,
-            reference_reads: &mut analysis.reference_reads,
-            place_volatile: &mut analysis.place_volatile,
-            calls: &mut analysis.calls,
-            completion,
-            receiver_types: &mut analysis.receiver_types,
-            function_declarations: &function_declarations,
-            symbol_uses: &mut analysis.symbol_uses,
-            signatures: &signatures,
-            global_symbols: &global_symbols,
-            global_storage: &program.globals,
-            scopes: vec![globals.clone(), HashMap::new()],
-            return_type: function.return_type,
-            return_borrow_root: signatures[&function.name]
-                .return_borrow
-                .as_ref()
-                .map(|indices| {
-                    indices
-                        .iter()
-                        .map(|index| (1, function.parameters[*index].name.clone()))
-                        .collect()
-                }),
-            loans: Vec::new(),
-            next_loan: 0,
-            references: HashMap::new(),
-            capture_bindings: HashMap::new(),
-            capture_expressions: HashMap::new(),
-            capture_return_roots: signatures[&function.name]
-                .return_borrow
-                .as_ref()
-                .into_iter()
-                .flatten()
-                .filter(|index| function.parameters[**index].ty.is_borrow())
-                .map(|index| (1, function.parameters[*index].name.clone()))
-                .collect(),
-            types: &mut types,
-            expression_types: &mut analysis.expression_types,
-            method_calls: &mut analysis.method_calls,
-            loops: Vec::new(),
-            conversions: &mut analysis.conversions,
-            constants: &mut analysis.constants,
-            unevaluated: false,
-            unsafe_depth: usize::from(function.requires_unsafe),
-            current_struct: if let Some(method) = function
-                .name
-                .strip_prefix('@')
-                .or_else(|| function.name.strip_prefix('#'))
-            {
-                Some(method.split_once('_').unwrap().0.parse().unwrap())
-            } else {
-                function
-                    .name
-                    .strip_prefix('~')
-                    .map(|id| id.parse().unwrap())
-            },
-            function_values: &mut analysis.function_values,
-        };
-        for (index, parameter) in function.parameters.iter().enumerate() {
-            if parameter.name == "this"
-                && !(index == 0
-                    && (function.name.starts_with('@') || function.name.starts_with('~')))
-            {
-                return Err(Diagnostic::new(
-                    parameter.span,
-                    "this is reserved for the instance receiver",
-                ));
+    loop {
+        analyses.clear();
+        let mut first_error = None;
+        for function in &program.functions {
+            if function.external {
+                continue;
             }
-            checker.declare(
-                &parameter.name,
-                parameter.ty,
-                State::Available,
-                parameter.span,
-                if parameter.synthetic {
-                    None
-                } else {
-                    Some(parameter.span)
-                },
-            )?;
-            checker.initialize_captures(parameter)?;
-        }
-
-        if let Some(sources) = &function.return_borrows {
-            for (name, span) in sources {
-                if let Some(parameter) = function
-                    .parameters
-                    .iter()
-                    .find(|parameter| parameter.name == *name)
+            let mut analysis = FunctionAnalysis::default();
+            let mut checker = FunctionChecker {
+                parameters: &function.parameters,
+                is_destructor: function.name.starts_with('~'),
+                stored_borrows: &mut analysis.stored_borrows,
+                temporary_owners: &mut analysis.temporary_owners,
+                reference_reads: &mut analysis.reference_reads,
+                place_volatile: &mut analysis.place_volatile,
+                calls: &mut analysis.calls,
+                completion,
+                receiver_types: &mut analysis.receiver_types,
+                function_declarations: &function_declarations,
+                symbol_uses: &mut analysis.symbol_uses,
+                signatures: &signatures,
+                global_symbols: &global_symbols,
+                global_storage: &program.globals,
+                scopes: vec![globals.clone(), HashMap::new()],
+                return_type: function.return_type,
+                return_borrow_root: signatures[&function.name].return_borrow.as_ref().map(
+                    |indices| {
+                        indices
+                            .iter()
+                            .map(|index| (1, function.parameters[*index].name.clone()))
+                            .collect()
+                    },
+                ),
+                loans: Vec::new(),
+                next_loan: 0,
+                references: HashMap::new(),
+                capture_bindings: HashMap::new(),
+                borrowed_storage_types: HashMap::new(),
+                capture_expressions: HashMap::new(),
+                capture_return_roots: signatures[&function.name]
+                    .return_borrow
+                    .as_ref()
+                    .into_iter()
+                    .flatten()
+                    .filter(|index| function.parameters[**index].ty.is_borrow())
+                    .map(|index| (1, function.parameters[*index].name.clone()))
+                    .collect(),
+                types: &mut types,
+                expression_types: &mut analysis.expression_types,
+                method_calls: &mut analysis.method_calls,
+                loops: Vec::new(),
+                conversions: &mut analysis.conversions,
+                constants: &mut analysis.constants,
+                unevaluated: false,
+                unsafe_depth: usize::from(function.requires_unsafe),
+                current_struct: if let Some(method) = function
+                    .name
+                    .strip_prefix('@')
+                    .or_else(|| function.name.strip_prefix('#'))
                 {
-                    checker.symbol_uses.insert(*span, parameter.span);
+                    Some(method.split_once('_').unwrap().0.parse().unwrap())
+                } else {
+                    function
+                        .name
+                        .strip_prefix('~')
+                        .map(|id| id.parse().unwrap())
+                },
+                function_values: &mut analysis.function_values,
+            };
+            for (index, parameter) in function.parameters.iter().enumerate() {
+                if parameter.name == "this"
+                    && !(index == 0
+                        && (function.name.starts_with('@') || function.name.starts_with('~')))
+                {
+                    return Err(Diagnostic::new(
+                        parameter.span,
+                        "this is reserved for the instance receiver",
+                    ));
+                }
+                checker.declare(
+                    &parameter.name,
+                    parameter.ty,
+                    State::Available,
+                    parameter.span,
+                    if parameter.synthetic {
+                        None
+                    } else {
+                        Some(parameter.span)
+                    },
+                )?;
+                checker.initialize_captures(parameter)?;
+            }
+
+            if let Some(sources) = &function.return_borrows {
+                for (name, span) in sources {
+                    if let Some(parameter) = function
+                        .parameters
+                        .iter()
+                        .find(|parameter| parameter.name == *name)
+                    {
+                        checker.symbol_uses.insert(*span, parameter.span);
+                    }
                 }
             }
+            let (returns, failed) = match checker.statements(&function.body.statements) {
+                Ok(returns) => (returns, false),
+                Err(_) if completion => (false, true),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                    (false, true)
+                }
+            };
+            if !failed && !completion && function.return_type != Type::Void && !returns {
+                first_error.get_or_insert_with(|| {
+                    Diagnostic::new(
+                        function.span,
+                        format!(
+                            "{} must return a value on every path",
+                            function.description()
+                        ),
+                    )
+                });
+            }
+            if !failed
+                && !completion
+                && let Err(error) = checker.check_scope_drops(1, function.body.span)
+            {
+                first_error.get_or_insert(error);
+            }
+            analyses.insert(function.name.clone(), analysis);
         }
-        let returns = match checker.statements(&function.body.statements) {
-            Ok(returns) => returns,
-            Err(_) if completion => false,
-            Err(error) => return Err(error),
-        };
-        if !completion && function.return_type != Type::Void && !returns {
-            return Err(Diagnostic::new(
-                function.span,
-                format!(
-                    "{} must return a value on every path",
-                    function.description()
-                ),
-            ));
+
+        let mut changed = false;
+        for (name, analysis) in &analyses {
+            let effects = &mut signatures.get_mut(name).unwrap().stored_borrows;
+            let previous = effects.len();
+            effects.extend(analysis.stored_borrows.iter().copied());
+            changed |= effects.len() != previous;
         }
-        if !completion {
-            checker.check_scope_drops(1, function.body.span)?;
+        if !changed {
+            if let Some(error) = first_error {
+                return Err(error);
+            }
+            break;
         }
-        analyses.insert(function.name.clone(), analysis);
     }
 
     for global in &program.globals {
@@ -743,6 +779,9 @@ fn analyze(
 }
 
 struct FunctionChecker<'program> {
+    parameters: &'program [Parameter],
+    is_destructor: bool,
+    stored_borrows: &'program mut HashSet<(usize, Type, usize, bool)>,
     temporary_owners: &'program mut HashMap<Span, Type>,
     reference_reads: &'program mut HashMap<Span, Type>,
     place_volatile: &'program mut HashMap<Span, bool>,
@@ -764,6 +803,7 @@ struct FunctionChecker<'program> {
     next_loan: usize,
     references: HashMap<Span, usize>,
     capture_bindings: HashMap<captures::Root, captures::Captures>,
+    borrowed_storage_types: HashMap<captures::Root, HashSet<Type>>,
     capture_expressions: HashMap<Span, captures::Captures>,
     capture_return_roots: HashSet<captures::Root>,
     types: &'program mut Types,
@@ -926,14 +966,10 @@ impl FunctionChecker<'_> {
                             "cannot assign through a shared borrow",
                         ));
                     }
-                    if self.types.carries_borrows(place.ty) {
-                        return Err(Diagnostic::new(
-                            *name_span,
-                            "cannot replace a value containing references through a borrowed destination",
-                        ));
-                    }
                     self.require_type(value, place.ty)?;
                     self.access(&place.root, &place.fields, true, place.via, *name_span)?;
+                    self.check_capture_move(&place, value.span)?;
+                    self.bind_captures(&place, value)?;
                     return Ok(false);
                 }
                 self.require_type(value, target.ty)?;
@@ -1034,14 +1070,6 @@ impl FunctionChecker<'_> {
                 }
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
                 if self.types.carries_borrows(place.ty) {
-                    if place.via.is_some()
-                        || self.lookup(&place.root.1, target.span)?.ty.is_borrow()
-                    {
-                        return Err(Diagnostic::new(
-                            target.span,
-                            "cannot replace a value containing references through a borrowed destination",
-                        ));
-                    }
                     self.check_capture_move(&place, target.span)?;
                     self.bind_captures(&place, value)?;
                 }
@@ -1109,14 +1137,23 @@ impl FunctionChecker<'_> {
             } => {
                 self.condition(condition)?;
                 let before = self.scopes.clone();
+                let before_borrows = self.save_borrows();
                 let then_returns = self.block(then_block)?;
                 let then_state = self.scopes.clone();
+                let then_borrows = self.save_borrows();
                 self.scopes = before;
+                self.restore_borrows(&before_borrows);
                 let else_returns = match else_block {
                     Some(block) => self.block(block)?,
                     None => false,
                 };
                 let else_state = self.scopes.clone();
+                let else_borrows = self.save_borrows();
+                match (then_returns, else_returns) {
+                    (true, false) => self.restore_borrows(&else_borrows),
+                    (false, true) => self.restore_borrows(&then_borrows),
+                    _ => self.merge_borrows(&[then_borrows, else_borrows]),
+                }
 
                 // A branch ending in return/break/continue doesn't contribute
                 // to the fallthrough state after this if.
@@ -1281,6 +1318,9 @@ impl FunctionChecker<'_> {
                     None
                 };
                 let before = self.scopes.clone();
+                let before_borrows = self.save_borrows();
+                let mut case_borrows = vec![before_borrows.clone()];
+                let mut fallthrough_borrows = None;
                 let mut seen = HashSet::new();
                 let mut default = false;
                 self.loops.push(LoopContext {
@@ -1385,13 +1425,20 @@ impl FunctionChecker<'_> {
                     } else {
                         default = true;
                     }
+                    self.restore_borrows(&before_borrows);
+                    if let Some(state) = fallthrough_borrows.take() {
+                        self.merge_borrows(&[before_borrows.clone(), state]);
+                    }
                     self.scopes = fallthrough
                         .take()
                         .map_or_else(|| before.clone(), |state| merge(&before, &state));
                     if !self.block(&case.body)? {
                         fallthrough = Some(self.scopes.clone());
+                        fallthrough_borrows = Some(self.save_borrows());
                     }
+                    case_borrows.push(self.save_borrows());
                 }
+                self.merge_borrows(&case_borrows);
                 let mut exits = self.loops.pop().unwrap().breaks;
                 if let Some(state) = fallthrough {
                     exits.push(state);
@@ -2212,6 +2259,9 @@ impl FunctionChecker<'_> {
                     self.require_type(argument, *expected)?;
                 }
                 self.variadic_arguments(&arguments[signature.parameters.len()..])?;
+                if !self.unevaluated {
+                    self.apply_retention(&signature, arguments, previous_loans, expression.span)?;
+                }
                 if let Some(sources) = signature
                     .return_borrow
                     .as_ref()
@@ -2764,14 +2814,16 @@ impl FunctionChecker<'_> {
         self.scalar_condition(condition_type, condition.span)?;
         self.end_loans_since(condition_loans);
         let before = self.scopes.clone();
-        let loan_count = self.loans.len();
+        let before_borrows = self.save_borrows();
         let then_type = self.conditional_branch(then_value, expected)?;
         let then_scopes = self.scopes.clone();
-        let then_loans = self.loans.split_off(loan_count);
+        let then_borrows = self.save_borrows();
+        self.restore_borrows(&before_borrows);
         self.scopes = before;
         let else_type = self.conditional_branch(else_value, expected)?;
         self.scopes = merge(&then_scopes, &self.scopes);
-        self.loans.extend(then_loans);
+        let else_borrows = self.save_borrows();
+        self.merge_borrows(&[then_borrows, else_borrows]);
         if let Some(ty) = expected {
             return Ok(ty);
         }
@@ -3956,7 +4008,7 @@ impl FunctionChecker<'_> {
                 if self
                     .loans
                     .iter()
-                    .any(|loan| loan.id == id && loan.scope == Some(usize::MAX))
+                    .any(|loan| loan.id == id && loan.scope.is_some())
                     || self.loans[..previous_loans]
                         .iter()
                         .any(|loan| loan.id == id)

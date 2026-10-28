@@ -86,6 +86,10 @@ impl FunctionChecker<'_> {
         let mut captures = Vec::new();
         for (path, ty) in fields {
             let root = (1, format!("!capture:{}:{}", parameter.name, path.join(".")));
+            self.borrowed_storage_types
+                .entry(root.clone())
+                .or_default()
+                .insert(ty.referent());
             let id = self.next_loan;
             self.next_loan += 1;
             self.loans.push(Loan {
@@ -160,12 +164,22 @@ impl FunctionChecker<'_> {
             .get(&value.span)
             .cloned()
             .unwrap_or_default();
+        return self.bind_capture_set(place, captures, value.span);
+    }
+
+    pub(super) fn bind_capture_set(
+        &mut self,
+        place: &Place,
+        captures: Captures,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
         if captures.len() > 4096 {
             return Err(Diagnostic::new(
-                value.span,
+                span,
                 "reference-field tracking exceeds 4096 fields",
             ));
         }
+        self.record_retention(place, &captures, span)?;
         for capture in &captures {
             let loan = self
                 .loans
@@ -177,10 +191,10 @@ impl FunctionChecker<'_> {
                     .iter()
                     .map(|(root, fields)| (root, fields)),
             ) {
-                self.check_source_drop_order(place, root, value.span)?;
+                self.check_source_drop_order(place, root, span)?;
                 if root.0 > place.root.0 {
                     return Err(Diagnostic::new(
-                        value.span,
+                        span,
                         "reference field would outlive its source",
                     ));
                 }
@@ -198,10 +212,12 @@ impl FunctionChecker<'_> {
                     .iter_mut()
                     .find(|loan| loan.id == id)
                     .expect("captured ancestry is live");
-                loan.scope = Some(
-                    loan.scope
-                        .map_or(place.root.0, |scope| scope.min(place.root.0)),
-                );
+                let scope = if place.root.1.starts_with("!temporary:") {
+                    usize::MAX
+                } else {
+                    place.root.0
+                };
+                loan.scope = Some(loan.scope.map_or(scope, |previous| previous.min(scope)));
                 pending.extend(&loan.parents);
             }
         }
@@ -213,7 +229,7 @@ impl FunctionChecker<'_> {
             if !destination.contains(&capture) {
                 if destination.len() >= 4096 {
                     return Err(Diagnostic::new(
-                        value.span,
+                        span,
                         "reference-field tracking exceeds 4096 fields",
                     ));
                 }

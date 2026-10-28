@@ -59,6 +59,7 @@ fn main() {
         "tagged union Value { double number; int integer; }; int main() { Value value = {.number=1.5}; switch(value) { case number: print(value.number); break; case integer: print(value.integer); break; } return 0; }",
         "int main() { uint8_t[3] bytes={65,0,66}; const uint8_t[]& view=&bytes; print(view); return 0; }",
         "struct Temporary { int value; static Self create(int value) { return (Self){.value=value}; } const int& get() const { return &const this.value; } ~Temporary() {} }; int main() { print(Temporary::create(42).get()); return 0; }",
+        "struct View { const int& value; }; void store(View& target, const int& value) { target=(View){.value=value}; } int main() { int a=1; int b=42; View view={.value=&const a}; store(&view,&const b); print(view.value); return 0; }",
         library.as_str(),
     ];
     let fragments: &[&[u8]] = &[
