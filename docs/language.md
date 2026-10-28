@@ -399,6 +399,16 @@ holds two text bytes and the terminating zero.
 
 ## Enums
 
+`enum class` keeps member names scoped to the enum type:
+
+```c
+enum class Status : uint8_t { Pending, Ready };
+enum class TaskState { Pending, Ready };
+```
+
+Use `Status::Ready` or `TaskState::Ready`. Members can use earlier members of
+their own enum in constant initializers. Ordinary `enum` retains unscoped names.
+
 ```c
 enum Status : uint8_t {
     Pending,

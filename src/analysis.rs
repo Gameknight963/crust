@@ -80,6 +80,7 @@ pub struct Analysis {
     members: members::Index,
     signatures: signatures::Index,
     native_bindings: HashMap<Location, rename::NativeBinding>,
+    scoped_enum_members: HashSet<Location>,
 }
 
 fn contains(location: Location, file: usize, offset: usize, include_end: bool) -> bool {
@@ -276,6 +277,18 @@ pub(crate) fn build(
             members: members::Index::build(checked, &locate),
             signatures,
             native_bindings,
+            scoped_enum_members: checked
+                .program
+                .enums
+                .iter()
+                .filter(|definition| definition.scoped)
+                .flat_map(|definition| {
+                    definition
+                        .variants
+                        .iter()
+                        .map(|variant| locate(variant.span))
+                })
+                .collect(),
         },
         locate: &locate,
     };

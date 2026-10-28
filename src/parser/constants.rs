@@ -123,7 +123,12 @@ impl Parser {
                         {
                             break;
                         }
-                        if member && let Token::Identifier(name) = &token.kind {
+                        if member
+                            && !self
+                                .scoped_enums
+                                .contains(&self.tokens[position].span.start)
+                            && let Token::Identifier(name) = &token.kind
+                        {
                             self.enumerator_owners.entry(name.clone()).or_insert(id);
                         }
                         member = nested == 0 && token.kind == Token::Comma;
@@ -228,18 +233,24 @@ impl Parser {
                 "a local value cannot be used in an integer constant expression",
             ));
         }
-        let owner = id.or_else(|| self.enumerator_owners.get(name).copied());
+        let owner = id
+            .or_else(|| {
+                self.current_enum
+                    .filter(|owner| self.enum_constants.contains_key(&(*owner, name.to_owned())))
+            })
+            .or_else(|| self.enumerator_owners.get(name).copied());
         if let Some(owner) = owner
             && !self.enum_constants.contains_key(&(owner, name.to_owned()))
             && !self.evaluating_enums.contains(&owner)
         {
             self.evaluate_enum(owner, name)?;
         }
+        let owner_id = owner;
         let value = self
             .enum_constants
             .iter()
             .find_map(|((owner, member), value)| {
-                return (member == name && id.is_none_or(|id| *owner == id)).then_some(*value);
+                return (member == name && Some(*owner) == owner_id).then_some(*value);
             })
             .ok_or_else(|| {
                 Diagnostic::new(

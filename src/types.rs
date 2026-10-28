@@ -52,11 +52,14 @@ impl Types {
                     "an enum needs at least one value",
                 ));
             }
+            let mut local_names = HashSet::new();
             for variant in &definition.variants {
-                if matches!(
-                    variant.name.as_str(),
-                    "Self" | "this" | "print" | "move" | "box_int" | "slice"
-                ) || !enumerators.insert(variant.name.clone())
+                if !local_names.insert(variant.name.clone())
+                    || (!definition.scoped
+                        && (matches!(
+                            variant.name.as_str(),
+                            "Self" | "this" | "print" | "move" | "box_int" | "slice"
+                        ) || !enumerators.insert(variant.name.clone())))
                 {
                     return Err(Diagnostic::new(
                         variant.span,
@@ -382,6 +385,9 @@ impl Types {
 
     pub fn enumerator(&self, name: &str) -> Option<(usize, &EnumVariant)> {
         return self.enums.iter().find_map(|definition| {
+            if definition.scoped {
+                return None;
+            }
             definition
                 .variants
                 .iter()

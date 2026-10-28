@@ -34,6 +34,9 @@ impl Analysis {
             .symbols
             .iter()
             .filter_map(|symbol| {
+                if self.scoped_enum_members.contains(&symbol.location) {
+                    return None;
+                }
                 let file_local = symbol.kind == SymbolKind::Function
                     && symbol.detail.split_whitespace().next() == Some("static");
                 if file_local && symbol.location.file != file {

@@ -1,6 +1,58 @@
 mod common;
 
 #[test]
+fn scoped_enums_keep_member_names_separate_and_allow_qualified_constants() {
+    let source = r#"
+        enum class First : uint8_t { Ready = 3, Next = Ready + 1 };
+        enum class Second { Ready = 10, Next = Ready + 1 };
+        enum Plain { Ready = 20 };
+        typedef First Alias;
+        int main() {
+            First a = Alias::Next;
+            Second b = Second::Next;
+            int[First::Ready] values = { 1, 2, 3 };
+            print((int)a);
+            print((int)b);
+            print((int)Ready);
+            print(values[2]);
+            return 0;
+        }
+    "#;
+    let output = common::tracked_run(source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "4\n11\n20\n3\n"
+    );
+}
+
+#[test]
+fn scoped_members_require_qualification_and_remain_distinct_types() {
+    for source in [
+        "enum class A { Ready }; int main() { A value = Ready; return 0; }",
+        "enum class A { Ready }; enum B { Value = Ready }; int main() { return 0; }",
+        "enum class A { Ready = 2 }; int main() { int[Ready] a = {1,2}; return 0; }",
+        "enum class A { Ready, Ready }; int main() { return 0; }",
+        "enum class A { Ready }; enum class B { Ready }; int main() { A a = B::Ready; return 0; }",
+    ] {
+        assert!(crust::compile(source).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
+fn scoped_members_are_omitted_from_unqualified_completion() {
+    let source = "enum class A { Hidden }; enum B { Visible }; int main() { return 0; }";
+    let analysis = crust::analyze(source).unwrap();
+    let completion = analysis.completions_at(0, source.find("return").unwrap());
+    assert!(!completion.iter().any(|symbol| symbol.name == "Hidden"));
+    assert!(completion.iter().any(|symbol| symbol.name == "Visible"));
+}
+
+#[test]
 fn enum_initializers_evaluate_flags_arithmetic_casts_and_prior_enumerators() {
     run(
         r#"

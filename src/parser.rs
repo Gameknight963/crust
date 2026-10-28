@@ -10,8 +10,22 @@ mod integers;
 mod limits;
 mod symbols;
 
-pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
+pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
+    let mut scoped_enums = HashSet::new();
+    let mut position = 0;
+    while position + 2 < tokens.len() {
+        if tokens[position].kind == Token::Enum
+            && matches!(&tokens[position + 1].kind, Token::Identifier(name) if name == "class")
+            && matches!(tokens[position + 2].kind, Token::Identifier(_))
+        {
+            scoped_enums.insert(tokens[position].span.start);
+            tokens.remove(position + 1);
+        }
+        position += 1;
+    }
     let mut parser = Parser {
+        scoped_enums,
+        current_enum: None,
         tokens,
         position: 0,
         struct_names: Vec::new(),
@@ -171,6 +185,8 @@ pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    scoped_enums: HashSet<usize>,
+    current_enum: Option<usize>,
     file_locals: HashMap<(usize, String), String>,
     file_ends: Vec<usize>,
     nesting: usize,
@@ -898,6 +914,8 @@ impl Parser {
         let start = self.advance().span;
         let (name, span) = self.identifier()?;
         let id = self.enum_id(name, span);
+        let saved_enum = self.current_enum.replace(id);
+        let scoped = self.scoped_enums.contains(&start.start);
         let native_name = if self.consume(&Token::Equal) {
             Some(native_tag_name(self.advance(), "enum")?)
         } else {
@@ -959,7 +977,9 @@ impl Parser {
             self.expect(Token::Semicolon, "expected ';' after enum definition")?
         };
         self.evaluating_enums.remove(&id);
+        self.current_enum = saved_enum;
         return Ok(EnumDefinition {
+            scoped,
             native_name,
             name_span: span,
             header_span: Span {

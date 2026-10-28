@@ -418,6 +418,7 @@ impl Qualifiers {
 
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
+    pub scoped: bool,
     pub native_name: Option<String>,
     pub name_span: Span,
     pub header_span: Span,
