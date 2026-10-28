@@ -37,3 +37,9 @@ represent. Crust can then wrap that function in an owning type with safe methods
 The [binding tests](../tests/bindings.rs) validate selected header declarations
 through Clang and native execution. [Project integration tests](../tests/projects.rs)
 exercise compiler and linker behavior across project inputs.
+
+Native wrapper tests also execute atomic and thread-local accessors, flexible
+array allocation, variable-length arrays, complex arithmetic, 128-bit integer
+arithmetic, and function/string/floating macro accessors. Their public signatures
+use scalar values and opaque pointers. The native compiler owns the underlying
+representations and storage rules.

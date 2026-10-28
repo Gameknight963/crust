@@ -173,3 +173,27 @@ rules as handwritten `extern` declarations.
 For an existing DLL, put its import library in `link-inputs` and its DLL in
 `runtime-libraries`. The build deploys the DLL beside the executable and creates
 its application manifest. Runtime files also propagate through linked targets.
+
+## Native macro wrappers
+
+A typed header function can expose a function-like macro, string macro, or
+floating macro. For example:
+
+```c
+#define API_DOUBLE(value) ((value) + (value))
+#define API_NAME "example"
+#define API_SCALE 1.5L
+
+static inline int api_double(int value) { return API_DOUBLE(value); }
+static inline const char *api_name(void) { return API_NAME; }
+static inline long double api_scale(void) { return API_SCALE; }
+```
+
+```text
+crust import-c native.h --function api_double --function api_name --function api_scale --output bindings.cr
+```
+
+The native compiler expands the macros inside their wrappers. Crust checks the
+wrapper signatures, and callers use the generated functions inside `unsafe`.
+The same pattern exposes native atomic and thread-local storage through accessor
+functions.
