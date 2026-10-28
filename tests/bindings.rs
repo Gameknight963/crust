@@ -904,8 +904,26 @@ fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarati
         selected.variables.push("value".to_owned());
         assert!(generate(&path, &selected).is_err(), "{source}");
     }
+}
+
+#[test]
+fn assembler_labels_retain_native_headers_and_link_to_the_declared_symbol() {
     let path = header("int selected(void); int selected(void) __asm__(\"actual_symbol\");");
-    assert!(generate(&path, &options(&["selected"])).is_err());
+    let bindings = generate(&path, &options(&["selected"])).unwrap();
+    assert!(bindings.contains("extern header"));
+    let generated = crust::compile(&format!(
+        "{bindings} int main() {{ unsafe {{ print(selected()); }} return 0; }}"
+    ))
+    .unwrap();
+    let output = common::tracked_generated_c(
+        &format!("{generated}\nint actual_symbol(void) {{ return 42; }}"),
+        false,
+    );
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n"
+    );
 }
 
 #[cfg(windows)]

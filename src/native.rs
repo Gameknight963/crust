@@ -231,8 +231,24 @@ fn invoke_compiler(
     for directory in &options.library_dirs {
         command.arg("-L").arg(paths.input(directory));
     }
+    let windows_msvc = cfg!(windows) && !options.libraries.is_empty() && !windows_gnu(&compiler);
     for library in &options.libraries {
-        command.arg(format!("-l{library}"));
+        // Resolve configured MSVC library directories before invoking the linker.
+        // Explicit inputs use the same Unicode paths as linked target archives.
+        let resolved = if windows_msvc {
+            options
+                .library_dirs
+                .iter()
+                .map(|directory| directory.join(format!("{library}.lib")))
+                .find(|path| path.is_file())
+        } else {
+            None
+        };
+        if let Some(path) = resolved {
+            command.arg(paths.input(&path));
+        } else {
+            command.arg(format!("-l{library}"));
+        }
     }
     let result = command.arg("-o").arg(paths.output(executable))
         .output()

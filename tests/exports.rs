@@ -123,18 +123,26 @@ fn exported_functions_preserve_native_calling_conventions_and_function_pointer_t
             return 0;
         }
     "#;
-    let c = format!(
-        "{}\nint32_t native_call(void) {{ return exported(41); }}",
-        crust::compile(source).unwrap()
-    );
-    let output = common::tracked_generated_c(&c, false);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "42\n7\n9\n"
-    );
+    let conventions: &[&str] = if cfg!(windows) {
+        &["__cdecl", "__stdcall"]
+    } else {
+        &["__cdecl"]
+    };
+    for convention in conventions {
+        let source = source.replace("__stdcall", convention);
+        let c = format!(
+            "{}\nint32_t native_call(void) {{ return exported(41); }}",
+            crust::compile(&source).unwrap()
+        );
+        let output = common::tracked_generated_c(&c, false);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+            "42\n7\n9\n"
+        );
+    }
 }

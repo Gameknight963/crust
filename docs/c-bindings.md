@@ -63,6 +63,9 @@ Keyword-named C tags use opaque aliases such as `struct c_init = "init";` and
 Selection names the native declaration. A later macro with the same
 name does not redirect the binding.
 
+Declarations with assembler symbol labels retain an `extern header` reference.
+The native compiler uses that header to preserve the symbol's linker name.
+
 C array parameters become pointers, including `[static N]` and `restrict`
 declarators. Their minimum-length and aliasing requirements belong to the unsafe
 caller contract. The [C algorithms example](../examples/c_algorithms.cr) sorts,

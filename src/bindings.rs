@@ -289,7 +289,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                 .iter()
                 .any(|node| kind(node) == "AsmLabelAttr")
             {
-                return Err(format!("C {label} '{name}' uses an assembler symbol label"));
+                has_header_declarations = true;
             }
             if !function && !declaration["tls"].is_null() {
                 return Err(format!(
