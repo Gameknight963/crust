@@ -99,9 +99,12 @@ native API between independently compiled targets.
 | Program entry | `main` |
 
 Generic names include a file-local key when their declaration is static.
-Generated type, pointer, array, callback, local, and temporary names also use
-compiler-assigned IDs. These IDs describe one compilation and can change when
-declarations or instantiations change. Quoted C names define the maintained
+Native debug records use source names for ordinary locals, parameters, fields,
+and struct tags. Generic and header-adjacent types have readable names with
+compiler IDs. Shadowing and C name collisions require generated spellings.
+Pointer, array, callback, and temporary names also use compiler-assigned IDs.
+These IDs describe one compilation and can change when declarations or
+instantiations change. Quoted C names define the maintained
 native interface.
 
 Source `main()` and `main(void)` both emit a C `main(void)`. The supported

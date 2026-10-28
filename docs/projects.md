@@ -261,8 +261,16 @@ debug = true
 
 The driver passes `-g` to the C compiler for generated code and native sources.
 Source line records point back to the original `.cr` files, including imports
-and automatic cleanup. Native debuggers display the generated C names for
-variables and functions.
+and automatic cleanup. Native debuggers retain source names for parameters,
+locals, and fields. Ordinary structs use their source tag names. Generic types
+and types compiled alongside native headers use readable names containing their
+source spelling and a compiler ID.
+
+Shadowed bindings use distinct names containing the source spelling so cleanup
+can reach outer variables. C keywords, header macros, reserved identifiers,
+and names needed by generated C keep generated spellings. Static storage,
+function symbols, pointer aliases, and temporary values also have generated
+names.
 
 - Windows builds using the MSVC ABI produce a `.pdb` beside the executable or DLL
 - macOS builds produce an adjacent `.dSYM` bundle

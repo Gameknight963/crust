@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 mod globals;
+mod names;
 
 use crate::ast::*;
 use crate::check::{CheckedProgram, FunctionAnalysis};
@@ -59,6 +60,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         output: format!("{native_headers}{RUNTIME}{NUMERIC_RUNTIME}"),
         indent: 0,
         next_name: 0,
+        debug_names: names::Names::new(program),
         scopes: vec![Scope::default()],
         return_types: program
             .functions
@@ -86,6 +88,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         function_values: &empty_analysis.function_values,
     };
     let source_declaration_position = emitter.output.len();
+    emitter.type_names(program);
     emitter
         .return_types
         .insert(String::from("print"), Type::Void);
@@ -150,7 +153,11 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         if !info.complete {
             emitter.line(&format!("#pragma push_macro(\"{tag}\")\n#undef {tag}"));
         }
-        emitter.line(&format!("typedef {kind} {tag} crust_type_{id};"));
+        if info.complete {
+            emitter.line(&format!("{kind} {tag};"));
+        } else {
+            emitter.line(&format!("typedef {kind} {tag} crust_type_{id};"));
+        }
         if !info.complete {
             emitter.line(&format!("#pragma pop_macro(\"{tag}\")"));
         }
@@ -214,6 +221,10 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         emitter.constants = &analysis.constants;
         emitter.function_values = &analysis.function_values;
         emitter.line("");
+        emitter.debug_names.begin_function();
+        for (index, parameter) in function.parameters.iter().enumerate() {
+            emitter.binding_name(&format!("crust_arg_{index}"), &parameter.name);
+        }
         emitter.source_offset = Some(function.span.start);
         emitter.line(&header(function, checked.kind));
         let mut scope = Scope::default();
@@ -235,6 +246,9 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         }
         emitter.block_with_scope(&function.body, scope);
         emitter.source_offset = None;
+        for index in 0..function.parameters.len() {
+            emitter.line(&format!("#undef crust_arg_{index}"));
+        }
     }
     if emitter.runtime_files_used {
         let names = sources
@@ -379,6 +393,7 @@ struct Emitter<'checked> {
     output: String,
     indent: usize,
     next_name: usize,
+    debug_names: names::Names,
     scopes: Vec<Scope>,
     return_types: HashMap<String, Type>,
     types: &'checked Types,
@@ -656,6 +671,7 @@ impl Emitter<'_> {
             } => {
                 let value = self.value_expression(initializer);
                 let local = self.fresh_name("local");
+                self.binding_name(&local, name);
                 self.line(&format!("{} {local} = {value};", c_type(*ty)));
                 let live = if matches!(ty, Type::Struct(_) | Type::Array(_)) && self.types.owns(*ty)
                 {

@@ -103,7 +103,8 @@ fn native_locations_and_debug_records_follow_imported_source_and_closing_braces(
     let ir = std::fs::read_to_string(ir_path).unwrap();
     assert!(
         ir.lines()
-            .any(|line| line.contains("!DILocalVariable(") && line.contains("line: 3,")),
+            .any(|line| line.contains("!DILocalVariable(name: \"answer\"")
+                && line.contains("line: 3,")),
         "{ir}"
     );
     assert!(
@@ -160,5 +161,71 @@ fn native_line_filenames_preserve_quotes_backslashes_question_marks_and_utf8() {
         !crate::compile("int main() { return 0; }")
             .unwrap()
             .contains("#line")
+    );
+}
+
+#[test]
+fn debug_records_keep_source_parameters_locals_fields_and_type_names() {
+    let directory = directory("source-names");
+    let entry = directory.join("names.cr");
+    std::fs::write(
+        &entry,
+        r#"
+struct Point { int x; int y; };
+struct Pair<T> { T first; T second; };
+enum class Color { Red, Blue };
+int inspect(int input) {
+    Point position = { .x = input, .y = 2 };
+    Pair<int> pair = { .first = position.x, .second = position.y };
+    Color color = Color::Red;
+    int score = pair.first + pair.second;
+    return score + (int)color;
+}
+int main() { return inspect(40); }
+"#,
+    )
+    .unwrap();
+    let sources = crate::source::SourceSet::load(&entry).unwrap();
+    let c_path = directory.join("names.c");
+    std::fs::write(&c_path, sources.compile().unwrap()).unwrap();
+    let ir_path = directory.join("names.ll");
+    let mut command = Command::new("clang");
+    configure_windows_toolchain(&mut command);
+    let output = command
+        .args(["-std=c11", "-g", "-S", "-emit-llvm"])
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&ir_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ir = std::fs::read_to_string(ir_path).unwrap();
+    for name in ["input", "position", "pair", "color", "score"] {
+        assert!(
+            ir.contains(&format!("!DILocalVariable(name: \"{name}\"")),
+            "missing variable {name}: {ir}"
+        );
+    }
+    for name in ["x", "y", "first", "second"] {
+        assert!(
+            ir.contains(&format!("DW_TAG_member, name: \"{name}\"")),
+            "missing field {name}: {ir}"
+        );
+    }
+    assert!(
+        ir.contains("DW_TAG_structure_type, name: \"Point\""),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("DW_TAG_typedef, name: \"crust_Color_0\""),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("DW_TAG_structure_type, name: \"crust_Pair_int_"),
+        "{ir}"
     );
 }

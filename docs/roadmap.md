@@ -87,6 +87,7 @@
 - Transitive native library names and search directories supplied by linked library targets
 - Shared-library targets, Windows import libraries and DLL deployment, transitive linking, and runtime dependency paths
 - Configured C runtime libraries with transitive deployment, input protection, and metadata
+- Source names for native debug locals, parameters, fields, and readable concrete types
 - Source line mapping in generated C for native function, expression, and cleanup locations
 - Per-target native debug information with PDB validation, debug bundle recovery, and protected symbol outputs
 - Native address/undefined sanitizer instrumentation with transitive library settings and executed sanitizer probes
@@ -116,7 +117,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
 - [x] Compiler, LSP, and editor release packages with native compiler setup
-- [ ] VS Code native debugger launch and original source names in debug information
+- [x] VS Code native debugger launch and original source names in debug information
 - [x] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
 - [x] Build and maintain the release validation application
 
@@ -124,7 +125,7 @@ files, a native C library, containers, files, and recoverable errors.
 
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Use `crust.toml` as the authoritative project configuration
-- Preserve source variable and type names in native debug information
+- Extend native debug names to static storage and improve source spellings for shadowed bindings
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
 source outlines, reference searches, rename, and scope and member completion.

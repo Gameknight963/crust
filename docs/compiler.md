@@ -110,8 +110,12 @@ Generated function bodies use `#line` directives to retain source filenames and
 line numbers. Expressions retain their own locations, and scope cleanup maps to
 the closing brace. Source maps follow imported files and accept LF, CRLF, and
 bare CR line endings. Clang debug records retain these locations when the C is
-compiled with debug information. Native variable and function names follow the
-compiler's generated C names.
+compiled with debug information. Locals, parameters, fields, and struct tags
+retain source names where C permits them. Generated identifier macros preserve
+those names without changing evaluation or ownership. Shadowed locals have
+unique C spellings so cleanup inside an inner scope reaches each owner.
+See [native debug information](projects.md#native-debug-information) for naming
+rules and collision handling.
 
 The [ABI reference](abi.md) lists the current layouts, method parameters,
 linkage, and generated naming scheme.

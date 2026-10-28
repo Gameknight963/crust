@@ -73,7 +73,10 @@ Enable debug information in the target's `crust.toml` configuration:
 debug = true
 ```
 
-Native debugger symbols use generated C names for variables and functions.
+Native debugger symbols retain source names for locals, parameters, fields,
+and ordinary struct types. Generic types have readable names with compiler IDs.
+See [native debug information](../../docs/projects.md#native-debug-information)
+for shadowing and C name collisions.
 
 ## Development checks
 
