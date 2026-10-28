@@ -15,7 +15,7 @@ struct Buffer<T> {
                 return Result<Self, AllocationFailure<T>>::failure(
                     (AllocationFailure<T>){ .capacity_overflow = move(initial) });
             }
-            T* data = (T*)malloc(length * sizeof(T));
+            T* data = (T*)allocate_aligned(length * sizeof(T), alignof(T));
             if (data == 0) {
                 return Result<Self, AllocationFailure<T>>::failure(
                     (AllocationFailure<T>){ .out_of_memory = move(initial) });
@@ -55,7 +55,7 @@ struct Buffer<T> {
     }
 
     ~Buffer() {
-        unsafe { free(this.data); }
+        unsafe { deallocate_aligned(this.data, alignof(T)); }
     }
 };
 

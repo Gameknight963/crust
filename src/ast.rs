@@ -491,6 +491,7 @@ pub struct ArrayType {
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
+    pub external: bool,
     pub tagged: bool,
     pub name_span: Span,
     pub header_span: Span,
@@ -502,6 +503,7 @@ pub struct StructDefinition {
 
 #[derive(Debug, Clone)]
 pub struct Field {
+    pub native_name: Option<String>,
     pub declaration_span: Span,
     pub private: bool,
     pub name: String,

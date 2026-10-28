@@ -28,14 +28,14 @@ struct Vector<T> {
             if (capacity > ~(size_t)0 / sizeof(T)) {
                 return Result<Unit, AllocError>::failure(AllocError::CapacityOverflow);
             }
-            T* next = (T*)malloc(capacity * sizeof(T));
+            T* next = (T*)allocate_aligned(capacity * sizeof(T), alignof(T));
             if (next == 0) {
                 return Result<Unit, AllocError>::failure(AllocError::OutOfMemory);
             }
             for (size_t i = 0; i < this.length; i += 1) {
                 init(next + i, move(this.data[i]));
             }
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
             this.data = next;
             this.capacity = capacity;
         }
@@ -147,7 +147,7 @@ struct Vector<T> {
     ~Vector() {
         this.clear();
         unsafe {
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
         }
     }
 };

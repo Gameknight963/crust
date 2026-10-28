@@ -123,13 +123,29 @@ impl Types {
                 });
                 continue;
             };
-            if program.native_tags.contains_key(&id) {
+            if definition.external {
+                let native = program.native_tags.get(&id).unwrap_or(name);
+                let kind = if program.union_tags.contains(&id) {
+                    "union"
+                } else {
+                    "struct"
+                };
+                if let Some(previous) = native_kinds.insert(native.clone(), kind)
+                    && previous != kind
+                {
+                    return Err(Diagnostic::new(
+                        *span,
+                        format!("native tag '{native}' is already declared as {previous}"),
+                    ));
+                }
+            }
+            if !definition.external && program.native_tags.contains_key(&id) {
                 return Err(Diagnostic::new(
                     definition.span,
                     "a native tag alias must remain opaque",
                 ));
             }
-            if definition.fields.is_empty() {
+            if definition.fields.is_empty() && !definition.external {
                 return Err(Diagnostic::new(
                     definition.span,
                     if program.union_tags.contains(&id) {
@@ -162,7 +178,11 @@ impl Types {
                 is_union: program.union_tags.contains(&id) && !definition.tagged,
                 complete: true,
                 name: name.clone(),
-                native_name: None,
+                native_name: if definition.external {
+                    Some(program.native_tags.get(&id).unwrap_or(name).clone())
+                } else {
+                    None
+                },
                 fields: definition.fields.clone(),
                 owns: false,
                 has_destructor: definition.has_destructor,
@@ -184,6 +204,15 @@ impl Types {
             order: Vec::new(),
         };
         for (id, info) in types.structs.iter().enumerate() {
+            if info.complete
+                && info.native_name.is_some()
+                && types.contains_borrows(Type::Struct(id))
+            {
+                return Err(Diagnostic::new(
+                    program.struct_names[id].1,
+                    "native records require C values and raw pointers",
+                ));
+            }
             if types.contains_borrows(Type::Struct(id)) && info.is_union {
                 return Err(Diagnostic::new(
                     program.struct_names[id].1,

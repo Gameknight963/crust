@@ -102,6 +102,9 @@ def main():
     header_only = command([str(compiler), "run", "--project", "examples/header_only_project"], cwd=extracted)
     if header_only != "42\n1":
         raise RuntimeError(f"Unexpected header-only example output: {header_only!r}")
+    records = command([str(compiler), "run", "--project", "examples/records_project"], cwd=extracted)
+    if records != "42\n5\n1\n43":
+        raise RuntimeError(f"Unexpected native record example output: {records!r}")
     contents = (extracted / "README.md").read_bytes()
     lines = contents.count(b"\n")
     counts = command([str(compiler), "run", "--project", "examples/crustwc", "--", "--utf8", "README.md"], cwd=extracted)

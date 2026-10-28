@@ -9,13 +9,15 @@ pub(super) fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--typedef <name>] [--macro <name>] [options]"
+            "Usage: crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--struct <tag>] [--union <tag>] [--typedef <name>] [--macro <name>] [options]"
         );
         println!("  --function <name>     Select a function, repeat for additional functions");
         println!(
             "  --variable <name>     Select an external variable, repeat for additional variables"
         );
         println!("  --enum <tag>          Select a named enum, repeat for additional enums");
+        println!("  --struct <tag>       Select complete struct fields and native layout");
+        println!("  --union <tag>        Select complete union fields and native layout");
         println!("  --typedef <name>      Select a typedef, repeat for additional aliases");
         println!("  --macro <name>        Select an integer or boolean macro constant");
         println!("  --output <file.cr>    Write UTF-8 bindings to a file, otherwise use stdout");
@@ -52,6 +54,20 @@ pub(super) fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
                     .ok_or("--enum needs a tag name")?
                     .into_string()
                     .map_err(|_| "enum tags must be ASCII")?,
+            ),
+            Some("--struct") => options.structs.push(
+                arguments
+                    .next()
+                    .ok_or("--struct needs a tag name")?
+                    .into_string()
+                    .map_err(|_| "struct tags must be ASCII")?,
+            ),
+            Some("--union") => options.unions.push(
+                arguments
+                    .next()
+                    .ok_or("--union needs a tag name")?
+                    .into_string()
+                    .map_err(|_| "union tags must be ASCII")?,
             ),
             Some("--typedef") => options.typedefs.push(
                 arguments

@@ -45,12 +45,13 @@ impl Renderer<'_> {
             }
             Type::Struct(id) => {
                 let info = &self.types.structs[id];
-                if info.complete {
+                if info.complete && info.native_name.is_none() {
                     return Err(Diagnostic::new(
                         span,
                         "C header generation for structs and unions requires a native opaque tag",
                     ));
                 }
+                self.native_enums |= info.complete;
                 let name = info
                     .native_name
                     .clone()

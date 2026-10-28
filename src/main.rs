@@ -56,7 +56,7 @@ fn run() -> Result<ExitCode, String> {
         );
         println!("       crust [command] [--project <path>] [--target <name>]");
         println!(
-            "       crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--typedef <name>] [--macro <name>]"
+            "       crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--struct <tag>] [--union <tag>] [--typedef <name>] [--macro <name>]"
         );
         println!("Project commands discover crust.toml in the current directory or its parents.");
         println!("A source filename compiles and runs that file.");

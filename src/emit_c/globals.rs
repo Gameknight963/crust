@@ -2,6 +2,7 @@ use super::*;
 
 impl<'checked> Emitter<'checked> {
     pub(super) fn global_definitions(&mut self, checked: &'checked CheckedProgram) {
+        self.native_field_macros(false);
         for global in &checked.program.globals {
             if global.external {
                 continue;
@@ -31,6 +32,7 @@ impl<'checked> Emitter<'checked> {
             ));
             self.source_offset = None;
         }
+        self.native_field_macros(true);
     }
 
     fn static_value(&self, expression: &Expression, constants: &HashMap<Span, i128>) -> String {
@@ -71,11 +73,17 @@ impl<'checked> Emitter<'checked> {
                     let mut values = fields
                         .iter()
                         .map(|field| {
-                            format!(
-                                ".crust_field_{} = {}",
-                                field.name,
-                                self.static_value(&field.value, constants)
-                            )
+                            let name = if self.types.structs[id].native_name.is_some() {
+                                self.types.structs[id]
+                                    .fields
+                                    .iter()
+                                    .find(|info| info.name == field.name)
+                                    .and_then(|info| info.native_name.clone())
+                                    .unwrap_or_else(|| field.name.clone())
+                            } else {
+                                format!("crust_field_{}", field.name)
+                            };
+                            format!(".{name} = {}", self.static_value(&field.value, constants))
                         })
                         .collect::<Vec<_>>();
                     if self.types.structs[id].tagged {
@@ -148,10 +156,23 @@ impl<'checked> Emitter<'checked> {
     fn static_place(&self, expression: &Expression, constants: &HashMap<Span, i128>) -> String {
         return match &expression.kind {
             ExpressionKind::Variable { name, .. } => self.scopes[0].variables[name].name.clone(),
-            ExpressionKind::Field { base, name, .. } => format!(
-                "({}).crust_field_{name}",
-                self.static_place(base, constants)
-            ),
+            ExpressionKind::Field { base, name, .. } => {
+                let name = if matches!(self.place_type(base),Type::Struct(id) if self.types.structs[id].native_name.is_some())
+                {
+                    let Type::Struct(id) = self.place_type(base) else {
+                        unreachable!()
+                    };
+                    self.types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|info| info.name == *name)
+                        .and_then(|info| info.native_name.clone())
+                        .unwrap_or_else(|| name.clone())
+                } else {
+                    format!("crust_field_{name}")
+                };
+                format!("({}).{name}", self.static_place(base, constants))
+            }
             ExpressionKind::Index { base, index } => format!(
                 "({}).crust_elements[{}]",
                 self.static_place(base, constants),

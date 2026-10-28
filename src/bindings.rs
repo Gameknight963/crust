@@ -7,6 +7,7 @@ use serde_json::Value;
 
 mod enums;
 mod macros;
+mod records;
 mod render;
 
 #[derive(Debug, Default)]
@@ -18,6 +19,8 @@ pub struct Options {
     pub functions: Vec<String>,
     pub variables: Vec<String>,
     pub enums: Vec<String>,
+    pub structs: Vec<String>,
+    pub unions: Vec<String>,
     pub typedefs: Vec<String>,
     pub macros: Vec<String>,
 }
@@ -164,8 +167,16 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         .chain(&options.typedefs)
         .cloned()
         .collect();
-    if names.is_empty() && options.enums.is_empty() && options.macros.is_empty() {
-        return Err("select at least one C function, variable, enum, typedef, or macro".to_owned());
+    if names.is_empty()
+        && options.enums.is_empty()
+        && options.macros.is_empty()
+        && options.structs.is_empty()
+        && options.unions.is_empty()
+    {
+        return Err(
+            "select at least one C function, variable, enum, struct, union, typedef, or macro"
+                .to_owned(),
+        );
     }
     let mut selected = HashSet::new();
     for name in &names {
@@ -308,15 +319,24 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             Some("__crust_import_probe_"),
         )?
     };
-    let probes: Vec<Value> = serde_json::Deserializer::from_slice(&bytes)
+    let mut probes: Vec<Value> = serde_json::Deserializer::from_slice(&bytes)
         .into_iter()
         .collect::<Result<_, _>>()
         .map_err(|error| error.to_string())?;
-    let reserved: Vec<_> = names.iter().chain(&options.macros).cloned().collect();
+    let (records, record_probes) = records::load(&header, options)?;
+    probes.extend(record_probes);
+    let reserved: Vec<_> = names
+        .iter()
+        .chain(&options.macros)
+        .chain(&options.structs)
+        .chain(&options.unions)
+        .cloned()
+        .collect();
     let mut renderer = render::Renderer::new(&declarations, &probes, &reserved);
     let enums = enums::load(&header, options, &probes)?;
-    let needs_header = !enums.is_empty() || has_header_declarations;
+    let needs_header = !enums.is_empty() || has_header_declarations || !records.is_empty();
     renderer.enums(enums)?;
+    renderer.complete_records(records, &probes)?;
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
     let mut variable_checks = Vec::new();

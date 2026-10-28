@@ -13,6 +13,7 @@ pub(super) struct Renderer {
     callbacks: HashSet<String>,
     functions: HashMap<String, Signature>,
     records: HashMap<String, String>,
+    complete: HashSet<String>,
     enums: HashMap<String, String>,
     names: HashSet<String>,
     next_alias: usize,
@@ -34,6 +35,7 @@ impl Renderer {
             callbacks: HashSet::new(),
             functions: HashMap::new(),
             records: HashMap::new(),
+            complete: HashSet::new(),
             enums: HashMap::new(),
             names,
             next_alias: 0,
@@ -62,7 +64,9 @@ impl Renderer {
 
     pub fn typedef_name(&mut self, native: &str) -> String {
         let name = self.binding_name(native);
-        if !self.enums.values().any(|tag| tag == &name) {
+        if !self.enums.values().any(|tag| tag == &name)
+            && !self.records.values().any(|tag| tag == &name)
+        {
             return name;
         }
         let mut alias = format!("c_{name}");
@@ -135,6 +139,68 @@ impl Renderer {
             name.push('_');
         }
         return name;
+    }
+
+    pub fn complete_records(
+        &mut self,
+        records: Vec<records::Record>,
+        probes: &[Value],
+    ) -> Result<(), String> {
+        for record in &records {
+            let name = self.binding_name(&record.name);
+            let key = format!("{} {}", record.tag, record.name);
+            self.complete.insert(key.clone());
+            self.records.insert(key, name);
+        }
+        for record in records {
+            let name = self.records[&format!("{} {}", record.tag, record.name)].clone();
+            let link = if name == record.name {
+                String::new()
+            } else {
+                format!(" = \"{}\"", record.name)
+            };
+            let mut declaration = format!("extern {} {name}{link} {{\n", record.tag);
+            let occupied: HashSet<_> = record.fields.iter().map(|(name, _)| name.clone()).collect();
+            let mut aliases = HashSet::new();
+            for (native, probe) in &record.fields {
+                let node = probes
+                    .iter()
+                    .find(|node| node["name"] == *probe)
+                    .and_then(|node| type_children(node).next())
+                    .ok_or("Clang omitted a record field type")?;
+                let qualified = Self::unwrap(node)?;
+                if kind(qualified) == "QualType" {
+                    return Err(format!(
+                        "qualified C field '{}.{native}' requires a native accessor",
+                        record.name
+                    ));
+                }
+                let ty = self
+                    .object_type(node)
+                    .map_err(|error| format!("C field '{}.{native}': {error}", record.name))?;
+                let tokens = crate::lexer::tokenize(native).ok();
+                let plain=tokens.is_some_and(|tokens|tokens.len()==2&&matches!(&tokens[0].kind,crate::lexer::Token::Identifier(value) if value==native));
+                let field = if plain {
+                    native.clone()
+                } else {
+                    let mut alias = format!("c_{native}");
+                    while occupied.contains(&alias) || aliases.contains(&alias) {
+                        alias.push('_');
+                    }
+                    alias
+                };
+                aliases.insert(field.clone());
+                let link = if field == *native {
+                    String::new()
+                } else {
+                    format!(" = \"{native}\"")
+                };
+                declaration.push_str(&format!("    {ty} {field}{link};\n"));
+            }
+            declaration.push_str("};");
+            self.declarations.push((None, declaration));
+        }
+        return Ok(());
     }
 
     pub fn declarations(&self, public: bool) -> String {
@@ -296,9 +362,6 @@ impl Renderer {
                     .ok_or_else(|| format!("missing representation for C enum '{name}'"));
             }
             "RecordType" => {
-                if !opaque {
-                    return Err("C aggregates passed by value require a native wrapper".to_owned());
-                }
                 let native = node["decl"]["name"]
                     .as_str()
                     .filter(|name| !name.is_empty())
@@ -312,6 +375,11 @@ impl Renderer {
                     "struct"
                 };
                 let key = format!("{tag} {native}");
+                if !opaque && !self.complete.contains(&key) {
+                    return Err(format!(
+                        "C aggregates passed by value require selecting --{tag} {native} or a native wrapper"
+                    ));
+                }
                 let name = if let Some(name) = self.records.get(&key) {
                     name.clone()
                 } else {

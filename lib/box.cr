@@ -6,7 +6,7 @@ struct Box<T> {
 
     static Result<Self, AllocationFailure<T>> try_create(T value) borrows(value) {
         unsafe {
-            T* data = (T*)malloc(sizeof(T));
+            T* data = (T*)allocate_aligned(sizeof(T), alignof(T));
             if (data == 0) {
                 return Result<Self, AllocationFailure<T>>::failure(
                     (AllocationFailure<T>){ .out_of_memory = move(value) });
@@ -33,7 +33,7 @@ struct Box<T> {
     T take(Self this) borrows(this) {
         unsafe {
             T value = move(*this.data);
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
             this.data = 0;
             return move(value);
         }
@@ -42,7 +42,7 @@ struct Box<T> {
     ~Box() {
         unsafe {
             if (this.data != 0) { destroy(this.data); }
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
         }
     }
 };

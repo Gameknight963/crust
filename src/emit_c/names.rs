@@ -160,7 +160,7 @@ impl Emitter<'_> {
         let native_headers = !program.native_headers.is_empty();
         let mut fields = HashSet::new();
         for (id, info) in self.types.structs.iter().enumerate() {
-            if info.complete {
+            if info.complete && info.native_name.is_none() {
                 let source = &info.name;
                 let readable: String = source
                     .chars()

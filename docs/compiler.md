@@ -428,3 +428,16 @@ metadata. Generic factories and consuming extraction use specialization-aware
 return contracts. A value returned after a fallible store shares a reborrow
 guard with the possible retained value, keeping mutable reference access
 exclusive across success and error paths.
+
+## Native records and alignment
+
+Complete native records bind directly to C tags from included headers. Emission
+checks member types and nonoverlapping declaration order. Small field accessors
+shield C member names from header macros. Their pointer types and reference
+types use pointee typedefs with alignment one, preserving ordinary reference
+behavior for packed fields.
+
+Generic allocation helpers use malloc for fundamental alignments. Over-aligned
+allocations reserve extra space, align the payload, and save the base pointer
+for deallocation. Allocation overflow and failure return null to the fallible
+source-library APIs.

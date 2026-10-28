@@ -120,13 +120,17 @@ pub(super) fn native_bindings(
         }
     }
     for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
-        if !checked.types.structs[id].complete {
+        if !checked.types.structs[id].complete || checked.types.structs[id].native_name.is_some() {
             let location = locate(*span);
             let file_tokens = &tokens[location.file];
             let following = file_tokens
                 .get(file_tokens.partition_point(|token| token.span.start < location.span.end));
-            let declaration = following
-                .is_some_and(|token| matches!(token.kind, Token::Semicolon | Token::Equal));
+            let declaration = following.is_some_and(|token| {
+                matches!(
+                    token.kind,
+                    Token::Semicolon | Token::Equal | Token::LeftBrace
+                )
+            });
             let alias = if !declaration || following.is_some_and(|token| token.kind == Token::Equal)
             {
                 None
@@ -150,6 +154,61 @@ pub(super) fn native_bindings(
                         .unwrap_or_else(|| name.clone()),
                     alias,
                     fixed: !declaration,
+                },
+            );
+        }
+    }
+    for definition in &checked.program.structs {
+        let info = &checked.types.structs[definition.id];
+        if !definition.external {
+            continue;
+        }
+        let name = locate(definition.name_span);
+        let following = tokens[name.file]
+            .get(tokens[name.file].partition_point(|token| token.span.start < name.span.end));
+        bindings.insert(
+            name,
+            NativeBinding {
+                name: info.native_name.clone().unwrap(),
+                alias: if following.is_some_and(|token| token.kind == Token::Equal) {
+                    None
+                } else {
+                    Some(Location {
+                        file: name.file,
+                        span: Span {
+                            start: name.span.end,
+                            end: name.span.end,
+                            column: name.span.column + name.span.end - name.span.start,
+                            ..name.span
+                        },
+                    })
+                },
+                fixed: false,
+            },
+        );
+        for field in &definition.fields {
+            let location = locate(field.span);
+            let range = locate(field.declaration_span);
+            bindings.insert(
+                location,
+                NativeBinding {
+                    name: field
+                        .native_name
+                        .clone()
+                        .unwrap_or_else(|| field.name.clone()),
+                    alias: if field.native_name.is_some() {
+                        None
+                    } else {
+                        Some(Location {
+                            file: range.file,
+                            span: Span {
+                                start: range.span.end,
+                                end: range.span.end,
+                                ..range.span
+                            },
+                        })
+                    },
+                    fixed: false,
                 },
             );
         }
@@ -246,6 +305,7 @@ impl Analysis {
         if matches!(
             symbol.kind,
             SymbolKind::Function
+                | SymbolKind::Field
                 | SymbolKind::Global
                 | SymbolKind::Enum
                 | SymbolKind::Struct

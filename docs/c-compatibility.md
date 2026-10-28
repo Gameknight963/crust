@@ -11,8 +11,8 @@ files to work with C libraries. Generated code targets C11 and uses the host ABI
 | Functions, callbacks, variadic declarations, calling conventions | Yes | Old declarations with unspecified parameter types need explicit prototypes |
 | Named enums and explicit values | Yes | Selected header enums preserve their native representation |
 | Fixed-size arrays and strings | Yes | Variable-length arrays and flexible array members use native wrappers and pointer/length APIs |
-| Ordinary structs and unions | Native source layouts and opaque C tags | Import complete C aggregates, nested anonymous members, and by-value aggregate APIs |
-| Packing, explicit alignment, and bitfields | Through native C wrappers | Import and verify these layouts directly |
+| Ordinary structs and unions | Source layouts, opaque C tags, and selected complete native records with by-value APIs | Extend field imports to arrays, qualifiers, and anonymous aggregates |
+| Packing, explicit alignment, and bitfields | Native record layout, packed-field borrows, and aligned generic allocation | Bitfields use native accessors |
 | External variables, including DLL data | Yes | Source globals use generated symbols and can expose access through exported functions |
 | Source globals and local static storage | Constant initialization and copyable types | Resource-owning static storage requires initialization and shutdown rules |
 | C preprocessor definitions and header preprocessing | Definitions, preprocessing, and selected integer/boolean macro constants | Native wrappers for function, string, and floating macros |

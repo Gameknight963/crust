@@ -1330,7 +1330,7 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Identifiers use ASCII letters, digits, and underscores, starting with a letter or underscore
 - `Self` is recognized as a type name inside struct definitions
 - `print`, `move`, and `slice` tokenize as identifiers
-- Integer literals are unsuffixed, with a separate minus token
+- Integer literals accept C integer suffixes, with a separate minus token
 - Literals support decimal, `0x` hexadecimal, `0b` binary, and leading-zero octal notation
 - Character literals such as `'A'` and `'\n'` produce integer constants
 - Characters use ASCII or byte escapes, including `\xFF`, up to three octal digits, and the standard C single-character escapes
@@ -1343,5 +1343,18 @@ Variadic and fixed function pointer signatures are distinct types. See
 - Whitespace supports LF, CRLF, and CR line endings
 - Unicode is accepted in comments and UTF-8 string literals
 
-Unsupported literal forms produce diagnostics. Examples include `42u` and
-floating-point literals.
+Decimal and hexadecimal floating-point literals accept `f` and `l` suffixes.
+Malformed literals produce diagnostics.
+
+## Native records
+
+`extern struct` and `extern union` definitions describe fields of types supplied
+by a native header. The compiler uses the C type's layout and verifies the
+declared field types and ordering. These types support by-value native calls,
+callbacks, local values, arrays, and source instance methods. Field aliases use
+`int local = "native";` to preserve a C member's name.
+
+Packed records use ordinary struct access and borrowing rules. Generated
+references support unaligned storage. Native C calls through raw pointers retain
+their own alignment requirements. Generic heap containers allocate storage with
+at least their element type's alignment.

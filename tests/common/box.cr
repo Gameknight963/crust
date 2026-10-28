@@ -1,3 +1,5 @@
+extern void* allocate_aligned(size_t bytes, size_t alignment) = "crust_rt_allocate_aligned";
+extern void deallocate_aligned(void* pointer, size_t alignment) = "crust_rt_deallocate_aligned";
 extern void* malloc(size_t bytes);
 extern void free(void* pointer);
 extern void abort();
@@ -7,7 +9,7 @@ struct Box<T> {
 
     static Self create(T value) borrows(value) {
         unsafe {
-            T* data = (T*)malloc(sizeof(T));
+            T* data = (T*)allocate_aligned(sizeof(T), alignof(T));
             if (data == 0) { abort(); }
             init(data, move(value));
             return (Self){ .data = data };
@@ -25,7 +27,7 @@ struct Box<T> {
     T take(Self this) borrows(this) {
         unsafe {
             T value = move(*this.data);
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
             this.data = 0;
             return move(value);
         }
@@ -34,7 +36,7 @@ struct Box<T> {
     ~Box() {
         unsafe {
             if (this.data != 0) { destroy(this.data); }
-            free(this.data);
+            deallocate_aligned(this.data, alignof(T));
         }
     }
 };

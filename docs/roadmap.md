@@ -73,6 +73,10 @@
 - Per-target C preprocessor definitions, including function macros and quoted values
 - Selected integer and boolean C macro constants with native scalar types and checked full-width values
 - Header-local static functions and variables with native compilation and opaque APIs for packed records and bitfields
+- Complete native C struct and union imports with header-verified field types and layouts
+- Safe packed-field access and borrows, plus alignment-aware generic heap allocation
+- Safe untagged-union initialization and assignment with unsafe reads and field borrows
+- Full-expression temporary owners and inferred lifetime retention through reference stores and generic containers
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping

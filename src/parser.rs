@@ -117,6 +117,44 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
                 native_headers.push(name);
             }
         } else if parser.at(&Token::Extern)
+            && matches!(
+                parser
+                    .tokens
+                    .get(parser.position + 1)
+                    .map(|token| &token.kind),
+                Some(Token::Struct | Token::Union)
+            )
+            && parser.tokens.get(parser.position + 3).is_some_and(|token| {
+                matches!(
+                    token.kind,
+                    Token::LeftBrace | Token::Equal | Token::Semicolon
+                )
+            })
+        {
+            let start = parser.advance().span;
+            let token = parser.advance();
+            let (name, name_span) = parser.identifier()?;
+            let id =
+                parser.tagged_struct_id(name.clone(), name_span, token.kind == Token::Union)?;
+            if parser.consume(&Token::Equal) {
+                let native = native_tag_name(
+                    parser.advance(),
+                    if token.kind == Token::Union {
+                        "union"
+                    } else {
+                        "struct"
+                    },
+                )?;
+                parser.native_tags.insert(id, native);
+            } else {
+                parser.native_tags.entry(id).or_insert(name.clone());
+            }
+            if !parser.consume(&Token::Semicolon) {
+                let mut definition = parser.struct_body(id, &name, start, name_span)?;
+                definition.external = true;
+                structs.push(definition);
+            }
+        } else if parser.at(&Token::Extern)
             && parser.next_at(&Token::Enum)
             && parser.tokens.get(parser.position + 3).is_some_and(|token| {
                 matches!(token.kind, Token::LeftBrace | Token::Colon | Token::Equal)
@@ -1188,12 +1226,18 @@ impl Parser {
                 ));
             }
             let ty = self.array_suffix(ty)?;
+            let native_name = if self.native_tags.contains_key(&id) && self.consume(&Token::Equal) {
+                Some(native_tag_name(self.advance(), "field")?)
+            } else {
+                None
+            };
             let declaration_span = Span {
                 end: self.current().span.start,
                 ..member_start
             };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                native_name,
                 declaration_span,
                 name,
                 ty,
@@ -1205,6 +1249,7 @@ impl Parser {
         self.current_struct = previous_owner;
         let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
         return Ok(StructDefinition {
+            external: false,
             tagged: self.tagged_unions.contains(&start.start),
             name_span,
             header_span: Span {

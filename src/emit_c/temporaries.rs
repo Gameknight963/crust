@@ -13,14 +13,14 @@ fn drop_name(ty: Type) -> String {
 impl Emitter<'_> {
     pub(super) fn temporary_runtime(&mut self) {
         self.line(
-            "struct crust_temporary { void *value; void (*drop)(void *); };
-static inline void crust_cleanup_temporaries(struct crust_temporary *values, size_t *count) {
-    while (*count > 0) { --*count; values[*count].drop(values[*count].value); }
+            "struct crust_temporary { void *crust_value; void (*crust_drop)(void *); };
+static inline void crust_cleanup_temporaries(struct crust_temporary *crust_values, size_t *crust_count) {
+    while (*crust_count > 0) { --*crust_count; crust_values[*crust_count].crust_drop(crust_values[*crust_count].crust_value); }
 }",
         );
         for id in 0..self.types.structs.len() {
             if self.types.owns(Type::Struct(id)) {
-                self.line(&format!("static inline void {}(void *value) {{ crust_drop_struct_{id}((crust_type_{id} *)value); }}", drop_name(Type::Struct(id))));
+                self.line(&format!("static inline void {}(void *crust_value) {{ crust_drop_struct_{id}(({} *)crust_value); }}", drop_name(Type::Struct(id)),native_records::unaligned_name(Type::Struct(id))));
             }
         }
     }

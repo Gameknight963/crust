@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 mod globals;
 mod names;
+mod native_records;
 mod temporaries;
 
 use crate::ast::*;
@@ -140,9 +141,10 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
             definition.id
         ));
     }
+    emitter.unaligned_scalar_types();
     for id in 0..checked.types.structs.len() {
         let info = &checked.types.structs[id];
-        let tag = if info.complete {
+        let tag = if info.complete && info.native_name.is_none() {
             format!("crust_struct_{id}")
         } else {
             info.native_name
@@ -150,20 +152,22 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
                 .unwrap_or_else(|| info.name.clone())
         };
         let kind = if info.is_union { "union" } else { "struct" };
-        if !info.complete {
+        if !info.complete || info.native_name.is_some() {
             emitter.line(&format!("#pragma push_macro(\"{tag}\")\n#undef {tag}"));
         }
-        if info.complete {
+        if info.complete && info.native_name.is_none() {
             emitter.line(&format!("{kind} {tag};"));
         } else {
             emitter.line(&format!("typedef {kind} {tag} crust_type_{id};"));
         }
-        if !info.complete {
+        emitter.unaligned_type(Type::Struct(id));
+        if !info.complete || info.native_name.is_some() {
             emitter.line(&format!("#pragma pop_macro(\"{tag}\")"));
         }
     }
     for id in 0..checked.types.arrays.len() {
         emitter.line(&format!("struct crust_array_{id};"));
+        emitter.unaligned_type(Type::Array(id));
     }
     let mut declared = HashSet::new();
     for id in 0..checked.types.pointers.len() {
@@ -173,6 +177,7 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         emitter.type_declaration(Type::Function(id), &mut declared);
     }
     emitter.struct_definitions();
+    emitter.native_record_checks();
     for variable in &program.globals {
         emitter.line(&format!(
             "{}{}{}{}{} {};",
@@ -311,7 +316,7 @@ pub(crate) fn c_type(ty: Type) -> String {
             volatile,
         } => format!(
             "{}{}{} *",
-            c_type(pointee.ty()),
+            native_records::unaligned_name(pointee.ty()),
             if mutable { "" } else { " const" },
             if volatile { " volatile" } else { "" }
         ),
@@ -457,6 +462,7 @@ impl Emitter<'_> {
                     if pointer.mutable { "" } else { " const" },
                     if pointer.volatile { " volatile" } else { "" }
                 ));
+                self.unaligned_type(ty);
             }
             Type::Function(id) => {
                 let function = self.types.function_types[id].clone();
@@ -497,9 +503,9 @@ impl Emitter<'_> {
                 ("div", "/"),
                 ("rem", "%"),
             ] {
-                self.line(&format!("static inline {ty} crust_rt_u{bits}_{name}({ty} a, {ty} b, const char *crust_file, size_t line, size_t column) {{"));
+                self.line(&format!("static inline {ty} crust_rt_u{bits}_{name}({ty} crust_a, {ty} crust_b, const char *crust_file, size_t crust_line, size_t crust_column) {{"));
                 self.indent += 1;
-                self.line("(void)crust_file; (void)line; (void)column;");
+                self.line("(void)crust_file; (void)crust_line; (void)crust_column;");
                 if name == "div" || name == "rem" {
                     let reason = if name == "div" {
                         "division by zero"
@@ -507,14 +513,14 @@ impl Emitter<'_> {
                         "remainder by zero"
                     };
                     self.line(&format!(
-                        "if (b == 0) {{ crust_rt_fail(\"{reason}\", crust_file, line, column); }}"
+                        "if (crust_b == 0) {{ crust_rt_fail(\"{reason}\", crust_file, crust_line, crust_column); }}"
                     ));
                 }
-                self.line(&format!("return ({ty})(a {symbol} b);"));
+                self.line(&format!("return ({ty})(crust_a {symbol} crust_b);"));
                 self.indent -= 1;
                 self.line("}");
             }
-            self.line(&format!("static inline {ty} crust_rt_u{bits}_neg({ty} value, const char *crust_file, size_t line, size_t column) {{ (void)crust_file; (void)line; (void)column; return ({ty})(0 - value); }}"));
+            self.line(&format!("static inline {ty} crust_rt_u{bits}_neg({ty} crust_value, const char *crust_file, size_t crust_line, size_t crust_column) {{ (void)crust_file; (void)crust_line; (void)crust_column; return ({ty})(0 - crust_value); }}"));
         }
     }
 
@@ -535,7 +541,7 @@ impl Emitter<'_> {
             }
             let Type::Struct(id) = ty else { unreachable!() };
             let info = &self.types.structs[*id];
-            if !info.complete {
+            if !info.complete || info.native_name.is_some() {
                 continue;
             }
             let kind = if info.is_union { "union" } else { "struct" };
@@ -563,14 +569,20 @@ impl Emitter<'_> {
             if let Type::Array(id) = ty {
                 if self.types.owns(*ty) {
                     let array = self.types.arrays[*id];
-                    self.line(&format!("static inline void crust_drop_array_{id}(struct crust_array_{id} *value) {{"));
+                    self.line(&format!(
+                        "static inline void crust_drop_array_{id}({} *crust_value) {{",
+                        native_records::unaligned_name(*ty)
+                    ));
                     self.indent += 1;
                     self.line(&format!(
                         "for (size_t crust_index = {}; crust_index > 0; --crust_index) {{",
                         array.length
                     ));
                     self.indent += 1;
-                    self.drop_value(array.element, "value->crust_elements[crust_index - 1]");
+                    self.drop_value(
+                        array.element,
+                        "crust_value->crust_elements[crust_index - 1]",
+                    );
                     self.indent -= 1;
                     self.line("}");
                     self.indent -= 1;
@@ -582,19 +594,28 @@ impl Emitter<'_> {
             let info = &self.types.structs[*id];
             if info.owns {
                 self.line(&format!(
-                    "static inline void crust_drop_struct_{id}(crust_type_{id} *value) {{"
+                    "static inline void crust_drop_struct_{id}({} *crust_value) {{",
+                    native_records::unaligned_name(*ty)
                 ));
                 self.indent += 1;
-                self.line("(void)value;");
+                self.line("(void)crust_value;");
                 if info.has_destructor {
-                    self.line(&format!("{}(value);", function_name(&destructor_name(*id))));
+                    self.line(&format!(
+                        "{}(crust_value);",
+                        function_name(&destructor_name(*id))
+                    ));
                 }
                 for (index, field) in info.fields.iter().enumerate().rev() {
                     if info.tagged {
-                        self.line(&format!("if (value->crust_tag == {}) {{", index));
+                        self.line(&format!("if (crust_value->crust_tag == {}) {{", index));
                         self.indent += 1;
                     }
-                    self.drop_value(field.ty, &format!("value->crust_field_{}", field.name));
+                    let place = if info.native_name.is_some() {
+                        format!("*crust_native_field_mut_{id}_{}(crust_value)", field.name)
+                    } else {
+                        format!("crust_value->crust_field_{}", field.name)
+                    };
+                    self.drop_value(field.ty, &place);
                     if info.tagged {
                         self.indent -= 1;
                         self.line("}");
@@ -1356,6 +1377,20 @@ impl Emitter<'_> {
             }
             ExpressionKind::StructLiteral { fields, .. } => {
                 let ty = self.expression_type(expression);
+                if let Type::Struct(id) = ty
+                    && self.types.structs[id].native_name.is_some()
+                {
+                    let local = self.fresh_name("native_record");
+                    self.line(&format!("{} {local} = {{0}};", c_type(ty)));
+                    for field in fields {
+                        let value = self.value_expression(&field.value);
+                        self.line(&format!(
+                            "*crust_native_field_mut_{id}_{}(&{local}) = {value};",
+                            field.name
+                        ));
+                    }
+                    return Some(local);
+                }
                 let mut values = Vec::new();
                 if let Type::Struct(id) = ty
                     && self.types.structs[id].tagged
@@ -1692,6 +1727,16 @@ impl Emitter<'_> {
         };
         let place = self.place(base);
         if let Type::Struct(id) = self.place_type(base)
+            && self.types.structs[id].native_name.is_some()
+        {
+            let access = if self.place_mutable(base) {
+                "mut"
+            } else {
+                "const"
+            };
+            return format!("(*crust_native_field_{access}_{id}_{name}(&({place})))");
+        }
+        if let Type::Struct(id) = self.place_type(base)
             && self.types.structs[id].tagged
         {
             let index = self.types.structs[id]
@@ -1987,6 +2032,30 @@ const RUNTIME: &str = r#"/* Generated by Crust. */
 #include <stdlib.h>
 #include <float.h>
 #include <math.h>
+#include <string.h>
+
+static inline void *crust_rt_allocate_aligned(size_t crust_bytes, size_t crust_alignment)
+{
+    if (crust_alignment == 0 || (crust_alignment & (crust_alignment - 1)) != 0) return NULL;
+    if (crust_alignment <= _Alignof(max_align_t)) return malloc(crust_bytes);
+    if (crust_alignment - 1 > SIZE_MAX - sizeof(void *)) return NULL;
+    size_t crust_overhead = crust_alignment - 1 + sizeof(void *);
+    if (crust_bytes > SIZE_MAX - crust_overhead) return NULL;
+    void *crust_base = malloc(crust_bytes + crust_overhead);
+    if (crust_base == NULL) return NULL;
+    uintptr_t crust_address = ((uintptr_t)crust_base + sizeof(void *) + crust_alignment - 1) & ~(uintptr_t)(crust_alignment - 1);
+    memcpy((unsigned char *)crust_address - sizeof(void *), &crust_base, sizeof(crust_base));
+    return (void *)crust_address;
+}
+
+static inline void crust_rt_deallocate_aligned(void *crust_value, size_t crust_alignment)
+{
+    if (crust_value == NULL) return;
+    if (crust_alignment <= _Alignof(max_align_t)) { free(crust_value); return; }
+    void *crust_base;
+    memcpy(&crust_base, (unsigned char *)crust_value - sizeof(void *), sizeof(crust_base));
+    free(crust_base);
+}
 
 #if defined(_WIN32) && defined(CRUST_BUILD_SHARED)
 #define CRUST_EXPORT __declspec(dllexport)
@@ -1996,61 +2065,61 @@ const RUNTIME: &str = r#"/* Generated by Crust. */
 #define CRUST_EXPORT
 #endif
 
-static inline _Noreturn void crust_rt_fail(const char *message, const char *crust_file, size_t line, size_t column)
+static inline _Noreturn void crust_rt_fail(const char *crust_message, const char *crust_file, size_t crust_line, size_t crust_column)
 {
     if (crust_file != NULL) {
-        fprintf(stderr, "%s:%zu:%zu: runtime error: %s\n", crust_file, line, column, message);
+        fprintf(stderr, "%s:%zu:%zu: runtime error: %s\n", crust_file, crust_line, crust_column, crust_message);
     } else {
-        fprintf(stderr, "runtime error at %zu:%zu: %s\n", line, column, message);
+        fprintf(stderr, "runtime error at %zu:%zu: %s\n", crust_line, crust_column, crust_message);
     }
     exit(EXIT_FAILURE);
 }
 
-static inline int32_t crust_rt_range(int64_t value, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_range(int64_t crust_value, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    if (value < INT32_MIN || value > INT32_MAX) {
-        crust_rt_fail("integer overflow", crust_file, line, column);
+    if (crust_value < INT32_MIN || crust_value > INT32_MAX) {
+        crust_rt_fail("integer overflow", crust_file, crust_line, crust_column);
     }
-    return (int32_t)value;
+    return (int32_t)crust_value;
 }
 
-static inline int32_t crust_rt_add(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_add(int32_t crust_a, int32_t crust_b, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    return crust_rt_range((int64_t)a + b, crust_file, line, column);
+    return crust_rt_range((int64_t)crust_a + crust_b, crust_file, crust_line, crust_column);
 }
 
-static inline int32_t crust_rt_sub(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_sub(int32_t crust_a, int32_t crust_b, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    return crust_rt_range((int64_t)a - b, crust_file, line, column);
+    return crust_rt_range((int64_t)crust_a - crust_b, crust_file, crust_line, crust_column);
 }
 
-static inline int32_t crust_rt_mul(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_mul(int32_t crust_a, int32_t crust_b, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    return crust_rt_range((int64_t)a * b, crust_file, line, column);
+    return crust_rt_range((int64_t)crust_a * crust_b, crust_file, crust_line, crust_column);
 }
 
-static inline int32_t crust_rt_neg(int32_t value, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_neg(int32_t crust_value, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    return crust_rt_range(-(int64_t)value, crust_file, line, column);
+    return crust_rt_range(-(int64_t)crust_value, crust_file, crust_line, crust_column);
 }
 
-static inline int32_t crust_rt_div(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_div(int32_t crust_a, int32_t crust_b, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    if (b == 0) { crust_rt_fail("division by zero", crust_file, line, column); }
-    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", crust_file, line, column); }
-    return a / b;
+    if (crust_b == 0) { crust_rt_fail("division by zero", crust_file, crust_line, crust_column); }
+    if (crust_a == INT32_MIN && crust_b == -1) { crust_rt_fail("integer overflow", crust_file, crust_line, crust_column); }
+    return crust_a / crust_b;
 }
 
-static inline int32_t crust_rt_rem(int32_t a, int32_t b, const char *crust_file, size_t line, size_t column)
+static inline int32_t crust_rt_rem(int32_t crust_a, int32_t crust_b, const char *crust_file, size_t crust_line, size_t crust_column)
 {
-    if (b == 0) { crust_rt_fail("remainder by zero", crust_file, line, column); }
-    if (a == INT32_MIN && b == -1) { crust_rt_fail("integer overflow", crust_file, line, column); }
-    return a % b;
+    if (crust_b == 0) { crust_rt_fail("remainder by zero", crust_file, crust_line, crust_column); }
+    if (crust_a == INT32_MIN && crust_b == -1) { crust_rt_fail("integer overflow", crust_file, crust_line, crust_column); }
+    return crust_a % crust_b;
 }
 
-static inline void crust_rt_print(int32_t value)
+static inline void crust_rt_print(int32_t crust_value)
 {
-    printf("%" PRId32 "\n", value);
+    printf("%" PRId32 "\n", crust_value);
 }
 
 "#;

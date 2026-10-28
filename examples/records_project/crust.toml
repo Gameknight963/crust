@@ -1,0 +1,7 @@
+[project]
+name = "native-records"
+
+[[targets]]
+name = "records"
+kind = "executable"
+entry = "main.cr"

@@ -23,6 +23,8 @@ Crust struct with a destructor.
 | `--function <name>` | Select a C function, repeated for each export |
 | `--variable <name>` | Select external C storage, repeated for each variable |
 | `--enum <tag>` | Select a named C enum, repeated for each tag |
+| `--struct <tag>` | Select a complete native struct |
+| `--union <tag>` | Select a complete native union |
 | `--typedef <name>` | Select a C typedef, repeated for each alias |
 | `--macro <name>` | Select an object-like integer or boolean macro constant |
 | `--output <file.cr>` | Write UTF-8 bindings to a file |
@@ -41,6 +43,7 @@ command protects its input header from replacement.
 - Raw pointers with const pointees and multiple pointer levels
 - Adjusted array parameters and top-level parameter qualifiers
 - Opaque struct and union tags
+- Selected complete native records, with scalar, pointer, callback, enum, and selected record fields
 - Named enums with native integer representations and member values
 - Selected scalar, pointer, callback, and opaque aggregate typedefs
 - Function pointers, callback returns, and variadic functions
@@ -52,8 +55,8 @@ command protects its input header from replacement.
 - Integer and boolean macro constants with their native scalar types
 
 Clang preprocesses includes and macros before Crust reads the function types.
-Typedefs resolve to their native types. Structs and unions are exposed through
-opaque pointers. Names reserved by Crust receive a `c_` prefix and retain their
+Typedefs resolve to their native types. Structs and unions use opaque pointers
+unless their complete definitions are selected. Names reserved by Crust receive a `c_` prefix and retain their
 native symbol through a renamed import.
 Keyword-named C tags use opaque aliases such as `struct c_init = "init";` and
 `union c_move = "move";`. Exported C headers retain their original tag names.
@@ -67,8 +70,7 @@ searches, and copies arrays through the C standard library.
 
 The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.
-Aggregates passed by value need a native C wrapper with an exported
-pointer-based interface.
+Aggregates passed by value require selecting their complete definitions.
 
 For header-local static functions and variables, generated bindings retain an
 `extern header` reference. The native compiler compiles their definitions from
@@ -173,6 +175,35 @@ rules as handwritten `extern` declarations.
 For an existing DLL, put its import library in `link-inputs` and its DLL in
 `runtime-libraries`. The build deploys the DLL beside the executable and creates
 its application manifest. Runtime files also propagate through linked targets.
+
+## Complete native records
+
+```text
+crust import-c native.h --struct Point --union Number --function translate --output bindings.cr
+```
+
+Generated records use the header's actual C type:
+
+```c
+extern header "native.h";
+extern struct Point { int x; int y; };
+extern union Number { uint64_t bits; double number; };
+```
+
+Select nested record fields by their tags as well. The native compiler supplies
+size, alignment, packing, and the by-value calling convention. Generated checks
+verify field types and that struct fields are nonoverlapping and listed in
+header order. Packed fields use ordinary Crust access and borrowing rules.
+
+Tag and field aliases preserve native names, for example:
+
+```c
+extern struct Local = "NativeRecord" { int c_init = "init"; };
+```
+
+Header macros are preserved around native field access. Source rename adds an
+alias when needed to preserve the C declaration. Array fields, qualified fields,
+bitfields, and named fields with anonymous aggregate types use native accessors.
 
 ## Native macro wrappers
 
