@@ -511,6 +511,7 @@ pub struct Field {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub return_borrows: Option<Vec<(String, Span)>>,
     pub dll_import: bool,
     pub calling_convention: CallingConvention,
     pub name_span: Span,

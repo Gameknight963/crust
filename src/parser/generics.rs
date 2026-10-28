@@ -268,11 +268,27 @@ impl Parser {
                         "external declarations cannot be generic",
                     ));
                 }
-                let body = if is_struct {
+                let mut body = if is_struct {
                     after
                 } else {
                     closing(&self.tokens, after, Token::LeftParen, Token::RightParen)? + 1
                 };
+                if !is_struct
+                    && matches!(&self.tokens[body].kind, Token::Identifier(name) if name == "borrows")
+                {
+                    if !self
+                        .tokens
+                        .get(body + 1)
+                        .is_some_and(|token| token.kind == Token::LeftParen)
+                    {
+                        return Err(Diagnostic::new(
+                            self.tokens[body].span,
+                            "expected '(' after borrows",
+                        ));
+                    }
+                    body =
+                        closing(&self.tokens, body + 1, Token::LeftParen, Token::RightParen)? + 1;
+                }
                 if !self
                     .tokens
                     .get(body)

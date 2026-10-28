@@ -710,12 +710,13 @@ int main() {
 }
 ```
 
-- A function returning a borrow requires exactly one borrowed parameter
+- A function with one borrowed parameter infers that parameter as the returned borrow's source
 - An instance method's implicit receiver counts as a borrowed parameter
-- The returned reference must originate from that parameter or one of its fields or pointees
-- A mutable borrowed return requires an exclusive borrowed input
+- The returned reference must originate from a declared source parameter or one of its fields or pointees
+- `borrows(a, b)` declares several possible source parameters, and each source stays borrowed while the returned reference is live
+- A mutable borrowed return requires every declared source to be an exclusive borrowed input
 - Return statements can forward the input through calls and local reborrows
-- The caller's returned reference keeps the source borrowed
+- The caller's returned reference keeps its possible sources borrowed
 - A returned loan covers the full input region passed by the caller, even when the function returns one of its subfields
 - Returned references support local bindings, call arguments, assignment, indexing, field access, and method chaining
 - A local binding retains the returned loan until its block ends
@@ -723,7 +724,18 @@ int main() {
 - Condition temporaries end before entering an `if` or loop body
 - Temporary returned loans from the left operand of `&&` or `||` end before the right operand
 - Temporary returned loans from a `?:` condition end before either branch
-- Borrowed return contracts with multiple borrowed inputs require further lifetime syntax
+- Each return path must use a declared source, including every possible origin of a forwarded reference
+
+```c
+int& choose(bool first, int& a, int& b) borrows(a, b) {
+    if (first) return a;
+    return b;
+}
+```
+
+An explicit clause can select a single source when other borrowed parameters
+are present. Methods can name `this` in the clause. Generic functions use the
+same syntax. Reborrowing and forwarding preserve all possible origins.
 
 Returning a reference to a local or an owned value parameter produces a compiler
 diagnostic. Borrowing a temporary owner requires further temporary-lifetime rules.

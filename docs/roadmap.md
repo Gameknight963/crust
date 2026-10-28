@@ -21,6 +21,7 @@
 - Local references with lexical lifetimes, nested reborrows, and scope-based loan release
 - Distinct enum types, explicit representations, scoped and unscoped values, and checked casts
 - Borrowed returns tied to a single input or receiver, returned-reference chaining, and expression temporary loans
+- Explicit borrows(...) return contracts with multiple possible sources and inherited reborrow guards
 - Alias-style `T&` references with contextual address-taking and direct value, field, method, and indexing access
 - Disjoint struct-field borrows with parent overlap checking
 - Native C `char`, raw pointers, unsafe blocks, and external C function declarations
@@ -124,7 +125,7 @@ Signature help uses the same resolved call analysis.
 ## Further design
 
 - Borrowed-field lifetimes and field moves in the presence of destructors
-- Temporary owner lifetimes and borrow contracts with multiple borrowed inputs
+- Temporary owner lifetimes
 - Fallible allocation and resource APIs using Result<T, E>
 - File-local helper types and further visibility controls
 - Constrained `weak`, `expect`, and `replace` typedefs across a build

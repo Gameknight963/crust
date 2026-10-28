@@ -4,6 +4,71 @@ use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
 
+fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diagnostic> {
+    let Type::Borrow { mutable, .. } = function.return_type else {
+        if function.return_borrows.is_some() {
+            return Err(Diagnostic::new(
+                function.span,
+                "borrows applies to a borrowed return",
+            ));
+        }
+        return Ok(None);
+    };
+    let sources = if let Some(names) = &function.return_borrows {
+        if names.is_empty() {
+            return Err(Diagnostic::new(
+                function.span,
+                "borrows requires at least one source",
+            ));
+        }
+        let mut seen = HashSet::new();
+        let mut sources = Vec::new();
+        for (name, span) in names {
+            let index = function
+                .parameters
+                .iter()
+                .position(|parameter| parameter.name == *name && parameter.ty.is_borrow())
+                .ok_or_else(|| {
+                    Diagnostic::new(*span, "a borrow source must name a borrowed parameter")
+                })?;
+            if !seen.insert(index) {
+                return Err(Diagnostic::new(*span, "duplicate borrow source"));
+            }
+            sources.push(index);
+        }
+        sources
+    } else {
+        let sources = function
+            .parameters
+            .iter()
+            .enumerate()
+            .filter(|(_, parameter)| parameter.ty.is_borrow())
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if sources.len() != 1 {
+            return Err(Diagnostic::new(
+                function.span,
+                "borrowed return lifetime contracts require one input or an explicit borrows(...) clause",
+            ));
+        }
+        sources
+    };
+    if mutable
+        && sources.iter().any(|index| {
+            !matches!(
+                function.parameters[*index].ty,
+                Type::Borrow { mutable: true, .. }
+            )
+        })
+    {
+        return Err(Diagnostic::new(
+            function.span,
+            "a mutable borrowed return requires mutable source parameters",
+        ));
+    }
+    return Ok(Some(sources));
+}
+
 fn native_main_parameters(parameters: &[Type], types: &Types) -> bool {
     let [Type::Integer(IntType::I32), Type::Pointer(outer)] = parameters else {
         return false;
@@ -83,7 +148,7 @@ struct Signature {
     external: bool,
     return_type: Type,
     parameters: Vec<Type>,
-    return_borrow: Option<usize>,
+    return_borrow: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +187,8 @@ struct Loan {
     root: (usize, String),
     fields: Vec<String>,
     mutable: bool,
-    parent: Option<usize>,
+    parents: Vec<usize>,
+    alternatives: Vec<((usize, String), Vec<String>)>,
     scope: Option<usize>,
 }
 
@@ -363,30 +429,7 @@ fn analyze(
                 ));
             }
         }
-        let return_borrow = if let Type::Borrow { mutable, .. } = function.return_type {
-            let borrowed: Vec<_> = function
-                .parameters
-                .iter()
-                .enumerate()
-                .filter(|(_, parameter)| parameter.ty.is_borrow())
-                .collect();
-            if borrowed.len() != 1 {
-                return Err(Diagnostic::new(
-                    function.span,
-                    "borrowed return lifetime contracts require exactly one borrowed parameter",
-                ));
-            }
-            let (index, parameter) = borrowed[0];
-            if mutable && !matches!(parameter.ty, Type::Borrow { mutable: true, .. }) {
-                return Err(Diagnostic::new(
-                    function.span,
-                    "a mutable borrowed return requires a mutable borrowed parameter",
-                ));
-            }
-            Some(index)
-        } else {
-            None
-        };
+        let return_borrow = return_borrow_sources(function)?;
         let signature = Signature {
             calling_convention: function.calling_convention,
             link_name: function.link_name.clone(),
@@ -451,6 +494,7 @@ fn analyze(
 
     for constraint in &program.interface_checks {
         for requirement in &constraint.requirements {
+            let expected_sources = return_borrow_sources(requirement)?;
             let expected: Vec<_> = requirement
                 .parameters
                 .iter()
@@ -461,6 +505,11 @@ fn analyze(
                     && signature.variadic == requirement.variadic
                     && signature.calling_convention == requirement.calling_convention
                     && signature.parameters == expected
+                    && signature.return_borrow.as_ref().is_none_or(|sources| {
+                        expected_sources.as_ref().is_some_and(|expected| {
+                            sources.iter().all(|index| expected.contains(index))
+                        })
+                    })
                     && (!signature.requires_unsafe || requirement.requires_unsafe)
             });
             if !satisfied {
@@ -541,7 +590,13 @@ fn analyze(
             return_type: function.return_type,
             return_borrow_root: signatures[&function.name]
                 .return_borrow
-                .map(|index| (1, function.parameters[index].name.clone())),
+                .as_ref()
+                .map(|indices| {
+                    indices
+                        .iter()
+                        .map(|index| (1, function.parameters[*index].name.clone()))
+                        .collect()
+                }),
             loans: Vec::new(),
             next_loan: 0,
             references: HashMap::new(),
@@ -590,6 +645,17 @@ fn analyze(
             )?;
         }
 
+        if let Some(sources) = &function.return_borrows {
+            for (name, span) in sources {
+                if let Some(parameter) = function
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == *name)
+                {
+                    checker.symbol_uses.insert(*span, parameter.span);
+                }
+            }
+        }
         let returns = match checker.statements(&function.body.statements) {
             Ok(returns) => returns,
             Err(_) if completion => false,
@@ -628,7 +694,7 @@ struct FunctionChecker<'program> {
     signatures: &'program HashMap<String, Signature>,
     scopes: Scopes,
     return_type: Type,
-    return_borrow_root: Option<(usize, String)>,
+    return_borrow_root: Option<Vec<(usize, String)>>,
     // Argument loans last through the call. Local references retain their
     // loans until the binding's block ends, including their reborrow ancestry.
     loans: Vec<Loan>,
@@ -675,18 +741,18 @@ impl FunctionChecker<'_> {
     }
 
     fn adopt_reference(&mut self, id: usize, scope: usize) {
-        let mut current = Some(id);
-        while let Some(id) = current {
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
             let loan = self
                 .loans
                 .iter_mut()
                 .find(|loan| loan.id == id)
                 .expect("reference has a live loan");
             if loan.scope.is_some() {
-                break;
+                continue;
             }
             loan.scope = Some(scope);
-            current = loan.parent;
+            pending.extend(&loan.parents);
         }
     }
 
@@ -880,7 +946,12 @@ impl FunctionChecker<'_> {
                                 .iter()
                                 .find(|loan| loan.id == id)
                                 .expect("returned reference has a loan");
-                            if loan.root != *expected_root {
+                            if !expected_root.contains(&loan.root)
+                                || loan
+                                    .alternatives
+                                    .iter()
+                                    .any(|(root, _)| !expected_root.contains(root))
+                            {
                                 return Err(Diagnostic::new(
                                     expression.span,
                                     "returned borrow must originate from the function's borrowed parameter",
@@ -1970,46 +2041,23 @@ impl FunctionChecker<'_> {
                     self.require_type(argument, *expected)?;
                 }
                 self.variadic_arguments(&arguments[signature.parameters.len()..])?;
-                let returned = signature
+                if let Some(sources) = signature
                     .return_borrow
+                    .as_ref()
                     .filter(|_| !self.unevaluated)
-                    .map(|index| {
-                        let id = self.references[&arguments[index].span];
-                        self.loans
-                            .iter()
-                            .find(|loan| loan.id == id)
-                            .expect("borrowed argument has a loan")
-                            .clone()
-                    });
-                let returned = returned.map(|mut source| {
-                    while let Some(parent) = source.parent {
-                        if self.loans[..previous_loans]
-                            .iter()
-                            .any(|loan| loan.id == parent)
-                        {
-                            break;
-                        }
-                        source.parent = self
-                            .loans
-                            .iter()
-                            .find(|loan| loan.id == parent)
-                            .and_then(|loan| loan.parent);
-                    }
-                    source
-                });
-                self.loans.truncate(previous_loans);
-                if let Some(source) = returned {
+                {
                     let Type::Borrow { mutable, .. } = signature.return_type else {
                         unreachable!()
                     };
-                    let id = self.borrow(
-                        source.root,
-                        source.fields,
-                        mutable,
-                        source.parent,
+                    self.returned_reference(
                         expression.span,
+                        arguments,
+                        sources,
+                        previous_loans,
+                        mutable,
                     )?;
-                    self.references.insert(expression.span, id);
+                } else {
+                    self.loans.truncate(previous_loans);
                 }
                 return Ok(signature.return_type);
             }
@@ -3444,22 +3492,41 @@ impl FunctionChecker<'_> {
         via: Option<usize>,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        return self.access_through(
+            root,
+            fields,
+            exclusive,
+            &via.into_iter().collect::<Vec<_>>(),
+            span,
+        );
+    }
+
+    fn access_through(
+        &self,
+        root: &(usize, String),
+        fields: &[String],
+        exclusive: bool,
+        parents: &[usize],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
         if self.unevaluated {
             return Ok(());
         }
-        let mut authorized = Vec::new();
-        let mut current = via;
-        while let Some(id) = current {
-            authorized.push(id);
-            current = self
-                .loans
-                .iter()
-                .find(|loan| loan.id == id)
-                .and_then(|loan| loan.parent);
+        let mut authorized = HashSet::new();
+        let mut pending = parents.to_vec();
+        while let Some(id) = pending.pop() {
+            if authorized.insert(id)
+                && let Some(loan) = self.loans.iter().find(|loan| loan.id == id)
+            {
+                pending.extend(&loan.parents);
+            }
         }
         if self.loans.iter().any(|loan| {
-            &loan.root == root
-                && fields_overlap(fields, &loan.fields)
+            ((&loan.root == root && fields_overlap(fields, &loan.fields))
+                || loan
+                    .alternatives
+                    .iter()
+                    .any(|(other, projection)| other == root && fields_overlap(fields, projection)))
                 && !authorized.contains(&loan.id)
                 && (exclusive || loan.mutable)
         }) {
@@ -3483,6 +3550,27 @@ impl FunctionChecker<'_> {
             return Ok(usize::MAX);
         }
         self.access(&root, &fields, mutable, parent, span)?;
+        let alternatives = if let Some(parent) = parent {
+            let loan = self
+                .loans
+                .iter()
+                .find(|loan| loan.id == parent)
+                .expect("parent loan");
+            let suffix = fields.strip_prefix(loan.fields.as_slice()).unwrap_or(&[]);
+            loan.alternatives
+                .iter()
+                .map(|(root, projection)| {
+                    let mut projection = projection.clone();
+                    projection.extend_from_slice(suffix);
+                    (root.clone(), projection)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        for (other, projection) in &alternatives {
+            self.access(other, projection, mutable, parent, span)?;
+        }
         let id = self.next_loan;
         self.next_loan += 1;
         self.loans.push(Loan {
@@ -3490,10 +3578,70 @@ impl FunctionChecker<'_> {
             root,
             fields,
             mutable,
-            parent,
+            parents: parent.into_iter().collect(),
+            alternatives,
             scope: None,
         });
         return Ok(id);
+    }
+
+    fn returned_reference(
+        &mut self,
+        span: Span,
+        arguments: &[Expression],
+        sources: &[usize],
+        previous_loans: usize,
+        mutable: bool,
+    ) -> Result<(), Diagnostic> {
+        let mut origins = Vec::new();
+        let mut parents = Vec::new();
+        for index in sources {
+            let id = self.references[&arguments[*index].span];
+            let loan = self
+                .loans
+                .iter()
+                .find(|loan| loan.id == id)
+                .expect("borrowed argument has a loan");
+            origins.push((loan.root.clone(), loan.fields.clone()));
+            origins.extend(loan.alternatives.clone());
+            let mut pending = loan.parents.clone();
+            let mut seen = HashSet::new();
+            while let Some(id) = pending.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                if self.loans[..previous_loans]
+                    .iter()
+                    .any(|loan| loan.id == id)
+                {
+                    parents.push(id);
+                } else if let Some(loan) = self.loans.iter().find(|loan| loan.id == id) {
+                    pending.extend(&loan.parents);
+                }
+            }
+        }
+        let mut unique = HashSet::new();
+        origins.retain(|origin| unique.insert(origin.clone()));
+        parents.sort_unstable();
+        parents.dedup();
+        self.loans.truncate(previous_loans);
+        for (root, fields) in &origins {
+            self.access_through(root, fields, mutable, &parents, span)?;
+        }
+        let (root, fields) = origins.remove(0);
+        let id = self.next_loan;
+        self.next_loan += 1;
+        self.loans.push(Loan {
+            id,
+            root,
+            fields,
+            alternatives: origins,
+            parents,
+            mutable,
+            scope: None,
+        });
+        self.references.insert(span, id);
+        return Ok(());
     }
 
     fn declare(

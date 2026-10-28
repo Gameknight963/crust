@@ -111,12 +111,22 @@ fn function_signature(function: &Function, checked: &AnalyzedProgram, name: Stri
             function.parameters[0].ty,
             Type::Borrow { mutable: false, .. }
         );
-    return signature(
-        prefix,
-        parameters,
-        function.variadic,
-        if shared { " const" } else { "" },
-    );
+    let mut suffix = if shared {
+        " const".to_owned()
+    } else {
+        String::new()
+    };
+    if let Some(sources) = &function.return_borrows {
+        suffix.push_str(&format!(
+            " borrows({})",
+            sources
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    return signature(prefix, parameters, function.variadic, &suffix);
 }
 
 fn tokens_between(tokens: &[SpannedToken], start: usize, end: usize) -> &[SpannedToken] {

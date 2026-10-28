@@ -1064,6 +1064,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    return_borrows: None,
                     dll_import: false,
                     calling_convention: CallingConvention::C,
                     name_span,
@@ -1419,6 +1420,24 @@ impl Parser {
                 "only instance methods can have a const method qualifier",
             ));
         }
+        let return_borrows = if matches!(&self.current().kind, Token::Identifier(name) if name == "borrows")
+        {
+            self.advance();
+            self.expect(Token::LeftParen, "expected '(' after borrows")?;
+            let mut names = Vec::new();
+            if !self.at(&Token::RightParen) {
+                loop {
+                    names.push(self.identifier()?);
+                    if !self.consume(&Token::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(Token::RightParen, "expected ')' after borrow sources")?;
+            Some(names)
+        } else {
+            None
+        };
         self.value_scopes.push(
             parameters
                 .iter()
@@ -1447,6 +1466,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            return_borrows,
             dll_import: false,
             calling_convention: CallingConvention::C,
             name_span,
