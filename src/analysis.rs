@@ -235,6 +235,18 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
                     None,
                 );
             }
+            StatementKind::StaticLocal {
+                name, name_span, ..
+            } => {
+                self.symbol(
+                    name.clone(),
+                    SymbolKind::Variable,
+                    *name_span,
+                    statement.span,
+                    self.text(statement.span),
+                    None,
+                );
+            }
             StatementKind::Block(block) | StatementKind::Unsafe(block) => self.block(block),
             StatementKind::If {
                 then_block,
@@ -318,8 +330,11 @@ pub(crate) fn build(
         );
     }
     for global in &checked.program.globals {
+        if global.function_local {
+            continue;
+        }
         builder.symbol(
-            global.name.clone(),
+            builder.text(global.name_span),
             SymbolKind::Global,
             global.name_span,
             global.span,
@@ -396,6 +411,9 @@ pub(crate) fn build(
         }
     }
     for function in &checked.program.functions {
+        if function.name.starts_with('?') {
+            continue;
+        }
         let owner = function
             .name
             .strip_prefix('@')

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+mod globals;
 
 use crate::ast::*;
 use crate::check::{CheckedProgram, FunctionAnalysis};
@@ -167,7 +168,12 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
     emitter.struct_definitions();
     for variable in &program.globals {
         emitter.line(&format!(
-            "extern {}{}{}{} {};",
+            "{}{}{}{}{} {};",
+            if variable.external {
+                "extern "
+            } else {
+                "static "
+            },
             if variable.dll_import {
                 "__declspec(dllimport) "
             } else {
@@ -188,11 +194,15 @@ pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]
         );
     }
     for function in &program.functions {
+        if function.name.starts_with('?') {
+            continue;
+        }
         emitter.line(&format!("{};", header(function, checked.kind)));
     }
+    emitter.global_definitions(checked);
     emitter.drop_functions();
     for function in &program.functions {
-        if function.external {
+        if function.external || function.name.starts_with('?') {
             continue;
         }
         let analysis = &checked.analyses[&function.name];
@@ -562,7 +572,7 @@ impl Emitter<'_> {
                 }
                 for (index, field) in info.fields.iter().enumerate().rev() {
                     if info.tagged {
-                        self.line(&format!("if (value->crust_tag == {}) {{", index + 1));
+                        self.line(&format!("if (value->crust_tag == {}) {{", index));
                         self.indent += 1;
                     }
                     self.drop_value(field.ty, &format!("value->crust_field_{}", field.name));
@@ -661,6 +671,19 @@ impl Emitter<'_> {
                         name: local,
                         ty: *ty,
                         live,
+                    },
+                );
+            }
+            StatementKind::StaticLocal {
+                name, global, ty, ..
+            } => {
+                let storage = self.scopes[0].variables[global].name.clone();
+                self.scopes.last_mut().unwrap().insert(
+                    name.clone(),
+                    Local {
+                        name: storage,
+                        ty: *ty,
+                        live: None,
                     },
                 );
             }
@@ -854,7 +877,7 @@ impl Emitter<'_> {
                                 .iter()
                                 .position(|field| field.name == *name)
                                 .unwrap();
-                            self.line(&format!("case {}:", index + 1));
+                            self.line(&format!("case {}:", index));
                         } else {
                             let constant = match label {
                                 CaseLabel::Constant { value, .. } => *value,
@@ -1314,7 +1337,7 @@ impl Emitter<'_> {
                         .iter()
                         .position(|field| field.name == fields[0].name)
                         .unwrap();
-                    values.push(format!(".crust_tag = {}", index + 1));
+                    values.push(format!(".crust_tag = {}", index));
                 }
                 for field in fields {
                     let value = self.value_expression(&field.value);
@@ -1680,7 +1703,7 @@ impl Emitter<'_> {
                         &format!("&({place})"),
                     );
                     let location = self.runtime_location(expression.span);
-                    self.line(&format!("if (({address})->crust_tag != {}) {{ crust_rt_fail(\"inactive tagged-union payload\", {location}); }}", index + 1));
+                    self.line(&format!("if (({address})->crust_tag != {}) {{ crust_rt_fail(\"inactive tagged-union payload\", {location}); }}", index));
                     return format!("({address})->crust_field_{name}");
                 }
                 return format!("({place}).crust_field_{name}");

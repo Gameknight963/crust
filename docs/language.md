@@ -33,6 +33,47 @@ requires public visibility. Static functions cannot declare C imports or exports
 Imports are top-level declarations. Each file contains complete declarations,
 and file-based commands report errors with the original filename and location.
 
+## Global and static storage
+
+Top-level variables live for the whole program. Prefix a global with `static`
+to give it file-local visibility. A function-local `static` variable keeps its
+value across calls and follows the enclosing block's name visibility.
+
+```c
+const int increment = 2;
+static int total;
+
+int next() {
+    static int calls = 0;
+    unsafe {
+        calls++;
+        total += increment;
+        return total;
+    }
+}
+```
+
+Reading, writing, or borrowing mutable static storage requires `unsafe`. The
+caller must ensure synchronization and valid aliasing. Source `const` globals
+and static locals are readable in safe code. Taking a raw address of a global
+variable is safe. Dereferencing that pointer requires `unsafe`.
+
+Initializers run before program entry and use constants, function addresses,
+static object addresses, size and alignment queries, or array and aggregate
+initializers made from these expressions. Calls and reads of other stored
+variables require runtime execution and cannot initialize static storage.
+Integer constant arithmetic and narrowing are checked. Floating narrowing
+requires a literal with the destination type's suffix.
+
+Omitting an initializer zero-initializes the object. For a tagged union, this
+selects its first variant with a zero-initialized payload. Types with private
+fields require explicit initialization to preserve their construction rules.
+Static storage requires complete copyable types. Owners and references need
+resource and lifetime rules beyond constant initialization.
+
+Source globals use compiler-generated native symbols. Expose C access through
+exported functions. `extern` declarations continue to name native C variables.
+
 ## Slices
 
 `T[]&` borrows a sequence of elements whose length is known at runtime.

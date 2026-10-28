@@ -37,7 +37,7 @@ impl Analysis {
                 if self.scoped_enum_members.contains(&symbol.location) {
                     return None;
                 }
-                let file_local = symbol.kind == SymbolKind::Function
+                let file_local = matches!(symbol.kind, SymbolKind::Function | SymbolKind::Global)
                     && symbol.detail.split_whitespace().next() == Some("static");
                 if file_local && symbol.location.file != file {
                     return None;
@@ -80,7 +80,8 @@ fn block_scopes(block: &Block, locate: &impl Fn(Span) -> Location, scopes: &mut 
     let mut declarations = Vec::new();
     for statement in &block.statements {
         match &statement.kind {
-            StatementKind::Local { name_span, .. } => {
+            StatementKind::Local { name_span, .. }
+            | StatementKind::StaticLocal { name_span, .. } => {
                 declarations.push((*name_span, name_span.end));
             }
             StatementKind::Switch { cases, .. } => {

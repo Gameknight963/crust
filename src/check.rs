@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
+mod storage;
 
 fn return_borrow_sources(function: &Function) -> Result<Option<Vec<usize>>, Diagnostic> {
     let Type::Borrow { mutable, .. } = function.return_type else {
@@ -161,6 +162,7 @@ enum State {
 
 #[derive(Clone, Copy)]
 struct Variable {
+    storage: Option<usize>,
     volatile: bool,
     external: bool,
     mutable: bool,
@@ -277,12 +279,29 @@ fn analyze(
     let mut globals: HashMap<String, Variable> = HashMap::new();
     let mut global_symbols = HashMap::new();
     let mut native_globals = HashMap::new();
-    for global in &program.globals {
+    let mut defined_globals = HashSet::new();
+    for (storage, global) in program.globals.iter().enumerate() {
+        if !global.external
+            && global.initializer.is_none()
+            && storage::has_private_fields(global.ty, &types)
+        {
+            return Err(Diagnostic::new(
+                global.span,
+                "static storage containing private fields requires an explicit initializer",
+            ));
+        }
+        if !global.external && !defined_globals.insert(global.name.clone()) {
+            return Err(Diagnostic::new(
+                global.name_span,
+                "global variable has multiple definitions",
+            ));
+        }
         if global.ty == Type::Void
             || !types.is_sized(global.ty)
             || types.owns(global.ty)
             || global.ty.is_borrow()
-            || matches!(global.ty, Type::Array(_) | Type::Function(_))
+            || matches!(global.ty, Type::Function(_))
+            || (global.external && matches!(global.ty, Type::Array(_)))
         {
             return Err(Diagnostic::new(
                 global.span,
@@ -332,8 +351,9 @@ fn analyze(
             ));
         }
         globals.entry(global.name.clone()).or_insert(Variable {
+            storage: Some(storage),
             volatile: global.volatile,
-            external: true,
+            external: global.external,
             mutable: !global.readonly,
             declaration: Some(global.name_span),
             ty: global.ty,
@@ -586,6 +606,7 @@ fn analyze(
             symbol_uses: &mut analysis.symbol_uses,
             signatures: &signatures,
             global_symbols: &global_symbols,
+            global_storage: &program.globals,
             scopes: vec![globals.clone(), HashMap::new()],
             return_type: function.return_type,
             return_borrow_root: signatures[&function.name]
@@ -673,6 +694,11 @@ fn analyze(
         analyses.insert(function.name.clone(), analysis);
     }
 
+    for global in &program.globals {
+        if global.initializer.is_some() {
+            storage::validate(global, &analyses[&format!("?init_{}", global.name)], &types)?;
+        }
+    }
     return Ok(AnalyzedProgram {
         kind,
         program,
@@ -688,6 +714,7 @@ struct FunctionChecker<'program> {
     completion: bool,
     receiver_types: &'program mut HashMap<Span, Type>,
     global_symbols: &'program HashMap<String, String>,
+    global_storage: &'program [ExternalVariable],
     function_declarations: &'program HashMap<String, Span>,
     symbol_uses: &'program mut HashMap<Span, Span>,
     function_values: &'program mut HashMap<Span, String>,
@@ -763,6 +790,24 @@ impl FunctionChecker<'_> {
                 let result = self.block(block);
                 self.unsafe_depth -= 1;
                 return result;
+            }
+            StatementKind::StaticLocal {
+                name,
+                name_span,
+                global,
+                ty,
+            } => {
+                let index = self
+                    .global_storage
+                    .iter()
+                    .position(|storage| storage.name == *global)
+                    .unwrap();
+                let storage = &self.global_storage[index];
+                self.declare(name, *ty, State::Available, *name_span, Some(*name_span))?;
+                let variable = self.scopes.last_mut().unwrap().get_mut(name).unwrap();
+                variable.storage = Some(index);
+                variable.mutable = !storage.readonly;
+                variable.volatile = storage.volatile;
             }
             StatementKind::Local {
                 name_span,
@@ -2448,7 +2493,30 @@ impl FunctionChecker<'_> {
         expression: &Expression,
         operand: &Expression,
     ) -> Result<Type, Diagnostic> {
-        let place = self.checked_place(operand)?;
+        let storage = if let ExpressionKind::Variable { name, name_span } = &operand.kind {
+            self.scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name).copied())
+                .filter(|variable| variable.storage.is_some() && !variable.external)
+                .map(|variable| (name.clone(), *name_span, variable))
+        } else {
+            None
+        };
+        let place = if let Some((name, span, variable)) = storage {
+            self.record_binding_symbol(span, variable);
+            self.receiver_types.insert(operand.span, variable.ty);
+            Place {
+                ty: variable.ty,
+                root: self.root(&name),
+                fields: Vec::new(),
+                mutable: variable.mutable,
+                volatile: variable.volatile,
+                via: None,
+            }
+        } else {
+            self.checked_place(operand)?
+        };
         self.access(
             &place.root,
             &place.fields,
@@ -3471,6 +3539,9 @@ impl FunctionChecker<'_> {
     fn root(&self, name: &str) -> (usize, String) {
         for (index, scope) in self.scopes.iter().enumerate().rev() {
             if scope.contains_key(name) {
+                if let Some(storage) = scope[name].storage {
+                    return (0, self.global_storage[storage].link_name.clone());
+                }
                 return (
                     index,
                     if index == 0 {
@@ -3668,6 +3739,7 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
+                storage: None,
                 volatile: false,
                 external: false,
                 mutable: true,
@@ -3685,6 +3757,8 @@ impl FunctionChecker<'_> {
             if let Some(variable) = scope.get(name) {
                 if variable.external {
                     self.require_unsafe(span, "accessing an external C variable")?;
+                } else if variable.storage.is_some() && variable.mutable {
+                    self.require_unsafe(span, "accessing mutable global or static storage")?;
                 }
                 return Ok(*variable);
             }

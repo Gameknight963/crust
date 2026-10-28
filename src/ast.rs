@@ -342,8 +342,12 @@ pub struct Program {
     pub functions: Vec<Function>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternalVariable {
+    pub external: bool,
+    pub function_local: bool,
+    pub initializer: Option<Expression>,
+    pub constant_values: Vec<(Span, i128)>,
     pub dll_import: bool,
     pub name: String,
     pub name_span: Span,
@@ -572,6 +576,12 @@ pub struct Statement {
 
 #[derive(Debug, Clone)]
 pub enum StatementKind {
+    StaticLocal {
+        name: String,
+        name_span: Span,
+        global: String,
+        ty: Type,
+    },
     Switch {
         value: Expression,
         cases: Vec<SwitchCase>,

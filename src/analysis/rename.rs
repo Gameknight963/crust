@@ -33,16 +33,23 @@ pub(super) fn native_bindings(
                 function.link_name.as_ref().unwrap(),
             )
         })
-        .chain(checked.program.globals.iter().map(|global| {
-            (
-                global.name_span,
-                Span {
-                    end: global.span.end - 1,
-                    ..global.span
-                },
-                &global.link_name,
-            )
-        }));
+        .chain(
+            checked
+                .program
+                .globals
+                .iter()
+                .filter(|global| global.external)
+                .map(|global| {
+                    (
+                        global.name_span,
+                        Span {
+                            end: global.span.end - 1,
+                            ..global.span
+                        },
+                        &global.link_name,
+                    )
+                }),
+        );
     for (name, range, native) in declarations {
         let range = locate(range);
         let file_tokens = &tokens[range.file];

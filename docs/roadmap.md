@@ -101,7 +101,7 @@ files, a native C library, containers, files, and recoverable errors.
 
 - [x] Floating-point types, literals, arithmetic, conversions, and C calls
 - [x] Integer and enum switch statements
-- [ ] Global definitions and static variables
+- [x] Global definitions and static variables
 - [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
 - [ ] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
 - [ ] Migrate examples and tests from BoxInt and remove the built-in type

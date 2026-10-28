@@ -23,6 +23,7 @@ impl Parser {
         let mut braces = 0usize;
         let mut parens = 0usize;
         let mut local = false;
+        let mut declared = false;
         let mut declarations = HashMap::new();
         for (position, token) in self.tokens.iter().enumerate() {
             if braces == 0 && parens == 0 {
@@ -34,22 +35,45 @@ impl Parser {
                 {
                     local = true;
                 }
-                if let Token::Identifier(name) = &token.kind {
+                if !declared && let Token::Identifier(name) = &token.kind {
                     let generic =
                         generics::parameters(&self.tokens, position + 1).map(|(_, after)| after);
-                    let after = generic.unwrap_or(position + 1);
-                    if self
+                    let mut after = generic.unwrap_or(position + 1);
+                    while self
                         .tokens
                         .get(after)
-                        .is_some_and(|token| token.kind == Token::LeftParen)
+                        .is_some_and(|token| token.kind == Token::LeftBracket)
                     {
+                        let mut depth = 1usize;
+                        after += 1;
+                        while after < self.tokens.len() && depth != 0 {
+                            match self.tokens[after].kind {
+                                Token::LeftBracket => depth += 1,
+                                Token::RightBracket => depth -= 1,
+                                _ => {}
+                            }
+                            after += 1;
+                        }
+                    }
+                    if self.tokens.get(after).is_some_and(|token| {
+                        matches!(
+                            token.kind,
+                            Token::LeftParen | Token::Equal | Token::Semicolon
+                        )
+                    }) && !position.checked_sub(1).is_some_and(|previous| {
+                        matches!(
+                            self.tokens[previous].kind,
+                            Token::Struct | Token::Union | Token::Enum
+                        )
+                    }) {
+                        declared = true;
                         let key = (self.file_key(token.span), name.clone());
                         if let Some(previous) = declarations.insert(key.clone(), local)
                             && previous != local
                         {
                             return Err(Diagnostic::new(
                                 token.span,
-                                "function has conflicting static and public declarations",
+                                "name has conflicting static and public declarations",
                             ));
                         }
                         if local {
@@ -68,11 +92,15 @@ impl Parser {
                     braces = braces.saturating_sub(1);
                     if braces == 0 {
                         local = false;
+                        declared = false;
                     }
                 }
                 Token::LeftParen => parens += 1,
                 Token::RightParen => parens = parens.saturating_sub(1),
-                Token::Semicolon | Token::EndOfFile if braces == 0 => local = false,
+                Token::Semicolon | Token::EndOfFile if braces == 0 => {
+                    local = false;
+                    declared = false;
+                }
                 _ => {}
             }
         }

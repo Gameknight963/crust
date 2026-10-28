@@ -8,6 +8,7 @@ mod file_locals;
 mod generics;
 mod integers;
 mod limits;
+mod storage;
 mod switches;
 mod symbols;
 
@@ -56,6 +57,7 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         generics: generics::Templates::default(),
         pending_greater: None,
         source_declarations: Vec::new(),
+        static_globals: Vec::new(),
         type_references: Vec::new(),
         type_annotations: Vec::new(),
         enum_constants: HashMap::new(),
@@ -172,8 +174,10 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
     parser.validate_interfaces()?;
     functions.append(&mut parser.methods);
+    globals.append(&mut parser.static_globals);
     functions.append(&mut parser.generics.function_definitions);
     structs.append(&mut parser.generics.struct_definitions);
+    storage::initializer_functions(&globals, &mut functions);
     return Ok(Program {
         native_headers,
         globals,
@@ -196,6 +200,7 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    static_globals: Vec<ExternalVariable>,
     tagged_unions: HashSet<usize>,
     scoped_enums: HashSet<usize>,
     current_enum: Option<usize>,
@@ -1199,13 +1204,13 @@ impl Parser {
         }
         let unsafe_suffix = self.consume(&Token::Unsafe);
         let requires_unsafe = unsafe_suffix || unsafe_prefix || external;
-        let (return_type, qualifiers) = self.qualified_type_name(external)?;
+        let (return_type, qualifiers) = self.qualified_type_name(true)?;
         let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
         if file_local {
             name = self.file_function_name(&name, name_span);
         }
-        if external && !self.at(&Token::LeftParen) && !self.at(&Token::Less) {
+        if !self.at(&Token::LeftParen) && !self.at(&Token::Less) {
             if convention.is_some() || unsafe_prefix || unsafe_suffix {
                 return Err(Diagnostic::new(
                     start,
@@ -1219,12 +1224,21 @@ impl Parser {
                     "external variable name conflicts with a generic function",
                 ));
             }
-            let link_name = self.external_link_name(&name)?;
+            let (link_name, initializer, constant_values) = if external {
+                (self.external_link_name(&name)?, None, Vec::new())
+            } else {
+                let (initializer, constants) = self.storage_initializer()?;
+                (storage::link_name(&name), initializer, constants)
+            };
             let end = self.expect(
                 Token::Semicolon,
                 "expected ';' after external variable declaration",
             )?;
             return Ok(Declaration::Global(ExternalVariable {
+                external,
+                function_local: false,
+                initializer,
+                constant_values,
                 dll_import,
                 name,
                 name_span,
@@ -1727,6 +1741,9 @@ impl Parser {
     }
 
     fn statement_inner(&mut self) -> Result<Statement, Diagnostic> {
+        if self.at(&Token::Static) {
+            return self.static_local();
+        }
         if matches!(&self.current().kind, Token::Identifier(name) if name == "switch") {
             return self.switch_statement();
         }
