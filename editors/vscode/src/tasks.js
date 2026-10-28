@@ -1,10 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { findManifest, readMetadata, commandArguments } = require('./project');
+const { adapterType, launchConfiguration, buildBeforeDebug } = require('./debug');
 
 function registerTasks(vscode, context) {
     const output = vscode.window.createOutputChannel('Crust builds');
     context.subscriptions.push(output);
+    let debugPending = false;
 
     function compilerPath(resource) {
         const config = vscode.workspace.getConfiguration('crust', resource);
@@ -73,9 +75,10 @@ function registerTasks(vscode, context) {
     async function execute(command) {
         const manifest = await selectProject();
         if (!manifest) return;
+        if (command === 'debug' && !await vscode.workspace.saveAll(false)) return;
         const info = await metadata(manifest);
         let target;
-        if (command === 'run') {
+        if (command === 'run' || command === 'debug') {
             const executables = info.targets.filter(candidate => candidate.kind === 'executable');
             if (executables.length === 0) throw new Error('This project has no executable target.');
             if (executables.length === 1) target = executables[0].name;
@@ -86,7 +89,21 @@ function registerTasks(vscode, context) {
                 target = picked.label;
             }
         }
-        await vscode.tasks.executeTask(task(manifest, info, command, target));
+        if (command === 'debug') {
+            const folder = vscode.workspace.getWorkspaceFolder(manifest) || vscode.workspace.workspaceFolders?.[0];
+            if (!folder) throw new Error('Open a workspace folder to debug a Crust project.');
+            const type = adapterType(vscode, manifest);
+            launchConfiguration(vscode, manifest, info.targets.find(candidate => candidate.name === target), type);
+            await buildBeforeDebug(vscode, task(manifest, info, 'build', target));
+            const refreshed = await metadata(manifest);
+            const selected = refreshed.targets.find(candidate => candidate.name === target);
+            if (!selected) throw new Error(`Crust target '${target}' was removed during the build.`);
+            const config = launchConfiguration(vscode, manifest, selected, type);
+            if (!fs.statSync(config.program).isFile()) throw new Error('The Crust build did not produce an executable.');
+            if (!await vscode.debug.startDebugging(folder, config)) throw new Error('The native debugger could not start.');
+        } else {
+            await vscode.tasks.executeTask(task(manifest, info, command, target));
+        }
     }
 
     const provider = {
@@ -132,10 +149,13 @@ function registerTasks(vscode, context) {
         }
     };
     context.subscriptions.push(vscode.tasks.registerTaskProvider('crust', provider));
-    for (const command of ['build', 'check', 'run']) {
+    for (const command of ['build', 'check', 'run', 'debug']) {
         context.subscriptions.push(vscode.commands.registerCommand(`crust.${command}Project`, async () => {
+            if (command === 'debug' && debugPending) return;
+            if (command === 'debug') debugPending = true;
             try { await execute(command); }
             catch (error) { await vscode.window.showErrorMessage(`Crust: ${error.message}`); }
+            finally { if (command === 'debug') debugPending = false; }
         }));
     }
     return provider;

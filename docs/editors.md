@@ -140,6 +140,7 @@ The extension lives in [editors/vscode](../editors/vscode/).
 - Set `crust.server.path` to the server executable, or put it on `PATH`
 - Open a `.cr` file to get compiler diagnostics and syntax highlighting
 - Use **Crust: Build Project**, **Crust: Check Project**, and **Crust: Run Project** for the active file's project
+- Use **Crust: Debug Project** or **F5** with native debug information enabled and a C/C++ or CodeLLDB debugger installed
 - Select discovered projects and executable targets through **Terminal > Run Task**
 - Use **Crust: Restart Language Server** to restart the server
 
@@ -177,5 +178,5 @@ to stderr.
 
 ## Further work
 
-- Semantic information across module namespaces and project dependencies
-- Visual Studio project-system integration and debugging
+- Semantic information across project dependencies
+- Original source variable and type names in native debugger views

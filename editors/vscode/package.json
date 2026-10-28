@@ -27,8 +27,13 @@
       { "command": "crust.restartLanguageServer", "title": "Crust: Restart Language Server" },
       { "command": "crust.buildProject", "title": "Crust: Build Project" },
       { "command": "crust.checkProject", "title": "Crust: Check Project" },
-      { "command": "crust.runProject", "title": "Crust: Run Project" }
+      { "command": "crust.runProject", "title": "Crust: Run Project" },
+      { "command": "crust.debugProject", "title": "Crust: Debug Project" }
     ],
+    "keybindings": [{
+      "command": "crust.debugProject", "key": "f5",
+      "when": "editorLangId == crust && !inDebugMode"
+    }],
     "taskDefinitions": [{
       "type": "crust", "required": ["command"],
       "properties": {
@@ -45,6 +50,30 @@
     "configuration": {
       "title": "Crust",
       "properties": {
+        "crust.debugger.adapter": {
+          "type": "string", "default": "auto", "enum": ["auto", "cppvsdbg", "cppdbg", "lldb"],
+          "description": "Native debugger adapter. Auto uses the installed C/C++ or CodeLLDB extension."
+        },
+        "crust.debugger.arguments": {
+          "type": "array", "items": { "type": "string" }, "default": [],
+          "description": "Program arguments for Crust: Debug Project."
+        },
+        "crust.debugger.workingDirectory": {
+          "type": "string", "default": "",
+          "description": "Debug working directory, relative to crust.toml. Empty uses the project directory."
+        },
+        "crust.debugger.environment": {
+          "type": "object", "additionalProperties": { "type": "string" }, "default": {},
+          "description": "Environment variables for the debugged program."
+        },
+        "crust.debugger.stopAtEntry": {
+          "type": "boolean", "default": false,
+          "description": "Stop at program entry when debugging."
+        },
+        "crust.debugger.miDebuggerPath": {
+          "type": "string", "default": "",
+          "description": "GDB or LLDB MI executable for cppdbg. Empty uses the adapter default."
+        },
         "crust.compiler.path": {
           "type": "string", "default": "", "scope": "machine-overridable",
           "description": "Path to the Crust compiler. Empty uses the server's sibling compiler, PATH, or the local development build."
@@ -59,8 +88,8 @@
     }
   },
   "scripts": {
-    "check": "node --check src/extension.js && node --check src/tasks.js && node --check src/project.js",
-    "test": "node --test test/project.test.js test/tasks.test.js",
+    "check": "node --check src/extension.js && node --check src/tasks.js && node --check src/project.js && node --check src/debug.js",
+    "test": "node --test test/project.test.js test/tasks.test.js test/debug.test.js",
     "build": "esbuild src/extension.js --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
     "vscode:prepublish": "npm run build",
     "package": "vsce package --allow-missing-repository --skip-license --out ../../target/crust-language.vsix"

@@ -7,6 +7,7 @@
 - Semantic highlighting for resolved bindings
 - Shared language server for VS Code and other LSP editors
 - Build, check, and run tasks for `crust.toml` projects
+- Native debugger launch after a successful project build
 
 ## Setup
 
@@ -50,6 +51,29 @@ To make a target the default build, add `.vscode/tasks.json` to its project:
 
 The optional `project` property selects a manifest relative to the workspace
 folder and defaults to `crust.toml`. Omitting `target` builds or checks all targets.
+
+## Debugging
+
+Enable native debug information on the executable target:
+
+```toml
+[targets.native]
+debug = true
+```
+
+Use **Crust: Debug Project**, or press **F5** in a Crust editor. The command saves
+files, builds the selected executable, and starts the debugger after the build
+succeeds. Set breakpoints in `.cr` files.
+
+Install Microsoft's C/C++ extension or CodeLLDB. Automatic adapter selection
+uses `cppvsdbg` on Windows when C/C++ is installed, then CodeLLDB, then `cppdbg`.
+`cppdbg` uses GDB on Linux and Windows and LLDB MI on macOS. Set
+`crust.debugger.adapter` to choose explicitly and `crust.debugger.miDebuggerPath`
+to select an MI debugger executable.
+
+Settings under `crust.debugger` provide `arguments`, `workingDirectory`,
+`environment`, and `stopAtEntry`. Working directories are relative to
+`crust.toml`. Runtime library paths come from compiler metadata.
 
 ## Build the extension
 

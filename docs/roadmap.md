@@ -92,6 +92,7 @@
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links
+- VS Code native debugger launch with build completion checks, runtime paths, arguments, and cancellation handling
 - Visual Studio VSIX with a bundled server, shared grammar, and native semantic classifications
 - Visual Studio project build and check commands, Error List navigation, and executable console launch
 - Optional MSBuild `.crproj` projects with bundled Visual Studio SDK paths, source items, build properties, and native builds
