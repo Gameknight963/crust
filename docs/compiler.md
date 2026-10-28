@@ -386,8 +386,17 @@ Cleanup checks keep returned loans live while destructors run. Same-block
 owning sources must be declared before their reference holders. Destructor
 queries visit each concrete type once, including repeated aggregate shapes.
 
-
 Compiler ownership fixtures define `Box<T>` in
 [tests/common/box.cr](../tests/common/box.cr). The test compiler facade appends
 that definition to fixtures that use it. Production compilation resolves owner
 types through their source declarations and imports.
+
+## Ownership model test
+
+`tests/ownership_model.rs` generates mixed operations on vectors of owning
+resources and compares native execution with a Rust model. Four deterministic
+seeds cover insertion, removal, replacement, mutation, swaps, capacity changes,
+whole-container moves, and recovery of rejected values after allocation failure.
+The comparison checks contents and destructor order after each operation. The
+allocator tracker checks that every allocation is freed exactly once. Sanitizer
+CI runs the same test.
