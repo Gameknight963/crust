@@ -111,6 +111,9 @@ bare CR line endings. Clang debug records retain these locations when the C is
 compiled with debug information. Native variable and function names follow the
 compiler's generated C names.
 
+The [ABI reference](abi.md) lists the current layouts, method parameters,
+linkage, and generated naming scheme.
+
 `SourceSet::load_with` accepts a reader for unsaved editor text. Its `check` and
 `compile` methods process the full import graph. The string-based `check` and
 `compile` functions process the supplied source text directly.

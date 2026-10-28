@@ -111,6 +111,8 @@ cargo run -- examples/ownership.cr
 ## Documentation
 
 - [Language reference](docs/language.md)
+- [Evaluation and lifetimes](docs/semantics.md)
+- [Native ABI](docs/abi.md)
 - [Projects](docs/projects.md)
 - [C header bindings](docs/c-bindings.md)
 - [C compatibility](docs/c-compatibility.md)

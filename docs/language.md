@@ -1,5 +1,8 @@
 # Language reference
 
+See [evaluation and lifetimes](semantics.md) for initialization, ownership, and
+cleanup rules, and [the native ABI](abi.md) for layout and linkage.
+
 ## Imports
 
 ```c
@@ -450,6 +453,7 @@ int main() {
 - Array copies, indexing, mutation, borrows, fields, parameters, and returns use ordinary array rules
 - `print` accepts a `char` or `uint8_t` array or a shared or mutable borrow of one
 - Text output stops at the first zero or the array's capacity and appends a newline
+- `print` also accepts `char` and `uint8_t` slices and writes their full length, including embedded zeroes, followed by a newline
 - `sizeof` includes the terminating zero and any destination padding
 
 Array declarations specify their capacity. For example, `uint8_t text[3] = "hi"`

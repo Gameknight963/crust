@@ -115,7 +115,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
 - [x] Compiler, LSP, and editor release packages with native compiler setup
 - [ ] VS Code native debugger launch and original source names in debug information
-- [ ] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
+- [x] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
 - [ ] Build and maintain the release validation application
 
 ## Editor support
