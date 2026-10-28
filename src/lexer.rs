@@ -175,21 +175,19 @@ impl Lexer<'_> {
                 continue;
             }
 
-            let kind;
-
-            if current.is_ascii_alphabetic() || current == '_' {
-                kind = self.identifier(start);
+            let kind = if current.is_ascii_alphabetic() || current == '_' {
+                self.identifier(start)
             } else if current.is_ascii_digit()
                 || (current == '.' && self.peek_next().is_some_and(|next| next.is_ascii_digit()))
             {
-                kind = self.number(start)?;
+                self.number(start)?
             } else if current == '\'' {
-                kind = self.character(start)?;
+                self.character(start)?
             } else if current == '"' {
-                kind = self.string(start)?;
+                self.string(start)?
             } else {
-                kind = self.operator_or_punctuation(start)?;
-            }
+                self.operator_or_punctuation(start)?
+            };
 
             tokens.push(SpannedToken {
                 kind,

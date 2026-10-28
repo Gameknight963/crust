@@ -1967,8 +1967,7 @@ impl Parser {
             });
         }
 
-        let kind;
-        if self.at(&Token::Float)
+        let kind = if self.at(&Token::Float)
             || self.at(&Token::Double)
             || self.at(&Token::Int)
             || self.at(&Token::Void)
@@ -2003,29 +2002,29 @@ impl Parser {
                 "local variables need an initializer: 'type name = expression;'",
             )?;
             let initializer = self.initializer()?;
-            kind = StatementKind::Local {
+            StatementKind::Local {
                 name_span,
                 declaration_span,
                 name,
                 ty,
                 initializer,
-            };
+            }
         } else if self.consume(&Token::Break) {
-            kind = StatementKind::Break;
+            StatementKind::Break
         } else if self.consume(&Token::Continue) {
-            kind = StatementKind::Continue;
+            StatementKind::Continue
         } else if self.consume(&Token::Return) {
             let value = if self.at(&Token::Semicolon) {
                 None
             } else {
                 Some(self.expression(1)?)
             };
-            kind = StatementKind::Return(value);
+            StatementKind::Return(value)
         } else if self.at(&Token::Semicolon) {
-            kind = StatementKind::Empty;
+            StatementKind::Empty
         } else {
-            kind = self.assignment_or_expression()?;
-        }
+            self.assignment_or_expression()?
+        };
 
         let end = self.expect(Token::Semicolon, "expected ';' after the statement")?;
         return Ok(Statement {
