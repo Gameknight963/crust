@@ -5,7 +5,9 @@ use std::path::Path;
 fn sources(body: &str) -> crust::source::SourceSet {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let entry = root.join("target/library-example.cr");
-    let text = format!("import \"../lib/box.cr\"; import \"../lib/vector.cr\"; {body}");
+    let text = format!(
+        "import \"../lib/box.cr\"; import \"../lib/vector.cr\"; import \"../lib/result.cr\"; {body}"
+    );
     return crust::source::SourceSet::load_with(&entry, |path| {
         if path.ends_with("library-example.cr") {
             return Ok(text.clone());
@@ -101,5 +103,26 @@ fn replacing_an_owner_through_a_slice_destroys_it_once() {
             "drop:bytes:4\ndrop:bytes:4\ndrop:bytes:{}\n",
             std::mem::size_of::<usize>() * 2
         )
+    );
+}
+
+#[test]
+fn results_borrow_and_extract_owning_payloads() {
+    let source = sources(
+        "int main() { Result<Box<int>, int> value = Result<Box<int>, int>::success(Box<int>::create(42)); print(value.is_ok()); print(value.value().get()); Box<int> payload = move(value).take_value(); print(payload.get()); Result<Box<int>, int> failure = Result<Box<int>, int>::failure(7); print(failure.is_ok()); print(move(failure).take_error()); return 0; }",
+    );
+    let output = common::tracked_generated_c(&source.compile().unwrap(), true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "1\n42\n42\n0\n7\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace('\r', ""),
+        "drop:bytes:4\n"
     );
 }

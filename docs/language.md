@@ -1055,6 +1055,52 @@ struct Resource {
 
 ## Unions
 
+### Tagged unions
+
+```c
+tagged union Result<T, E> {
+    T ok;
+    E error;
+};
+
+Result<int, Error> result = { .ok = 42 };
+```
+
+A tagged union stores a discriminator and space for its largest payload.
+Initialization selects exactly one payload. Payloads can own resources, and
+automatic cleanup destroys the active payload. Whole-value moves transfer that
+responsibility. Field access checks the discriminator and terminates with a
+source diagnostic if the field is inactive. Payload borrows overlap each other.
+
+Use `switch` to handle the alternatives:
+
+```c
+switch (result) {
+    case ok:
+        print(result.ok);
+        break;
+    case error:
+        report(result.error);
+        break;
+}
+```
+
+Labels name payloads of the selected tagged union. Cases support fallthrough and
+`default`. Each case body has its own local scope and cleanup. `break` exits the
+switch. `continue` targets the enclosing loop, including its step and cleanup.
+An exhaustive switch can satisfy a function's return requirement.
+
+`move(value.payload)` extracts the payload and consumes the whole named union.
+Extraction requires a value without a custom destructor. The compiler rejects
+later uses of that union and conflicting live borrows. Mutating an active
+payload preserves the tag. Assign a whole union value to select another payload.
+
+The library's [Result](../lib/result.cr) provides `success`, `failure`, `is_ok`,
+borrowed payload access, and consuming `take_value` and `take_error` methods.
+See [the result example](../examples/results.cr).
+
+### C unions
+
 ```c
 union Value {
     int integer;

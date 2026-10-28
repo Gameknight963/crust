@@ -38,6 +38,10 @@
 - Shared source library for generic boxes, buffers, vectors, and stable sorting
 - Shared and mutable slices with runtime lengths, checked indexing, array conversions, and container views
 - Native argc/argv entry points and program argument forwarding through the driver
+- Scoped enum class declarations with qualified members and independent member names
+- Generic tagged unions, checked payload access, active-payload cleanup, and consuming extraction
+- Tagged-union switch cases with fallthrough, default, loop control, and ownership-state merging
+- Library Result<T, E> values with success/error construction and borrowed or consuming access
 - Unsafe function and method contracts, including generic instances and interface requirements
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
 - Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
@@ -111,7 +115,7 @@ Signature help uses the same resolved call analysis.
 
 - Borrowed-field lifetimes and field moves in the presence of destructors
 - Temporary owner lifetimes and borrow contracts with multiple borrowed inputs
-- Tagged unions and fallible-operation conventions
+- Fallible allocation and resource APIs using Result<T, E>
 - File-local helper types and further visibility controls
 - Constrained `weak`, `expect`, and `replace` typedefs across a build
 - Static-only types and first-use type initialization

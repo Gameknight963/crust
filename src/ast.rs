@@ -444,6 +444,7 @@ pub struct ArrayType {
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
+    pub tagged: bool,
     pub name_span: Span,
     pub header_span: Span,
     pub id: usize,
@@ -523,6 +524,10 @@ pub struct Statement {
 
 #[derive(Debug, Clone)]
 pub enum StatementKind {
+    Switch {
+        value: Expression,
+        cases: Vec<SwitchCase>,
+    },
     Unsafe(Block),
     Local {
         name_span: Span,
@@ -571,6 +576,12 @@ pub enum StatementKind {
 pub struct Expression {
     pub kind: ExpressionKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchCase {
+    pub label: Option<(String, Span)>,
+    pub body: Block,
 }
 
 impl Expression {

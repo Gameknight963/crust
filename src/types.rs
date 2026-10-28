@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::diagnostic::{Diagnostic, Span};
 
 pub struct StructInfo {
+    pub tagged: bool,
     pub is_union: bool,
     pub complete: bool,
     pub name: String,
@@ -110,6 +111,7 @@ impl Types {
                     ));
                 }
                 structs.push(StructInfo {
+                    tagged: false,
                     is_union: program.union_tags.contains(&id),
                     name: name.clone(),
                     native_name: program.native_tags.get(&id).cloned(),
@@ -155,7 +157,8 @@ impl Types {
                 }
             }
             structs.push(StructInfo {
-                is_union: program.union_tags.contains(&id),
+                tagged: definition.tagged,
+                is_union: program.union_tags.contains(&id) && !definition.tagged,
                 complete: true,
                 name: name.clone(),
                 native_name: None,
@@ -453,7 +456,9 @@ impl Types {
             Type::BoxInt => String::from("BoxInt"),
             Type::Struct(id) => format!(
                 "{} {}",
-                if self.structs[id].is_union {
+                if self.structs[id].tagged {
+                    "tagged union"
+                } else if self.structs[id].is_union {
                     "union"
                 } else {
                     "struct"

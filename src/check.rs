@@ -127,6 +127,7 @@ struct Loan {
 }
 
 struct LoopContext {
+    is_switch: bool,
     scope_count: usize,
     breaks: Vec<Scopes>,
     continues: Vec<(Scopes, Span)>,
@@ -903,7 +904,9 @@ impl FunctionChecker<'_> {
                 return Ok(then_returns && else_returns);
             }
             StatementKind::Break | StatementKind::Continue => {
-                let Some(context) = self.loops.last_mut() else {
+                let Some(context) = self.loops.iter_mut().rev().find(|context| {
+                    matches!(statement.kind, StatementKind::Break) || !context.is_switch
+                }) else {
                     return Err(Diagnostic::new(
                         statement.span,
                         "break and continue require an enclosing loop",
@@ -932,6 +935,7 @@ impl FunctionChecker<'_> {
                 }
                 let after_condition = self.scopes.clone();
                 self.loops.push(LoopContext {
+                    is_switch: false,
                     scope_count: self.scopes.len(),
                     breaks: Vec::new(),
                     continues: Vec::new(),
@@ -971,6 +975,7 @@ impl FunctionChecker<'_> {
             StatementKind::DoWhile { body, condition } => {
                 let before = self.scopes.clone();
                 self.loops.push(LoopContext {
+                    is_switch: false,
                     scope_count: self.scopes.len(),
                     breaks: Vec::new(),
                     continues: Vec::new(),
@@ -1020,6 +1025,73 @@ impl FunctionChecker<'_> {
                 self.scopes = after;
             }
             StatementKind::Empty => {}
+            StatementKind::Switch { value, cases } => {
+                let place = self.checked_place(value)?;
+                let Type::Struct(id) = place.ty else {
+                    return Err(Diagnostic::new(
+                        value.span,
+                        "switch requires a tagged union",
+                    ));
+                };
+                if !self.types.structs[id].tagged {
+                    return Err(Diagnostic::new(
+                        value.span,
+                        "switch requires a tagged union",
+                    ));
+                }
+                self.access(&place.root, &place.fields, false, place.via, value.span)?;
+                let before = self.scopes.clone();
+                let mut seen = HashSet::new();
+                let mut default = false;
+                self.loops.push(LoopContext {
+                    is_switch: true,
+                    scope_count: before.len(),
+                    breaks: Vec::new(),
+                    continues: Vec::new(),
+                });
+                let mut fallthrough = None;
+                for case in cases {
+                    if let Some((name, span)) = &case.label {
+                        if !self.types.structs[id]
+                            .fields
+                            .iter()
+                            .any(|field| field.name == *name)
+                            || !seen.insert(name.clone())
+                        {
+                            return Err(Diagnostic::new(
+                                *span,
+                                "unknown or duplicate tagged-union case",
+                            ));
+                        }
+                        self.record_field_symbol(Type::Struct(id), name, *span);
+                    } else if default {
+                        return Err(Diagnostic::new(case.body.span, "duplicate default case"));
+                    } else {
+                        default = true;
+                    }
+                    self.scopes = fallthrough
+                        .take()
+                        .map_or_else(|| before.clone(), |state| merge(&before, &state));
+                    if !self.block(&case.body)? {
+                        fallthrough = Some(self.scopes.clone());
+                    }
+                }
+                let mut exits = self.loops.pop().unwrap().breaks;
+                if let Some(state) = fallthrough {
+                    exits.push(state);
+                }
+                if !default && seen.len() != self.types.structs[id].fields.len() {
+                    exits.push(before.clone());
+                }
+                let Some(mut after) = exits.pop() else {
+                    self.scopes = before;
+                    return Ok(true);
+                };
+                for state in exits {
+                    after = merge(&after, &state);
+                }
+                self.scopes = after;
+            }
         }
         return Ok(false);
     }
@@ -1679,6 +1751,26 @@ impl FunctionChecker<'_> {
                         self.access(&self.root(owner), &[], true, None, arguments[0].span)?;
                         self.set_state(owner, State::Moved);
                         return Ok(variable.ty);
+                    }
+                    if let ExpressionKind::Field { base, .. } = &arguments[0].kind
+                        && let ExpressionKind::Variable { name, .. } = &base.kind
+                    {
+                        let owner = self.available(name, base.span)?;
+                        if let Type::Struct(id) = owner.ty
+                            && self.types.structs[id].tagged
+                        {
+                            if self.types.structs[id].has_destructor {
+                                return Err(Diagnostic::new(
+                                    expression.span,
+                                    "payload extraction requires a tagged union without a custom destructor",
+                                ));
+                            }
+                            let place = self.checked_place(&arguments[0])?;
+                            self.access(&place.root, &[], true, place.via, arguments[0].span)?;
+                            self.expression_types.insert(arguments[0].span, place.ty);
+                            self.set_state(name, State::Moved);
+                            return Ok(place.ty);
+                        }
                     }
                     let pointer = match &arguments[0].kind {
                         ExpressionKind::Unary {
@@ -2868,12 +2960,12 @@ impl FunctionChecker<'_> {
         let is_union = self.types.structs[id].is_union;
         if is_union {
             self.require_unsafe(expression.span, "initializing a union")?;
-            if fields.len() != 1 {
-                return Err(Diagnostic::new(
-                    expression.span,
-                    "a union initializer selects exactly one field",
-                ));
-            }
+        }
+        if (is_union || self.types.structs[id].tagged) && fields.len() != 1 {
+            return Err(Diagnostic::new(
+                expression.span,
+                "a union initializer selects exactly one field",
+            ));
         }
         let mut seen = std::collections::HashSet::new();
         for field in fields {
@@ -2888,7 +2980,7 @@ impl FunctionChecker<'_> {
             self.require_type(&field.value, ty)?;
         }
         for field in &declared {
-            if !is_union && !seen.contains(field.name.as_str()) {
+            if !is_union && !self.types.structs[id].tagged && !seen.contains(field.name.as_str()) {
                 return Err(Diagnostic::new(
                     expression.span,
                     format!("missing initializer for field '{}'", field.name),
@@ -2995,7 +3087,7 @@ impl FunctionChecker<'_> {
                 let place = self.checked_place(base)?;
                 let ty = self.field_type(place.ty, name, expression.span)?;
                 self.record_field_symbol(place.ty, name, *name_span);
-                let projection = if matches!(place.ty, Type::Struct(id) if self.types.structs[id].is_union)
+                let projection = if matches!(place.ty, Type::Struct(id) if self.types.structs[id].is_union || self.types.structs[id].tagged)
                 {
                     "*"
                 } else {

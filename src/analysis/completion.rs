@@ -83,6 +83,11 @@ fn block_scopes(block: &Block, locate: &impl Fn(Span) -> Location, scopes: &mut 
             StatementKind::Local { name_span, .. } => {
                 declarations.push((*name_span, name_span.end));
             }
+            StatementKind::Switch { cases, .. } => {
+                for case in cases {
+                    block_scopes(&case.body, locate, scopes);
+                }
+            }
             StatementKind::Block(block) | StatementKind::Unsafe(block) => {
                 block_scopes(block, locate, scopes);
             }

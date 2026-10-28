@@ -382,6 +382,7 @@ struct Emitter<'checked> {
 }
 
 struct LoopContext {
+    is_switch: bool,
     scope_count: usize,
     step: Option<Box<Statement>>,
     continue_label: Option<String>,
@@ -511,8 +512,16 @@ impl Emitter<'_> {
             let kind = if info.is_union { "union" } else { "struct" };
             self.line(&format!("{kind} crust_struct_{id} {{"));
             self.indent += 1;
+            if info.tagged {
+                self.line("size_t crust_tag; union {");
+                self.indent += 1;
+            }
             for field in &info.fields {
                 self.line(&format!("{} crust_field_{};", c_type(field.ty), field.name));
+            }
+            if info.tagged {
+                self.indent -= 1;
+                self.line("};");
             }
             self.indent -= 1;
             self.line("};");
@@ -550,8 +559,16 @@ impl Emitter<'_> {
                 if info.has_destructor {
                     self.line(&format!("{}(value);", function_name(&destructor_name(*id))));
                 }
-                for field in info.fields.iter().rev() {
+                for (index, field) in info.fields.iter().enumerate().rev() {
+                    if info.tagged {
+                        self.line(&format!("if (value->crust_tag == {}) {{", index + 1));
+                        self.indent += 1;
+                    }
                     self.drop_value(field.ty, &format!("value->crust_field_{}", field.name));
+                    if info.tagged {
+                        self.indent -= 1;
+                        self.line("}");
+                    }
                 }
                 self.indent -= 1;
                 self.line("}");
@@ -745,7 +762,14 @@ impl Emitter<'_> {
                 }
             }
             StatementKind::Break | StatementKind::Continue => {
-                let context = self.loops.last().expect("checked loop control");
+                let context = self
+                    .loops
+                    .iter()
+                    .rev()
+                    .find(|context| {
+                        matches!(statement.kind, StatementKind::Break) || !context.is_switch
+                    })
+                    .expect("checked loop control");
                 let scope_count = context.scope_count;
                 let step = context.step.clone();
                 let continue_label = context.continue_label.clone();
@@ -767,6 +791,45 @@ impl Emitter<'_> {
                     self.line("break;");
                 }
             }
+            StatementKind::Switch { value, cases } => {
+                let Type::Struct(id) = self.place_type(value) else {
+                    unreachable!()
+                };
+                let place = self.place(value);
+                let tag = self.temporary(
+                    Type::Integer(IntType::named("size_t").unwrap()),
+                    &format!("({place}).crust_tag"),
+                );
+                self.line(&format!("switch ({tag}) {{"));
+                self.loops.push(LoopContext {
+                    is_switch: true,
+                    scope_count: self.scopes.len(),
+                    step: None,
+                    continue_label: None,
+                });
+                for case in cases {
+                    if let Some((name, _)) = &case.label {
+                        let index = self.types.structs[id]
+                            .fields
+                            .iter()
+                            .position(|field| field.name == *name)
+                            .unwrap();
+                        self.line(&format!("case {}:", index + 1));
+                    } else {
+                        self.line("default:");
+                    }
+                    self.block(&case.body);
+                }
+                if cases.len() == self.types.structs[id].fields.len()
+                    && cases.iter().all(|case| case.label.is_some())
+                {
+                    self.line("break;");
+                    let location = self.runtime_location(value.span);
+                    self.line(&format!("default: crust_rt_fail(\"invalid tagged-union discriminator\", {location});"));
+                }
+                self.loops.pop();
+                self.line("}");
+            }
             StatementKind::While {
                 condition,
                 body,
@@ -777,6 +840,7 @@ impl Emitter<'_> {
                 let condition = self.value_expression(condition);
                 self.line(&format!("if (!{condition}) {{ break; }}"));
                 self.loops.push(LoopContext {
+                    is_switch: false,
                     scope_count: self.scopes.len(),
                     step: step.clone(),
                     continue_label: None,
@@ -794,6 +858,7 @@ impl Emitter<'_> {
                 self.line("while (1) {");
                 self.indent += 1;
                 self.loops.push(LoopContext {
+                    is_switch: false,
                     scope_count: self.scopes.len(),
                     step: None,
                     continue_label: Some(label.clone()),
@@ -1154,6 +1219,16 @@ impl Emitter<'_> {
             ExpressionKind::StructLiteral { fields, .. } => {
                 let ty = self.expression_type(expression);
                 let mut values = Vec::new();
+                if let Type::Struct(id) = ty
+                    && self.types.structs[id].tagged
+                {
+                    let index = self.types.structs[id]
+                        .fields
+                        .iter()
+                        .position(|field| field.name == fields[0].name)
+                        .unwrap();
+                    values.push(format!(".crust_tag = {}", index + 1));
+                }
                 for field in fields {
                     let value = self.value_expression(&field.value);
                     values.push(format!(".crust_field_{} = {value}", field.name));
@@ -1199,7 +1274,16 @@ impl Emitter<'_> {
                 if name == "move" {
                     let ExpressionKind::Variable { name: owner, .. } = &arguments[0].kind else {
                         let place = self.place(&arguments[0]);
-                        return Some(self.temporary(self.expression_type(expression), &place));
+                        let value = self.temporary(self.expression_type(expression), &place);
+                        if let ExpressionKind::Field { base, .. } = &arguments[0].kind
+                            && let ExpressionKind::Variable { name, .. } = &base.kind
+                            && let Type::Struct(id) = self.local(name).ty
+                            && self.types.structs[id].tagged
+                            && let Some(live) = self.local(name).live
+                        {
+                            self.line(&format!("{live} = 0;"));
+                        }
+                        return Some(value);
                     };
                     let local = self.local(owner);
                     let temporary = self.temporary(local.ty, &local.name);
@@ -1463,7 +1547,24 @@ impl Emitter<'_> {
                 return format!("({address})->crust_elements[{checked_index}]");
             }
             ExpressionKind::Field { base, name, .. } => {
-                return format!("({}).crust_field_{name}", self.place(base));
+                let place = self.place(base);
+                if let Type::Struct(id) = self.place_type(base)
+                    && self.types.structs[id].tagged
+                {
+                    let index = self.types.structs[id]
+                        .fields
+                        .iter()
+                        .position(|field| field.name == *name)
+                        .unwrap();
+                    let address = self.temporary(
+                        self.address_type(base, self.place_mutable(base)),
+                        &format!("&({place})"),
+                    );
+                    let location = self.runtime_location(expression.span);
+                    self.line(&format!("if (({address})->crust_tag != {}) {{ crust_rt_fail(\"inactive tagged-union payload\", {location}); }}", index + 1));
+                    return format!("({address})->crust_field_{name}");
+                }
+                return format!("({place}).crust_field_{name}");
             }
             ExpressionKind::Variable { name, .. } => {
                 let local = self.local(name);
@@ -1665,7 +1766,7 @@ const RUNTIME: &str = r#"/* Generated by Crust. */
 #define CRUST_EXPORT
 #endif
 
-static inline void crust_rt_fail(const char *message, const char *crust_file, size_t line, size_t column)
+static inline _Noreturn void crust_rt_fail(const char *message, const char *crust_file, size_t line, size_t column)
 {
     if (crust_file != NULL) {
         fprintf(stderr, "%s:%zu:%zu: runtime error: %s\n", crust_file, line, column, message);

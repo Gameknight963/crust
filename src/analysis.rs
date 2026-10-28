@@ -253,6 +253,11 @@ impl<F: Fn(Span) -> Location> Builder<'_, F> {
                 }
             }
             StatementKind::DoWhile { body, .. } => self.block(body),
+            StatementKind::Switch { cases, .. } => {
+                for case in cases {
+                    self.block(&case.body);
+                }
+            }
             _ => {}
         }
     }
@@ -324,7 +329,7 @@ pub(crate) fn build(
     }
     for (id, (name, span)) in checked.program.struct_names.iter().enumerate() {
         if !checked.types.structs[id].complete {
-            let kind = if checked.types.structs[id].is_union {
+            let kind = if checked.types.structs[id].is_union || checked.types.structs[id].tagged {
                 SymbolKind::Union
             } else {
                 SymbolKind::Struct
@@ -343,7 +348,9 @@ pub(crate) fn build(
     }
     for definition in &checked.program.structs {
         let name = builder.text(definition.name_span);
-        let kind = if checked.types.structs[definition.id].is_union {
+        let kind = if checked.types.structs[definition.id].is_union
+            || checked.types.structs[definition.id].tagged
+        {
             SymbolKind::Union
         } else {
             SymbolKind::Struct

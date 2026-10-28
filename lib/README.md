@@ -20,6 +20,7 @@ int main() {
 | `buffer.cr` | `Buffer<T>`, a fixed-length heap buffer initialized from a copyable value |
 | `vector.cr` | `Vector<T>`, a growable sequence supporting owning elements |
 | `sort.cr` | `Ordered` and stable `sort<T>` for vectors |
+| `result.cr` | `Result<T, E>` with success and error payloads, borrowed access, and consuming extraction |
 | `memory.cr` | Native allocation and termination declarations used by the containers |
 
 Containers release their allocations on scope exit. Bounds errors and allocation

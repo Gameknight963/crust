@@ -8,12 +8,22 @@ mod file_locals;
 mod generics;
 mod integers;
 mod limits;
+mod switches;
 mod symbols;
 
 pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     let mut scoped_enums = HashSet::new();
+    let mut tagged_unions = HashSet::new();
     let mut position = 0;
     while position + 2 < tokens.len() {
+        if matches!(&tokens[position].kind, Token::Identifier(name) if name == "tagged")
+            && tokens[position + 1].kind == Token::Union
+        {
+            let span = tokens[position].span.through(tokens[position + 1].span);
+            tokens.remove(position);
+            tokens[position].span = span;
+            tagged_unions.insert(span.start);
+        }
         if tokens[position].kind == Token::Enum
             && matches!(&tokens[position + 1].kind, Token::Identifier(name) if name == "class")
             && matches!(tokens[position + 2].kind, Token::Identifier(_))
@@ -24,6 +34,7 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
         position += 1;
     }
     let mut parser = Parser {
+        tagged_unions,
         scoped_enums,
         current_enum: None,
         tokens,
@@ -185,6 +196,7 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
 
 #[derive(Clone)]
 struct Parser {
+    tagged_unions: HashSet<usize>,
     scoped_enums: HashSet<usize>,
     current_enum: Option<usize>,
     file_locals: HashMap<(usize, String), String>,
@@ -1142,6 +1154,7 @@ impl Parser {
         self.current_struct = previous_owner;
         let end = self.expect(Token::Semicolon, "expected ';' after the struct definition")?;
         return Ok(StructDefinition {
+            tagged: self.tagged_unions.contains(&start.start),
             name_span,
             header_span: Span {
                 end: body_start.start,
@@ -1689,6 +1702,9 @@ impl Parser {
     }
 
     fn statement_inner(&mut self) -> Result<Statement, Diagnostic> {
+        if matches!(&self.current().kind, Token::Identifier(name) if name == "switch") {
+            return self.switch_statement();
+        }
         let start = self.current().span;
 
         if self.consume(&Token::Unsafe) {
