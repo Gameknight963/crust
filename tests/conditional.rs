@@ -16,7 +16,12 @@ fn run(source: &str, expected: &str) {
 
 #[test]
 fn conditional_example_selects_an_owner_and_text() {
-    run(include_str!("../examples/conditional.cr"), "42\nlarge\n");
+    common::assert_example(
+        "examples/conditional.cr",
+        "42\nlarge\n",
+        "drop:7\ndrop:42\n",
+        false,
+    );
 }
 
 #[test]

@@ -1,29 +1,31 @@
+import "../lib/box.cr";
+
 void increment(int& value)
 {
     value = value + 1;
 }
 
-int read_box(const BoxInt& owner)
+int read_box(const Box<int>& owner)
 {
-    return *owner;
+    return owner.get();
 }
 
-void replace_box(BoxInt& owner, int value)
+void replace_box(Box<int>& owner, int value)
 {
-    owner = box_int(value);
+    owner = Box<int>::create(value);
 }
 
-int main(void)
+int main()
 {
     int number = 41;
     increment(&number);
     print(number);
 
-    BoxInt owner = box_int(7);
-    increment(&*owner);
+    Box<int> owner = Box<int>::create(7);
+    increment(owner.get_mut());
     print(read_box(&owner));
     replace_box(&owner, 99);
-    print(*owner);
+    print(owner.get());
 
     return 0;
 }

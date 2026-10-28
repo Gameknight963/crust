@@ -19,10 +19,11 @@ fn run(source: &str, stdout: &str, drops: &str) {
 
 #[test]
 fn local_borrows_reborrow_and_release_at_block_end() {
-    run(
-        include_str!("../examples/borrowed_locals.cr"),
+    common::assert_example(
+        "examples/borrowed_locals.cr",
         "41\n42\n",
         "drop:42\n",
+        false,
     );
 }
 

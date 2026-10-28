@@ -19,11 +19,7 @@ fn run(source: &str, stdout: &str, drops: &str) {
 
 #[test]
 fn borrowed_method_returns_keep_the_receiver_alive() {
-    run(
-        include_str!("../examples/borrowed_returns.cr"),
-        "42\n",
-        "drop:42\n",
-    );
+    common::assert_example("examples/borrowed_returns.cr", "42\n", "drop:42\n", false);
 }
 
 #[test]

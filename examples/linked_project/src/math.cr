@@ -1,4 +1,6 @@
+import "../../../lib/box.cr";
+
 extern int add(int left, int right) = "linked_add" {
-    BoxInt saved = box_int(left);
-    return *saved + right;
+    Box<int> saved = Box<int>::create(left);
+    return saved.get() + right;
 }

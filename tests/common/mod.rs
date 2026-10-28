@@ -17,6 +17,29 @@ pub fn allocation_source() -> String {
         .replace("import \"result.cr\";", include_str!("../../lib/result.cr"));
 }
 
+#[allow(dead_code)]
+pub fn assert_example(relative: &str, stdout: &str, stderr: &str, sizes: bool) {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative);
+    let generated = crust::source::SourceSet::load(&path)
+        .unwrap()
+        .compile()
+        .unwrap();
+    let output = tracked_generated_c(&generated, sizes);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        stdout
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace('\r', ""),
+        stderr
+    );
+}
+
 // Instrument the generated C's allocator, rather than inferring cleanup from
 // text matching. Real compiled executions verify frees and their scope order.
 #[allow(dead_code)]

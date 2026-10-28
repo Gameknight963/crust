@@ -21,11 +21,7 @@ fn assert_run(source: &str, expected: &str, drops: &str) {
 
 #[test]
 fn compiles_the_struct_example_and_cleans_up_its_owner() {
-    assert_run(
-        include_str!("../examples/structs.cr"),
-        "1\n42\n2\n43\n",
-        "drop:43\n",
-    );
+    common::assert_example("examples/structs.cr", "1\n42\n2\n43\n", "drop:43\n", false);
 }
 
 #[test]

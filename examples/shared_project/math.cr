@@ -1,8 +1,10 @@
+import "../../lib/box.cr";
+
 int sum(int left, int right) {
     return left + right;
 }
 
 extern int add(int left, int right) = "example_add" {
-    BoxInt result = box_int(sum(left, right));
-    return *result;
+    Box<int> result = Box<int>::create(sum(left, right));
+    return result.get();
 }

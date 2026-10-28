@@ -1,3 +1,5 @@
+import "../lib/box.cr";
+
 struct Counter {
     int value;
 
@@ -11,14 +13,14 @@ struct Counter {
 };
 
 struct Resource {
-    BoxInt value;
+    Box<int> value;
 
     int get() const {
-        return *this.value;
+        return this.value.get();
     }
 
     int finish(Self this) {
-        return *this.value;
+        return this.value.get();
     }
 };
 
@@ -27,7 +29,7 @@ int main() {
     counter.increment();
     print(counter.get());
 
-    struct Resource resource = { .value = box_int(7) };
+    struct Resource resource = { .value = Box<int>::create(7) };
     print(resource.get());
     print(move(resource).finish());
     return 0;

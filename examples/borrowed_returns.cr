@@ -1,17 +1,19 @@
+import "../lib/box.cr";
+
 struct Item {
-    BoxInt owner;
+    Box<int> owner;
 
     const int& value() const {
-        return &*this.owner;
+        return this.owner.get();
     }
 
     int& value_mut() {
-        return &*this.owner;
+        return this.owner.get_mut();
     }
 };
 
 int main() {
-    Item item = { .owner = box_int(40) };
+    Item item = { .owner = Box<int>::create(40) };
     {
         int& value = item.value_mut();
         value += 2;

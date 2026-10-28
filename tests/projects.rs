@@ -42,6 +42,17 @@ impl Fixture {
         );
     }
 
+    fn box_library(&self) {
+        for (name, source) in [
+            ("box", include_str!("../lib/box.cr")),
+            ("memory", include_str!("../lib/memory.cr")),
+            ("allocation", include_str!("../lib/allocation.cr")),
+            ("result", include_str!("../lib/result.cr")),
+        ] {
+            self.write(&format!("lib/{name}.cr"), source);
+        }
+    }
+
     fn invoke(&self, arguments: &[&str]) -> Output {
         return Command::new(env!("CARGO_BIN_EXE_crust"))
             .args(arguments)
@@ -770,6 +781,7 @@ fn native_drivers_require_project_target_links_to_be_resolved_before_compilation
 #[test]
 fn native_target_links_build_dependencies_before_a_selected_executable() {
     let fixture = Fixture::new();
+    fixture.box_library();
     fixture.write(
         "crust.toml",
         include_str!("../examples/linked_project/crust.toml"),
@@ -780,7 +792,8 @@ fn native_target_links_build_dependencies_before_a_selected_executable() {
     );
     fixture.write(
         "src/math.cr",
-        include_str!("../examples/linked_project/src/math.cr"),
+        &include_str!("../examples/linked_project/src/math.cr")
+            .replace("../../../lib/box.cr", "../lib/box.cr"),
     );
     let output = fixture.invoke(&["run", "--target", "app"]);
     success(&output);
@@ -1476,13 +1489,15 @@ fn static_library_configuration_and_outputs_preserve_inputs() {
 #[test]
 fn static_library_targets_archive_native_sources_and_link_from_a_c_consumer() {
     let fixture = Fixture::new();
+    fixture.box_library();
     fixture.write(
         "crust.toml",
         include_str!("../examples/library_project/crust.toml"),
     );
     fixture.write(
         "src/library.cr",
-        include_str!("../examples/library_project/src/library.cr"),
+        &include_str!("../examples/library_project/src/library.cr")
+            .replace("../../../lib/box.cr", "../lib/box.cr"),
     );
     fixture.write(
         "include/math.h",
@@ -1591,13 +1606,15 @@ fn static_library_targets_archive_native_sources_and_link_from_a_c_consumer() {
 #[test]
 fn separate_native_sources_call_named_crust_exports() {
     let fixture = Fixture::new();
+    fixture.box_library();
     fixture.write(
         "crust.toml",
         include_str!("../examples/export_project/crust.toml"),
     );
     fixture.write(
         "src/main.cr",
-        include_str!("../examples/export_project/src/main.cr"),
+        &include_str!("../examples/export_project/src/main.cr")
+            .replace("../../../lib/box.cr", "../lib/box.cr"),
     );
     fixture.write(
         "include/exports.h",

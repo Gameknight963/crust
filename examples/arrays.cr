@@ -1,3 +1,5 @@
+import "../lib/box.cr";
+
 typedef int Row[3];
 
 int sum(const Row& values) {
@@ -13,8 +15,8 @@ int main() {
     values[1] += 2;
     print(sum(&values));
 
-    BoxInt owners[2] = { box_int(4), box_int(5) };
-    print(*owners[0]);
-    owners[1] = box_int(6);
+    Box<int> owners[2] = { Box<int>::create(4), Box<int>::create(5) };
+    print(owners[0].get());
+    owners[1] = Box<int>::create(6);
     return 0;
 }

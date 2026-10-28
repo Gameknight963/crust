@@ -27,16 +27,15 @@ fn run(source: &str, stdout: &str, stderr: &str) {
 #[test]
 fn sorting_example_orders_heap_owners_and_preserves_cleanup_through_growth() {
     let width = std::mem::size_of::<usize>();
-    let source = include_str!("../examples/sorting.cr")
-        .replace("import \"container_project/src/sort.cr\";", &library());
-    run(
-        &source,
+    common::assert_example(
+        "examples/sorting.cr",
         "1\n1\n2\n3\n",
         &format!(
             "drop:bytes:{}\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:4\ndrop:bytes:{}\n",
             width * 2,
             width * 4
         ),
+        true,
     );
 }
 

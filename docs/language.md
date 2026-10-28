@@ -145,7 +145,7 @@ switch (status) {
 }
 ```
 
-- Types: integers, `bool`, `void`, `BoxInt`, struct names, and typedef names
+- Types: integers, `bool`, `void`, struct names, typedef names, and generic types
 - Functions support named parameters, forward calls, and recursion
 - Executable targets use `int main()` or `int main(void)` as their entry point
 - `int main(int argc, char** argv)` receives native command-line arguments
@@ -233,7 +233,7 @@ same value type or compatible raw pointers, including added `const` and
 an explicit `if` and separate use of each borrow.
 
 ```c
-BoxInt selected = condition ? move(first) : move(second);
+Box<int> selected = condition ? move(first) : move(second);
 ```
 
 Ownership states merge after both branches are checked. The example transfers
@@ -562,15 +562,17 @@ bool empty = false;
 ## Ownership
 
 ```c
+import "lib/box.cr";
+
 int main() {
-    BoxInt first = box_int(42);
-    BoxInt second = move(first);
-    print(*second);
+    Box<int> first = Box<int>::create(42);
+    Box<int> second = move(first);
+    print(second.get());
     return 0;
 }
 ```
 
-- `box_int(int)` allocates an owned integer
+- `Box<T>::create(value)` allocates an owned value using the source library
 - `move(variable)` transfers a whole owning value and invalidates its source
 - For ordinary copyable values, `move(variable)` copies the value and leaves its source available, allowing generic transfer functions to handle both kinds of value
 - Moved variables can be reinitialized
@@ -584,17 +586,19 @@ int main() {
 ## Structs
 
 ```c
+import "lib/box.cr";
+
 struct Item {
     int id;
-    BoxInt value;
+    Box<int> value;
 };
 
 int main() {
-    struct Item first = { .id = 1, .value = box_int(42) };
+    struct Item first = { .id = 1, .value = Box<int>::create(42) };
     struct Item second = move(first);
     const Item& item = &second;
     print(item.id);
-    print(*item.value);
+    print(item.value.get());
     return 0;
 }
 ```
@@ -686,12 +690,12 @@ int main() {
 | --- | --- | --- |
 | `int&` | `&number` | Exclusive, mutable |
 | `const int&` | `&number` | Shared, read-only |
-| `BoxInt&` | `&owner` | Exclusive access to the owner slot |
-| `const BoxInt&` | `&owner` | Shared access through the owner |
+| `Box<int>&` | `&owner` | Exclusive access to the owner slot |
+| `const Box<int>&` | `&owner` | Shared access through the owner |
 | `struct Name&` | `&value` | Exclusive struct access |
 | `const struct Name&` | `&value` | Shared struct access |
 
-- `&*owner` borrows a boxed integer's contents
+- `owner.get()` borrows boxed contents for reading, and `owner.get_mut()` permits mutation
 - Multiple shared borrows may coexist
 - Exclusive borrows prevent conflicting reads, writes, moves, and borrows
 - Borrow permissions apply through fields and owning pointees
@@ -787,16 +791,18 @@ See [the reference-field example](../examples/reference_fields.cr) and
 ### Borrowed returns
 
 ```c
+import "lib/box.cr";
+
 struct Item {
-    BoxInt owner;
+    Box<int> owner;
 
     const int& value() const {
-        return &*this.owner;
+        return this.owner.get();
     }
 };
 
 int main() {
-    Item item = { .owner = box_int(42) };
+    Item item = { .owner = Box<int>::create(42) };
     print(item.value());
     return 0;
 }
@@ -870,7 +876,7 @@ An explicit `Self this` first parameter passes the receiver by value:
 
 ```c
 int finish(Self this) {
-    return *this.value;
+    return this.value.get();
 }
 ```
 
@@ -1010,9 +1016,11 @@ An `extern` function with a body defines a named C symbol. An optional alias
 chooses its C name, using the same syntax as imports.
 
 ```c
+import "lib/box.cr";
+
 extern int add(int left, int right) = "example_add" {
-    BoxInt saved = box_int(left);
-    return *saved + right;
+    Box<int> saved = Box<int>::create(left);
+    return saved.get() + right;
 }
 ```
 

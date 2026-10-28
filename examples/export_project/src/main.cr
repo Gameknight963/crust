@@ -1,8 +1,10 @@
+import "../../../lib/box.cr";
+
 extern header "../include/exports.h";
 
 extern int add(int left, int right) = "example_add" {
-    BoxInt saved = box_int(left);
-    return *saved + right;
+    Box<int> saved = Box<int>::create(left);
+    return saved.get() + right;
 }
 
 extern int native_call_add(int left, int right);

@@ -1,7 +1,9 @@
+import "../lib/box.cr";
+
 int main() {
-    BoxInt owner = box_int(40);
+    Box<int> owner = Box<int>::create(40);
     {
-        int& value = &*owner;
+        int& value = owner.get_mut();
         value += 1;
         {
             const int& view = &value;
@@ -9,6 +11,6 @@ int main() {
         }
         value += 1;
     }
-    print(*owner);
+    print(owner.get());
     return 0;
 }

@@ -27,6 +27,8 @@ fn main() {
     for dependency in ["memory", "result", "allocation", "vector", "bytes"] {
         library = library.replace(&format!("import \"{dependency}.cr\";"), "");
     }
+    let declarations = library.clone();
+    let methods = include_str!("methods.cr").replace("import \"../lib/box.cr\";", &declarations);
     library.push_str(r#"
         int main() {
             char text[6] = "hello";
@@ -44,7 +46,7 @@ fn main() {
     crust::check(&library).expect("library mutation seed must compile");
     let corpus = [
         include_str!("hello.cr"),
-        include_str!("methods.cr"),
+        methods.as_str(),
         include_str!("destructors.cr"),
         include_str!("generic_box.cr"),
         include_str!("strings.cr"),

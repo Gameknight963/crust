@@ -110,10 +110,11 @@ fn run(source: &str, stdout: &str, drops: &str) {
 
 #[test]
 fn runs_array_example_and_destroys_elements_in_reverse_order() {
-    run(
-        include_str!("../examples/arrays.cr"),
+    common::assert_example(
+        "examples/arrays.cr",
         "62\n4\n",
         "drop:5\ndrop:6\ndrop:4\n",
+        false,
     );
 }
 

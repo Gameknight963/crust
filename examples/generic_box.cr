@@ -42,8 +42,8 @@ struct Box<T> {
 int main() {
     Box<int> number = Box<int>::create(42);
     print(number.get());
-    Box<BoxInt> inner = Box<BoxInt>::create(box_int(7));
-    Box<Box<BoxInt>> outer = Box<Box<BoxInt>>::create(move(inner));
-    print(*outer.get().get());
+    Box<Box<int>> inner = Box<Box<int>>::create(Box<int>::create(7));
+    Box<Box<Box<int>>> outer = Box<Box<Box<int>>>::create(move(inner));
+    print(outer.get().get().get());
     return 0;
 }

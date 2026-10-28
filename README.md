@@ -15,15 +15,17 @@ C and builds native executables, static libraries, and shared libraries.
 ## Example
 
 ```c
+import "lib/box.cr";
+
 void increment(int& value) {
     value += 1;
 }
 
 int main() {
-    BoxInt first = box_int(42);
-    BoxInt second = move(first);
-    increment(&*second);
-    print(*second);
+    Box<int> first = Box<int>::create(42);
+    Box<int> second = move(first);
+    increment(second.get_mut());
+    print(second.get());
     return 0;
 }
 ```

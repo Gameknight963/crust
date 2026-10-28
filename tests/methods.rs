@@ -19,11 +19,7 @@ fn run(source: &str, stdout: &str, drops: &str) {
 
 #[test]
 fn runs_the_method_example_and_frees_the_consumed_receiver() {
-    run(
-        include_str!("../examples/methods.cr"),
-        "42\n7\n7\n",
-        "drop:7\n",
-    );
+    common::assert_example("examples/methods.cr", "42\n7\n7\n", "drop:7\n", false);
 }
 
 #[test]
