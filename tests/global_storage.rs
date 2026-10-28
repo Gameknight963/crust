@@ -143,6 +143,9 @@ fn static_defaults_preserve_private_field_invariants_and_array_bounds() {
         "struct Hidden { private int value; }; const Hidden[2] values; int main() { return 0; }",
         "const int[2] values={1,2}; const int* pointer=&values[1+1]; int main() { return 0; }",
         "int main() { static int this=0; return 0; }",
+        "int main() { if (true) static int count=0; return 0; }",
+        "int main() { while (false) static int count=0; return 0; }",
+        "int main() { do static int count=0; while (false); return 0; }",
     ] {
         assert!(crust::compile(source).is_err(), "accepted {source}");
     }

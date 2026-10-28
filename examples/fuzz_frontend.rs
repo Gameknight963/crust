@@ -14,6 +14,34 @@ fn main() {
         .map_or(10_000, |value| value.parse().unwrap());
     let seed: u64 = arguments.get(1).map_or(42, |value| value.parse().unwrap());
     assert_ne!(seed, 0, "seed must be nonzero");
+    let mut library = [
+        include_str!("../lib/memory.cr"),
+        include_str!("../lib/result.cr"),
+        include_str!("../lib/allocation.cr"),
+        include_str!("../lib/box.cr"),
+        include_str!("../lib/vector.cr"),
+        include_str!("../lib/bytes.cr"),
+        include_str!("../lib/string.cr"),
+    ]
+    .join("\n");
+    for dependency in ["memory", "result", "allocation", "vector", "bytes"] {
+        library = library.replace(&format!("import \"{dependency}.cr\";"), "");
+    }
+    library.push_str(r#"
+        int main() {
+            char text[6] = "hello";
+            Result<String, TextError> copied = String::try_from_c_string(&text);
+            if (!copied.is_ok()) return 1;
+            String value = move(copied).take_value();
+            print(value.view());
+            Vector<Box<int>> values = Vector<Box<int>>::create();
+            Result<Unit, AllocationFailure<Box<int>>> inserted = values.try_push(Box<int>::create(42));
+            if (!inserted.is_ok()) return 1;
+            print(values.at(0).get());
+            return 0;
+        }
+    "#);
+    crust::check(&library).expect("library mutation seed must compile");
     let corpus = [
         include_str!("hello.cr"),
         include_str!("methods.cr"),
@@ -26,6 +54,7 @@ fn main() {
         "int& choose(int& a, int& b) borrows(a,b) { if (a > b) return a; return b; } int main() { int a=1; int b=2; print(choose(&a,&b)); return 0; }",
         "tagged union Value { double number; int integer; }; int main() { Value value = {.number=1.5}; switch(value) { case number: print(value.number); break; case integer: print(value.integer); break; } return 0; }",
         "int main() { uint8_t[3] bytes={65,0,66}; const uint8_t[]& view=&bytes; print(view); return 0; }",
+        library.as_str(),
     ];
     let fragments: &[&[u8]] = &[
         b"{}",

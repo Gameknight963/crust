@@ -1740,7 +1740,10 @@ impl Parser {
             return self.block();
         }
         let statement = self.statement()?;
-        if matches!(statement.kind, StatementKind::Local { .. }) {
+        if matches!(
+            statement.kind,
+            StatementKind::Local { .. } | StatementKind::StaticLocal { .. }
+        ) {
             return Err(Diagnostic::new(
                 statement.span,
                 "a local declaration in a control-flow body requires braces",
