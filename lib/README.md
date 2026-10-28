@@ -20,10 +20,11 @@ int main() {
 | `buffer.cr` | `Buffer<T>`, a fixed-length heap buffer initialized from a copyable value |
 | `vector.cr` | `Vector<T>`, a growable sequence supporting owning elements |
 | `sort.cr` | `Ordered` and stable `sort<T>` for vectors |
-| `result.cr` | `Result<T, E>` with success and error payloads, borrowed access, and consuming extraction |
-| `allocation.cr` | Allocation errors, rejected values, and `Unit` for successful operations without a payload |
+| `result.cr` | `Result<T, E>`, borrowed and consuming payload access, and `Unit` for success without a payload |
+| `allocation.cr` | Allocation errors and rejected values |
 | `bytes.cr` | `ByteBuffer`, an owning byte sequence with shared and mutable views |
 | `string.cr` | UTF-8 `String`, validation, checked substrings, and fallible text operations |
+| `file.cr` | Owned binary streams with fallible creation, byte I/O, synchronization, and closing |
 | `memory.cr` | Native allocation and termination declarations used by the containers |
 
 Containers release their allocations on scope exit. Mutable and shared access
@@ -69,3 +70,15 @@ changing the string. `view()` exposes shared bytes. Print a view with
 `print(text.view())` to write its full length, including embedded zeroes.
 
 See [the text example](../examples/text.cr).
+
+## Files
+
+`File::try_temporary()` returns `Result<File, FileError>`. Byte I/O, flushing,
+rewinding, and closing have `try_` methods that return operation errors.
+`try_read_byte()` returns `Result<FileRead, FileError>`, with `byte` and `end`
+variants distinguishing data from end-of-file. Moving a file transfers ownership,
+and its destructor closes the stream.
+
+Compile `native/file.c` as a native source in the consuming target.
+The [file project](../examples/file_project/) shows the configuration and the
+status-based convenience methods.

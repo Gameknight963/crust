@@ -42,14 +42,12 @@ def main():
         subprocess.run([str(path), "--help"], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         files[f"bin/{path.name}"] = path
     tracked = subprocess.check_output([
-        "git", "ls-files", "-z", "--", "Cargo.toml", "Cargo.lock", "README.md",
+        "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "Cargo.toml", "Cargo.lock", "README.md",
         "src", "lib", "docs", "examples", "editors", "tests", "tools",
     ], cwd=ROOT)
     for entry in tracked.decode("utf-8").split("\0"):
-        if entry:
+        if entry and (ROOT / entry).is_file():
             files[entry] = ROOT / entry
-    for entry in ["tools/package.py", "docs/installation.md"]:
-        files[entry] = ROOT / entry
     manifest = {
         "formatVersion": 1,
         "version": version,

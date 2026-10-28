@@ -1,6 +1,5 @@
 import "result.cr";
 
-enum class Unit : uint8_t { Value };
 enum class AllocError : uint8_t { OutOfMemory, CapacityOverflow };
 
 tagged union AllocationFailure<T> {

@@ -82,7 +82,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fetch --locked
-      - run: cargo test --locked --offline --test sanitizers --test floats --test library --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test borrow_contracts --test tagged_unions
+      - run: cargo test --locked --offline --test sanitizers --test floats --test library --test files --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test borrow_contracts --test tagged_unions
 
   vscode:
     runs-on: ubuntu-latest

@@ -1,4 +1,4 @@
-import "file.cr";
+import "../../../lib/file.cr";
 
 int main() {
     File output = File::temporary();

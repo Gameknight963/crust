@@ -7,4 +7,4 @@ kind = "executable"
 entry = "src/main.cr"
 
 [targets.native]
-sources = ["native/file.c"]
+sources = ["../../lib/native/file.c"]

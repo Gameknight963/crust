@@ -8,6 +8,12 @@ cargo run -- run --project examples/file_project
 using it. Moving a `File` transfers ownership, and its destructor closes the
 stream. The C library removes the temporary file when it closes.
 
+The implementation lives in [the shared library](../../lib/file.cr).
+`File::try_temporary()` returns `Result<File, FileError>`. The `try_read_byte`,
+`try_write_byte`, `try_flush`, `try_rewind`, and `try_close` methods return explicit
+errors. A successful read contains a `FileRead` with either a `byte` or `end`
+payload. Failed close operations leave the file closed.
+
 - `write_byte(value)` writes a byte and reports success
 - `read_byte()` returns a byte from 0 to 255, or -1 for EOF or an error
 - `eof()` and `has_error()` distinguish the stream's status

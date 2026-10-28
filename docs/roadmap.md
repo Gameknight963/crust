@@ -107,7 +107,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Integer and enum switch statements
 - [x] Global definitions and static variables
 - [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
-- [ ] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
+- [x] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
 - [ ] Migrate examples and tests from BoxInt and remove the built-in type
 - [ ] Project dependencies, library-supplied native dependencies, and reliable rebuilds
 - [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
@@ -121,7 +121,6 @@ files, a native C library, containers, files, and recoverable errors.
 
 - Extend the standalone `crust-lsp` server and VS Code client with shared semantic information
 - Use `crust.toml` as the authoritative project configuration
-- Add native debugger launch from VS Code
 - Preserve source variable and type names in native debug information
 
 The LSP uses shared compiler analysis for diagnostics, hover, navigation, and
@@ -132,7 +131,6 @@ Signature help uses the same resolved call analysis.
 
 - Borrowed-field lifetimes and field moves in the presence of destructors
 - Temporary owner lifetimes
-- Fallible allocation and resource APIs using Result<T, E>
 - File-local helper types and further visibility controls
 - Constrained `weak`, `expect`, and `replace` typedefs across a build
 - Static-only types and first-use type initialization

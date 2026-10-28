@@ -1,3 +1,5 @@
+enum class Unit : uint8_t { Value };
+
 tagged union Result<T, E> {
     T ok;
     E error;

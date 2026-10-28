@@ -1,5 +1,5 @@
-#ifndef CRUST_EXAMPLE_FILE_H
-#define CRUST_EXAMPLE_FILE_H
+#ifndef CRUST_FILE_H
+#define CRUST_FILE_H
 
 void* crust_file_temporary(void);
 int crust_file_close(void* handle);

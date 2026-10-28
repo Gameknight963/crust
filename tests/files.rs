@@ -1,10 +1,80 @@
 mod common;
 
 #[test]
+fn file_results_distinguish_read_and_write_errors_and_rewind_clears_status() {
+    run(
+        r#"
+        extern void test_file_fail_next(int operation);
+        int main() {
+            Result<File,FileError> opened=File::try_temporary();
+            File file=move(opened).take_value();
+            file.write_byte(42u); file.rewind();
+            unsafe { test_file_fail_next(4); }
+            Result<FileRead,FileError> read=file.try_read_byte();
+            print((int)read.error_value()); print(file.has_error());
+            file.rewind(); print(file.has_error());
+            print(file.read_byte());
+            unsafe { test_file_fail_next(5); }
+            Result<Unit,FileError> write=file.try_write_byte(43u);
+            print((int)write.error_value()); print(file.has_error());
+            Result<Unit,FileError> rewind=file.try_rewind(); print(rewind.is_ok());
+            print(file.has_error()); print(file.read_byte());
+            return 0;
+        }
+    "#,
+        "2\n1\n0\n42\n3\n1\n1\n0\n42\n",
+    );
+}
+
+#[test]
+fn result_file_operations_distinguish_eof_and_recover_from_native_failures() {
+    run(
+        r#"
+        extern void test_file_fail_next(int operation);
+        extern int test_files_live();
+        extern int test_files_closed();
+        int main() {
+            unsafe { test_file_fail_next(0); }
+            Result<File,FileError> missing=File::try_temporary();
+            print((int)missing.error_value());
+            Result<File,FileError> opened=File::try_temporary();
+            File file=move(opened).take_value();
+            Result<Unit,FileError> written=file.try_write_byte(65u);
+            print(written.is_ok());
+            unsafe { test_file_fail_next(2); }
+            Result<FileRead,FileError> failed=file.try_read_byte();
+            print((int)failed.error_value());
+            Result<FileRead,FileError> at_end=file.try_read_byte();
+            FileRead end=at_end.value();
+            switch (end) { case byte: print(99); break; case end: print(0); break; }
+            file.rewind();
+            Result<FileRead,FileError> read=file.try_read_byte();
+            FileRead value=read.value();
+            switch (value) { case byte: print(value.byte); break; case end: print(99); break; }
+            unsafe { test_file_fail_next(3); }
+            Result<Unit,FileError> seek=file.try_write_byte(66u);
+            print((int)seek.error_value());
+            Result<Unit,FileError> retry=file.try_write_byte(66u);
+            print(retry.is_ok());
+            unsafe { test_file_fail_next(1); }
+            Result<Unit,FileError> closed=file.try_close();
+            print((int)closed.error_value()); print(file.is_open());
+            Result<Unit,FileError> again=file.try_close(); print(again.is_ok());
+            Result<FileRead,FileError> unavailable=file.try_read_byte();
+            print((int)unavailable.error_value());
+            unsafe { print(test_files_live()); print(test_files_closed()); }
+            return 0;
+        }
+    "#,
+        "0\n1\n4\n0\n65\n5\n1\n6\n0\n1\n1\n0\n1\n",
+    );
+}
+
+#[test]
 fn file_bindings_match_the_native_header() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/file_project");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
     let options = crust::bindings::Options {
-        binding_dir: Some(root.join("src")),
+        binding_dir: Some(root.join("native")),
         functions: [
             "crust_file_temporary",
             "crust_file_close",
@@ -24,24 +94,26 @@ fn file_bindings_match_the_native_header() {
     let generated = crust::bindings::generate(&root.join("native/file.h"), &options).unwrap();
     assert_eq!(
         generated.replace("\r\n", "\n"),
-        include_str!("../examples/file_project/src/bindings.cr").replace("\r\n", "\n")
+        include_str!("../lib/native/file_bindings.cr").replace("\r\n", "\n")
     );
-    let sources = crust::source::SourceSet::load(&root.join("src/main.cr")).unwrap();
+    let sources =
+        crust::source::SourceSet::load(&root.join("../examples/file_project/src/main.cr")).unwrap();
     sources.check().unwrap();
 }
 
 fn run(program: &str, expected: &str) {
     let source = format!(
         "{}\n{}\n{program}",
-        include_str!("../examples/file_project/src/bindings.cr"),
-        include_str!("../examples/file_project/src/file.cr").replace("import \"bindings.cr\";", ""),
+        include_str!("../lib/native/file_bindings.cr"),
+        include_str!("../lib/file.cr")
+            .replace("import \"native/file_bindings.cr\";", "")
+            .replace("import \"result.cr\";", include_str!("../lib/result.cr")),
     );
     let generated = crust::compile(&source).unwrap();
-    let native =
-        include_str!("../examples/file_project/native/file.c").replace("#include \"file.h\"", "");
+    let native = include_str!("../lib/native/file.c").replace("#include \"file.h\"", "");
     let instrumented = format!(
         "{TRACKING}\n{}\n{native}\n{UNDEFINE}\n{generated}",
-        include_str!("../examples/file_project/native/file.h"),
+        include_str!("../lib/native/file.h"),
     );
     let output = common::tracked_generated_c(&instrumented, false);
     assert!(
@@ -63,7 +135,8 @@ fn run(program: &str, expected: &str) {
 #[test]
 fn file_example_transfers_a_real_binary_stream_to_its_reader() {
     run(
-        &include_str!("../examples/file_project/src/main.cr").replace("import \"file.cr\";", ""),
+        &include_str!("../examples/file_project/src/main.cr")
+            .replace("import \"../../../lib/file.cr\";", ""),
         "67\n114\n255\n-1\n1\n",
     );
 }
@@ -173,7 +246,7 @@ fn file_failures_leave_closed_handles_detached_and_allow_synchronization_retries
 const TRACKING: &str = r#"
     #include <stdio.h>
     #include <stdlib.h>
-    struct file_record { FILE* handle; int direction; };
+    struct file_record { FILE* handle; int direction; int error; };
     static struct file_record records[64];
     static int live_files = 0;
     static int closed_files = 0;
@@ -202,7 +275,7 @@ const TRACKING: &str = r#"
         if (handle == NULL) { fprintf(stderr, "could not create test stream\n"); abort(); }
         for (int i = 0; i < 64; ++i) {
             if (records[i].handle == NULL) {
-                records[i].handle = handle; records[i].direction = 0;
+                records[i].handle = handle; records[i].direction = 0; records[i].error = 0;
                 live_files += 1; return handle;
             }
         }
@@ -217,12 +290,16 @@ const TRACKING: &str = r#"
     static int tracked_fgetc(FILE* handle) {
         struct file_record* record = record_for(handle);
         if (record->direction == 2) { fprintf(stderr, "read after unsynchronized write\n"); abort(); }
-        record->direction = 1; return fgetc(handle);
+        record->direction = 1;
+        if (fail_next(4)) { record->error = 1; return EOF; }
+        return fgetc(handle);
     }
     static int tracked_fputc(int value, FILE* handle) {
         struct file_record* record = record_for(handle);
         if (record->direction == 1) { fprintf(stderr, "write after unsynchronized read\n"); abort(); }
-        record->direction = 2; return fputc(value, handle);
+        record->direction = 2;
+        if (fail_next(5)) { record->error = 1; return EOF; }
+        return fputc(value, handle);
     }
     static int tracked_fflush(FILE* handle) {
         struct file_record* record = record_for(handle);
@@ -239,12 +316,16 @@ const TRACKING: &str = r#"
         if (result == 0) { record->direction = 0; }
         return result;
     }
+    static int tracked_ferror(FILE* handle) { return record_for(handle)->error || ferror(handle); }
+    static void tracked_clearerr(FILE* handle) { record_for(handle)->error = 0; clearerr(handle); }
     #define tmpfile tracked_tmpfile
     #define fclose tracked_fclose
     #define fgetc tracked_fgetc
     #define fputc tracked_fputc
     #define fflush tracked_fflush
     #define fseek tracked_fseek
+    #define ferror tracked_ferror
+    #define clearerr tracked_clearerr
 "#;
 
 const UNDEFINE: &str = r#"
@@ -254,4 +335,6 @@ const UNDEFINE: &str = r#"
     #undef fputc
     #undef fflush
     #undef fseek
+    #undef ferror
+    #undef clearerr
 "#;
