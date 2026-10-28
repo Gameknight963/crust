@@ -123,6 +123,7 @@ jobs:
         shell: pwsh
         run: ./editors/visualstudio/build.ps1
       - name: Test packaged client
+        timeout-minutes: 10
         shell: pwsh
         run: ./editors/visualstudio/test.ps1
       - uses: actions/upload-artifact@v7

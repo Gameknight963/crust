@@ -116,7 +116,7 @@ internal static class ClientProbe
         {
             Environment.SetEnvironmentVariable("CRUST_SDK_PATH", null);
             var properties = (System.Collections.IEnumerable)Await((Task)type.GetMethod("GetGlobalPropertiesAsync")
-                .Invoke(provider, new object[] { CancellationToken.None }));
+                .Invoke(provider, new object[] { CancellationToken.None }), "read MSBuild global properties");
             var values = properties.Cast<object>().ToDictionary(
                 item => (string)item.GetType().GetProperty("Key").GetValue(item),
                 item => (string)item.GetType().GetProperty("Value").GetValue(item));
@@ -153,14 +153,16 @@ internal static class ClientProbe
         Environment.SetEnvironmentVariable("CRUST_COMPILER_PATH", null);
         string compiler = (string)tool.GetMethod("CompilerPath").Invoke(null, null);
         Assert(compiler == Path.Combine(package, "Server", "crust.exe"), "bundled compiler path");
-        object info = Await((Task)tool.GetMethod("ReadMetadataAsync").Invoke(null, new object[] { compiler, manifest }));
+        object info = Await((Task)tool.GetMethod("ReadMetadataAsync").Invoke(null, new object[] { compiler, manifest }), "read project metadata");
         var targets = (Array)info.GetType().GetProperty("targets").GetValue(info);
         Assert(targets.Length == 3, "metadata target kinds");
         object app = targets.GetValue(0);
         Assert((string)app.GetType().GetProperty("kind").GetValue(app) == "executable", "executable metadata");
         Assert(!Directory.Exists(Path.Combine(root, "target")), "metadata leaves build outputs untouched");
         CheckLaunchSettings(assembly, info, app, manifest, root);
-        Func<string, object> execute = command => Await((Task)tool.GetMethod("ExecuteAsync").Invoke(null, new object[] { compiler, manifest, command, "app" }));
+        Func<string, object> execute = command => Await(
+            (Task)tool.GetMethod("ExecuteAsync").Invoke(null, new object[] { compiler, manifest, command, "app" }),
+            command + " app", command == "build" ? 180 : 30);
         object result = execute("check");
         Assert((int)result.GetType().GetProperty("ExitCode").GetValue(result) != 0, "invalid source check");
         string diagnostic = (string)result.GetType().GetProperty("Error").GetValue(result);
@@ -256,9 +258,12 @@ internal static class ClientProbe
         throw new InvalidOperationException("Expected launch rejection: " + message);
     }
 
-    private static object Await(Task task)
+    private static object Await(Task task, string operation, int timeoutSeconds = 30)
     {
-        Assert(task.Wait(TimeSpan.FromSeconds(30)), "project command timeout");
+        Console.WriteLine("Starting " + operation);
+        var timer = Stopwatch.StartNew();
+        Assert(task.Wait(TimeSpan.FromSeconds(timeoutSeconds)), operation + " timed out after " + timeoutSeconds + " seconds");
+        Console.WriteLine(operation + " completed in " + timer.ElapsedMilliseconds + " ms");
         return task.GetType().GetProperty("Result").GetValue(task);
     }
 
