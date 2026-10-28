@@ -47,6 +47,19 @@ jobs:
       - run: cargo clippy --locked --offline --all-targets -- -D warnings
       - run: cargo test --locked --offline
       - run: cargo run --locked --offline --example fuzz_frontend -- 2000 42
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Build and verify compiler archive
+        run: python tools/package.py --offline
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compiler-${{ matrix.os }}-${{ matrix.cc }}
+          path: |
+            target/packages/*.zip
+            target/packages/*.tar.gz
+            target/packages/*.sha256
+          if-no-files-found: error
       - name: Preserve mutation failure input
         if: failure()
         uses: actions/upload-artifact@v7

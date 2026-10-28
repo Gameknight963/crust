@@ -3,6 +3,9 @@
 `crust-lsp` provides compiler diagnostics over the Language Server Protocol.
 Editors send document text over stdio, including unsaved changes.
 
+Compiler archives include the server in `bin`. See [installation](installation.md)
+for binary setup.
+
 ## Build the server
 
 ```powershell

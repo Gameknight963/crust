@@ -1,6 +1,8 @@
 # Cargo output, including targets in future workspace members.
 target/
 node_modules/
+__pycache__/
+*.py[cod]
 *.vsix
 /editors/visualstudio/bin/
 /editors/visualstudio/obj/

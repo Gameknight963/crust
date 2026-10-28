@@ -65,6 +65,9 @@ use UTF-8 byte arrays.
 
 ## Getting started
 
+Compiler archives include `crust`, `crust-lsp`, and the source library.
+See [installation](docs/installation.md) for binary setup and archive builds.
+
 Install Rust and Cargo, plus a C11 compiler and its development libraries.
 The compiler driver defaults to Clang on Windows and `cc` elsewhere.
 

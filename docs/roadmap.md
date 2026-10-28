@@ -88,6 +88,7 @@
 - Per-target native debug information with PDB validation, debug bundle recovery, and protected symbol outputs
 - Native address/undefined sanitizer instrumentation with transitive library settings and executed sanitizer probes
 - CI configuration for Windows, Linux, macOS, native compiler coverage, mutation tests, sanitizers, and editor packages
+- Host compiler archives with the standalone LSP, source library, checksums, and executed package smoke checks
 - Standalone stdio language server with live compiler diagnostics
 - VS Code client, syntax highlighting, and Neovim setup
 - VS Code project build, check, and run tasks with compiler error links
@@ -110,7 +111,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [ ] Project dependencies, library-supplied native dependencies, and reliable rebuilds
 - [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
-- [ ] Compiler, LSP, and editor release packages with native compiler setup
+- [x] Compiler, LSP, and editor release packages with native compiler setup
 - [ ] VS Code native debugger launch and original source names in debug information
 - [ ] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
 - [ ] Build and maintain the release validation application
