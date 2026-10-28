@@ -1,4 +1,5 @@
 use crate::diagnostic::Diagnostic;
+mod numbers;
 pub use crate::diagnostic::Span;
 
 pub type LexError = Diagnostic;
@@ -16,6 +17,8 @@ pub enum IntegerSuffix {
 pub enum Token {
     // Keywords.
     Int,
+    Float,
+    Double,
     Char,
     Signed,
     Unsigned,
@@ -59,6 +62,10 @@ pub enum Token {
     // Tokens carrying data.
     Identifier(String),
     IntegerLiteral(u64),
+    FloatingLiteral {
+        spelling: String,
+        suffix: Option<char>,
+    },
     SuffixedIntegerLiteral {
         value: u64,
         suffix: IntegerSuffix,
@@ -173,8 +180,10 @@ impl Lexer<'_> {
 
             if current.is_ascii_alphabetic() || current == '_' {
                 kind = self.identifier(start);
-            } else if current.is_ascii_digit() {
-                kind = self.integer(start)?;
+            } else if current.is_ascii_digit()
+                || (current == '.' && self.peek_next().is_some_and(|next| next.is_ascii_digit()))
+            {
+                kind = self.number(start)?;
             } else if current == '\'' {
                 kind = self.character(start)?;
             } else if current == '"' {
@@ -212,6 +221,8 @@ impl Lexer<'_> {
             "char" => Token::Char,
             "signed" => Token::Signed,
             "unsigned" => Token::Unsigned,
+            "float" => Token::Float,
+            "double" => Token::Double,
             "short" => Token::Short,
             "long" => Token::Long,
             "bool" => Token::Bool,
@@ -854,7 +865,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_number_syntax_instead_of_splitting_it() {
         for source in [
-            "0x", "0b", "0xg", "0b102", "09", "1_000", "1.5", ".5", "1e3",
+            "0x", "0b", "0xg", "0b102", "09", "1_000", "1.5.5", ".5u", "1e+",
         ] {
             assert!(tokenize(source).is_err(), "should reject {source}");
         }

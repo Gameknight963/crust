@@ -775,7 +775,12 @@ impl FunctionChecker<'_> {
                 operator,
             } => {
                 let place = self.checked_place(target)?;
-                if !place.mutable || !matches!(place.ty, Type::Integer(_) | Type::Pointer(_)) {
+                if !place.mutable
+                    || !matches!(
+                        place.ty,
+                        Type::Integer(_) | Type::Float(_) | Type::Pointer(_)
+                    )
+                {
                     return Err(Diagnostic::new(
                         target.span,
                         "compound assignment requires a mutable integer place",
@@ -800,6 +805,23 @@ impl FunctionChecker<'_> {
                         ));
                     }
                     self.pointer_offset(place.ty, value, actual)?;
+                } else if matches!(place.ty, Type::Float(_)) || matches!(actual, Type::Float(_)) {
+                    if !matches!(
+                        operator,
+                        BinaryOperator::Add
+                            | BinaryOperator::Subtract
+                            | BinaryOperator::Multiply
+                            | BinaryOperator::Divide
+                    ) {
+                        return Err(Diagnostic::new(
+                            statement.span,
+                            "this compound operator requires integers",
+                        ));
+                    }
+                    let common = place.ty.common_numeric(actual).ok_or_else(|| {
+                        Diagnostic::new(value.span, "compound assignment requires numeric values")
+                    })?;
+                    self.convert(value, actual, common)?;
                 } else if operator.is_shift() {
                     self.integer(place.ty, target.span)?;
                     let right = self.integer(actual, value.span)?.promoted();
@@ -1282,7 +1304,12 @@ impl FunctionChecker<'_> {
         match &expression.kind {
             ExpressionKind::Update { target, .. } => {
                 let place = self.checked_place(target)?;
-                if !place.mutable || !matches!(place.ty, Type::Integer(_) | Type::Pointer(_)) {
+                if !place.mutable
+                    || !matches!(
+                        place.ty,
+                        Type::Integer(_) | Type::Float(_) | Type::Pointer(_)
+                    )
+                {
                     return Err(Diagnostic::new(
                         target.span,
                         "increment and decrement require a mutable integer or raw pointer place",
@@ -1432,13 +1459,14 @@ impl FunctionChecker<'_> {
                     self.conversions.insert(operand.span, *ty);
                     return Ok(*ty);
                 }
-                if self.types.integer_representation(*ty).is_none() {
+                if self.types.integer_representation(*ty).is_none() && !matches!(ty, Type::Float(_))
+                {
                     return Err(Diagnostic::new(
                         expression.span,
                         "casts require a numeric type, enum, or void",
                     ));
                 }
-                if constant_integer(operand).is_some() {
+                if constant_integer(operand).is_some() && !matches!(ty, Type::Float(_)) {
                     let representation =
                         Type::Integer(self.types.integer_representation(*ty).unwrap());
                     if *ty == Type::Bool {
@@ -1462,7 +1490,9 @@ impl FunctionChecker<'_> {
                         self.conversions.insert(operand.span, *ty);
                         return Ok(*ty);
                     }
-                    if self.types.integer_representation(actual).is_none() {
+                    if self.types.integer_representation(actual).is_none()
+                        && !matches!(actual, Type::Float(_))
+                    {
                         return Err(Diagnostic::new(
                             operand.span,
                             "casts require a numeric or enum operand",
@@ -1498,6 +1528,7 @@ impl FunctionChecker<'_> {
                 return Ok(Type::Integer(IntType::named("size_t").unwrap()));
             }
             ExpressionKind::Boolean(_) => return Ok(Type::Bool),
+            ExpressionKind::Floating { kind, .. } => return Ok(Type::Float(*kind)),
             ExpressionKind::StaticCall {
                 name_span,
                 id,
@@ -1924,7 +1955,9 @@ impl FunctionChecker<'_> {
                     } else {
                         self.expression(&arguments[0])?
                     };
-                    if self.types.byte_array_length(actual).is_none() {
+                    if self.types.byte_array_length(actual).is_none()
+                        && !matches!(actual, Type::Float(_))
+                    {
                         self.integer(actual, arguments[0].span)?;
                     }
                     self.loans.truncate(previous_loans);
@@ -2046,6 +2079,18 @@ impl FunctionChecker<'_> {
                 if *operator == UnaryOperator::Not && matches!(actual, Type::Pointer(_)) {
                     return Ok(Type::Integer(IntType::I32));
                 }
+                if matches!(actual, Type::Float(_)) {
+                    if *operator == UnaryOperator::Not {
+                        return Ok(Type::Integer(IntType::I32));
+                    }
+                    if matches!(operator, UnaryOperator::Plus | UnaryOperator::Negate) {
+                        return Ok(actual);
+                    }
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "this operator requires an integer",
+                    ));
+                }
                 let kind = self.integer(actual, operand.span)?.promoted();
                 if *operator == UnaryOperator::Not {
                     return Ok(Type::Integer(IntType::I32));
@@ -2154,8 +2199,49 @@ impl FunctionChecker<'_> {
                     }
                     return Ok(Type::Integer(IntType::I32));
                 }
-                let left_kind = self.integer(left_type, left.span)?;
                 let right_type = self.expression(right)?;
+                if matches!(left_type, Type::Float(_)) || matches!(right_type, Type::Float(_)) {
+                    let common = left_type.common_numeric(right_type).ok_or_else(|| {
+                        Diagnostic::new(
+                            expression.span,
+                            "floating arithmetic requires numeric operands",
+                        )
+                    })?;
+                    if !matches!(
+                        operator,
+                        BinaryOperator::Add
+                            | BinaryOperator::Subtract
+                            | BinaryOperator::Multiply
+                            | BinaryOperator::Divide
+                            | BinaryOperator::Equal
+                            | BinaryOperator::NotEqual
+                            | BinaryOperator::Less
+                            | BinaryOperator::LessEqual
+                            | BinaryOperator::Greater
+                            | BinaryOperator::GreaterEqual
+                    ) {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "this operator requires integers",
+                        ));
+                    }
+                    self.convert(left, left_type, common)?;
+                    self.convert(right, right_type, common)?;
+                    return Ok(
+                        if matches!(
+                            operator,
+                            BinaryOperator::Add
+                                | BinaryOperator::Subtract
+                                | BinaryOperator::Multiply
+                                | BinaryOperator::Divide
+                        ) {
+                            common
+                        } else {
+                            Type::Integer(IntType::I32)
+                        },
+                    );
+                }
+                let left_kind = self.integer(left_type, left.span)?;
                 if matches!(right_type, Type::Pointer(_)) {
                     if *operator == BinaryOperator::Add {
                         self.pointer_offset(right_type, left, left_type)?;
@@ -2428,8 +2514,8 @@ impl FunctionChecker<'_> {
                 "conditional expressions require value results, not borrowed references",
             ));
         }
-        if let (Some(a), Some(b)) = (then_type.integer(), else_type.integer()) {
-            return Ok(Type::Integer(a.common(b)));
+        if let Some(common) = then_type.common_numeric(else_type) {
+            return Ok(common);
         }
         if then_type == else_type {
             return Ok(then_type);
@@ -2548,6 +2634,10 @@ impl FunctionChecker<'_> {
                     self.conversions.insert(argument.span, promoted);
                 }
             }
+            if ty == Type::Float(FloatType::Float) {
+                self.conversions
+                    .insert(argument.span, Type::Float(FloatType::Double));
+            }
         }
         return Ok(());
     }
@@ -2618,7 +2708,7 @@ impl FunctionChecker<'_> {
                 return Ok(());
             }
         }
-        if actual.integer().is_some() && expected.integer().is_some() {
+        if actual.numeric() && expected.numeric() {
             self.conversions.insert(expression.span, expected);
             return Ok(());
         }
@@ -2652,7 +2742,7 @@ impl FunctionChecker<'_> {
     }
 
     fn scalar_condition(&self, ty: Type, span: Span) -> Result<(), Diagnostic> {
-        if !matches!(ty, Type::Pointer(_)) {
+        if !matches!(ty, Type::Pointer(_) | Type::Float(_)) {
             self.integer(ty, span)?;
         }
         return Ok(());
@@ -2739,6 +2829,7 @@ impl FunctionChecker<'_> {
                 });
             }
             ExpressionKind::Boolean(_) => return Ok(Type::Bool),
+            ExpressionKind::Floating { kind, .. } => return Ok(Type::Float(*kind)),
             ExpressionKind::SizeofType(_)
             | ExpressionKind::SizeofValue(_)
             | ExpressionKind::Alignof(_) => {
@@ -2807,10 +2898,9 @@ impl FunctionChecker<'_> {
                     self.integer(b, right.span)?;
                     return Ok(Type::Integer(self.integer(a, left.span)?.promoted()));
                 }
-                return Ok(Type::Integer(
-                    self.integer(a, left.span)?
-                        .common(self.integer(b, right.span)?),
-                ));
+                return a.common_numeric(b).ok_or_else(|| {
+                    Diagnostic::new(expression.span, "arithmetic requires numeric operands")
+                });
             }
             ExpressionKind::Cast { ty, .. } => return Ok(*ty),
             ExpressionKind::Variable { name, .. } => {
@@ -2867,6 +2957,11 @@ impl FunctionChecker<'_> {
                     return Ok(Type::Integer(IntType::I32));
                 }
                 let ty = self.receiver_type(operand)?;
+                if matches!(ty, Type::Float(_))
+                    && matches!(operator, UnaryOperator::Plus | UnaryOperator::Negate)
+                {
+                    return Ok(ty);
+                }
                 return Ok(Type::Integer(self.integer(ty, operand.span)?.promoted()));
             }
             ExpressionKind::StaticCall { id, name, .. } => {

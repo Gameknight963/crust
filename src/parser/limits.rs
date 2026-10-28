@@ -23,6 +23,7 @@ pub(super) fn ty(parser: &Parser, root: Type, span: Span) -> Result<(), Diagnost
                 pending.extend(signature.parameters.iter().map(|ty| (*ty, depth + 1)));
             }
             Type::Integer(_)
+            | Type::Float(_)
             | Type::Bool
             | Type::Void
             | Type::BoxInt
@@ -131,6 +132,7 @@ pub(super) fn expression(root: &Expression) -> Result<(), Diagnostic> {
             | ExpressionKind::Alignof(_)
             | ExpressionKind::Boolean(_)
             | ExpressionKind::Integer(_)
+            | ExpressionKind::Floating { .. }
             | ExpressionKind::TypedInteger { .. }
             | ExpressionKind::Variable { .. } => {}
         }

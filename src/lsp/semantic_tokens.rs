@@ -62,6 +62,8 @@ fn kind(kind: SymbolKind) -> usize {
 fn builtin(token: &Token) -> Option<usize> {
     return match token {
         Token::Int
+        | Token::Float
+        | Token::Double
         | Token::Char
         | Token::Signed
         | Token::Unsigned

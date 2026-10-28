@@ -96,7 +96,7 @@
 The release target is a maintained command-line application using multiple Crust
 files, a native C library, containers, files, and recoverable errors.
 
-- [ ] Floating-point types, literals, arithmetic, conversions, and C calls
+- [x] Floating-point types, literals, arithmetic, conversions, and C calls
 - [x] Integer and enum switch statements
 - [ ] Global definitions and static variables
 - [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes

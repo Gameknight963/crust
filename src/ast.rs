@@ -1,5 +1,22 @@
 use crate::diagnostic::Span;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FloatType {
+    Float,
+    Double,
+    LongDouble,
+}
+
+impl FloatType {
+    pub fn c_name(self) -> &'static str {
+        return match self {
+            Self::Float => "float",
+            Self::Double => "double",
+            Self::LongDouble => "long double",
+        };
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntType {
     Char,
@@ -202,6 +219,7 @@ impl IntType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Type {
+    Float(FloatType),
     Function(usize),
     Integer(IntType),
     Bool,
@@ -220,6 +238,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pointee {
+    Float(FloatType),
     Slice(usize),
     Integer(IntType),
     Bool,
@@ -233,6 +252,7 @@ pub enum Pointee {
 impl Pointee {
     pub fn ty(self) -> Type {
         return match self {
+            Pointee::Float(kind) => Type::Float(kind),
             Pointee::Slice(id) => Type::Array(id),
             Pointee::Integer(kind) => Type::Integer(kind),
             Pointee::Bool => Type::Bool,
@@ -259,6 +279,7 @@ impl Type {
 
     pub fn borrowed_qualified(self, mutable: bool, volatile: bool) -> Option<Type> {
         let pointee = match self {
+            Type::Float(kind) => Pointee::Float(kind),
             Type::Integer(kind) => Pointee::Integer(kind),
             Type::Bool => Pointee::Bool,
             Type::BoxInt => Pointee::BoxInt,
@@ -280,6 +301,23 @@ impl Type {
             Self::Integer(kind) => Some(kind),
             Self::Bool => Some(IntType::I32),
             _ => None,
+        };
+    }
+
+    pub fn numeric(self) -> bool {
+        return self.integer().is_some() || matches!(self, Self::Float(_));
+    }
+
+    pub fn common_numeric(self, other: Type) -> Option<Type> {
+        if !self.numeric() || !other.numeric() {
+            return None;
+        }
+        return match (self, other) {
+            (Self::Float(a), Self::Float(b)) => Some(Self::Float(a.max(b))),
+            (Self::Float(kind), _) | (_, Self::Float(kind)) => Some(Self::Float(kind)),
+            _ => Some(Self::Integer(
+                self.integer().unwrap().common(other.integer().unwrap()),
+            )),
         };
     }
 }
@@ -616,6 +654,10 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
+    Floating {
+        spelling: String,
+        kind: FloatType,
+    },
     Update {
         target: Box<Expression>,
         increment: bool,
@@ -752,6 +794,21 @@ pub enum BinaryOperator {
 }
 
 impl BinaryOperator {
+    pub fn numeric_symbol(self) -> &'static str {
+        return match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+            Self::Equal => "==",
+            Self::NotEqual => "!=",
+            Self::Less => "<",
+            Self::LessEqual => "<=",
+            Self::Greater => ">",
+            Self::GreaterEqual => ">=",
+            _ => unreachable!("checked numeric operator"),
+        };
+    }
     pub fn is_shift(self) -> bool {
         return matches!(self, Self::ShiftLeft | Self::ShiftRight);
     }

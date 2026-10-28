@@ -790,7 +790,9 @@ impl Parser {
 
     fn type_in_expression(&self) -> bool {
         return match &self.current().kind {
-            Token::Int
+            Token::Float
+            | Token::Double
+            | Token::Int
             | Token::Char
             | Token::Signed
             | Token::Unsigned
@@ -1479,6 +1481,9 @@ impl Parser {
         let mut qualifiers = self.qualifiers();
         let token = self.advance();
         let base = match token.kind {
+            Token::Float => Type::Float(FloatType::Float),
+            Token::Double => Type::Float(FloatType::Double),
+            Token::Long if self.consume(&Token::Double) => Type::Float(FloatType::LongDouble),
             Token::Int
             | Token::Char
             | Token::Signed
@@ -1835,7 +1840,9 @@ impl Parser {
         }
 
         let kind;
-        if self.at(&Token::Int)
+        if self.at(&Token::Float)
+            || self.at(&Token::Double)
+            || self.at(&Token::Int)
             || self.at(&Token::Void)
             || matches!(
                 self.current().kind,
@@ -2286,6 +2293,17 @@ impl Parser {
             Token::IntegerLiteral(value) => {
                 return Ok(Expression {
                     kind: ExpressionKind::Integer(value),
+                    span: token.span,
+                });
+            }
+            Token::FloatingLiteral { spelling, suffix } => {
+                let kind = match suffix.map(|suffix| suffix.to_ascii_lowercase()) {
+                    Some('f') => FloatType::Float,
+                    Some('l') => FloatType::LongDouble,
+                    _ => FloatType::Double,
+                };
+                return Ok(Expression {
+                    kind: ExpressionKind::Floating { spelling, kind },
                     span: token.span,
                 });
             }

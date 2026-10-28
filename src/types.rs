@@ -451,6 +451,7 @@ impl Types {
             }
             Type::Integer(IntType::I32) => String::from("int"),
             Type::Integer(kind) => kind.c_name().to_owned(),
+            Type::Float(kind) => kind.c_name().to_owned(),
             Type::Bool => String::from("bool"),
             Type::Void => String::from("void"),
             Type::BoxInt => String::from("BoxInt"),

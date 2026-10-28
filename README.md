@@ -35,6 +35,9 @@ See [examples/](examples/) for runnable programs.
 Fixed-size arrays support checked indexing and resource cleanup. String literals
 use UTF-8 byte arrays.
 
+[Floating-point numbers](examples/floats.cr) support `float`, `double`, and
+`long double`, including C calls and checked numeric conversions.
+
 ### Ownership and containers
 
 - [Library](lib/): reusable boxes, buffers, vectors, and sorting

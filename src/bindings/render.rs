@@ -243,9 +243,11 @@ impl Renderer {
                     .ok_or("Clang omitted a builtin type name")?;
                 return match name {
                     "_Bool" => Ok("bool".to_owned()),
-                    "void" | "char" | "signed char" | "unsigned char" | "short"
-                    | "unsigned short" | "int" | "unsigned int" | "long" | "unsigned long"
-                    | "long long" | "unsigned long long" => Ok(name.to_owned()),
+                    "float" | "double" | "long double" | "void" | "char" | "signed char"
+                    | "unsigned char" | "short" | "unsigned short" | "int" | "unsigned int"
+                    | "long" | "unsigned long" | "long long" | "unsigned long long" => {
+                        Ok(name.to_owned())
+                    }
                     _ => Err(format!("unsupported C scalar type '{name}'")),
                 };
             }

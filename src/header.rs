@@ -31,6 +31,7 @@ impl Renderer<'_> {
         }
         match ty {
             Type::Integer(kind) => return Ok(kind.c_name().to_owned()),
+            Type::Float(kind) => return Ok(kind.c_name().to_owned()),
             Type::Bool => return Ok("bool".to_owned()),
             Type::Void => return Ok("void".to_owned()),
             Type::Pointer(id) => {

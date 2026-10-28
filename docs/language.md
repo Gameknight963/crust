@@ -474,6 +474,31 @@ C includes. Native compilation checks the enum's compatible integer type, size,
 and alignment. A renamed tag uses `extern enum Status = "NativeStatus" : int32_t`.
 See [C header bindings](c-bindings.md) for generated declarations.
 
+## Floating-point numbers
+
+`float`, `double`, and `long double` use their native C representations. Decimal
+and hexadecimal literals support fractional parts and exponents. Unsuffixed
+literals have type `double`, `f` selects `float`, and `L` selects `long double`.
+
+```c
+float fraction = .5f;
+double scale = 1.25e2;
+long double wide = 0x1.8p1L;
+```
+
+Arithmetic and comparisons use C's usual floating type ordering. Integer operands
+convert to the floating operand's type, and variadic calls promote `float` to
+`double`. Arithmetic follows the native C floating-point environment, including
+infinities and NaNs. References, arrays, slices, structs, callbacks, and C imports
+support floating types.
+
+Numeric conversions check floating-to-integer bounds before casting. They reject
+NaN, infinity, and values whose truncated result cannot fit the destination.
+Conversion to a narrower floating type checks finite overflow. Conversion to
+`bool` tests against zero. `print` uses decimal output with round-trip precision.
+
+See [the floating-point example](../examples/floats.cr).
+
 ## Booleans
 
 ```c

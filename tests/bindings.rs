@@ -25,6 +25,33 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn imports_floating_functions_and_callbacks_with_native_abi_types() {
+    let path = header(
+        "float native_scale(float value); double native_apply(double (*callback)(double), double value); long double native_widen(long double value);",
+    );
+    let bindings = generate(
+        &path,
+        &options(&["native_scale", "native_apply", "native_widen"]),
+    )
+    .unwrap();
+    let source = format!(
+        "{bindings} double twice(double value) {{ return value * 2; }} int main() {{ unsafe {{ print(native_scale(3.5f)); print(native_apply(&twice, 2.0)); print(native_widen(2.5L)); }} return 0; }}"
+    );
+    let mut generated = crust::compile(&source).unwrap();
+    generated.push_str("float native_scale(float value) { return value * 2; } double native_apply(double (*callback)(double), double value) { return callback(value); } long double native_widen(long double value) { return value + 1; }");
+    let output = common::tracked_generated_c(&generated, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "7\n4\n3.5\n"
+    );
+}
+
+#[test]
 fn keyword_named_c_tags_import_as_opaque_aliases_and_keep_owner_cleanup() {
     let path = header(
         r#"
@@ -253,7 +280,11 @@ fn typedef_imports_reject_layout_changes_unsupported_types_and_invalid_selection
             "unsupported C typedef layout",
         ),
         ("typedef int Values[4];", "Values", "unsupported C type"),
-        ("typedef double Real;", "Real", "unsupported C scalar"),
+        (
+            "typedef double _Complex Real;",
+            "Real",
+            "unsupported C type",
+        ),
         (
             "typedef const int Readonly;",
             "Readonly",
@@ -474,7 +505,11 @@ fn rejects_internal_linkage_missing_exports_and_unsupported_types() {
             "internal linkage",
         ),
         ("int present(void);", "missing", "no function declaration"),
-        ("double floating(double);", "floating", "scalar type"),
+        (
+            "double _Complex floating(double _Complex);",
+            "floating",
+            "unsupported C type",
+        ),
         (
             "struct Item { int value; }; struct Item value(void);",
             "value",

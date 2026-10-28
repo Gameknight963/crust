@@ -268,6 +268,7 @@ pub(crate) fn c_type(ty: Type) -> String {
     return match ty {
         Type::Function(id) => format!("crust_function_{id}"),
         Type::Integer(kind) => kind.c_name().to_owned(),
+        Type::Float(kind) => kind.c_name().to_owned(),
         Type::Bool => String::from("bool"),
         Type::Void => String::from("void"),
         Type::BoxInt => String::from("int32_t *"),
@@ -707,6 +708,26 @@ impl Emitter<'_> {
                     self.line(&format!("*{address} = {result};"));
                     return;
                 }
+                if matches!(target_type, Type::Float(_))
+                    || matches!(self.expression_type(value), Type::Float(_))
+                {
+                    let common = target_type
+                        .common_numeric(self.expression_type(value))
+                        .unwrap();
+                    let place = self.place(target);
+                    let address =
+                        self.temporary(self.address_type(target, true), &format!("&({place})"));
+                    let old = self.temporary(target_type, &format!("*{address}"));
+                    let left = self.convert_value(old, target_type, common, target.span);
+                    let right = self.value_expression(value);
+                    let result = self.temporary(
+                        common,
+                        &format!("({left} {} {right})", operator.numeric_symbol()),
+                    );
+                    let result = self.convert_value(result, common, target_type, statement.span);
+                    self.line(&format!("*{address} = {result};"));
+                    return;
+                }
                 let left_kind = target_type.integer().unwrap();
                 let common = if operator.is_shift() {
                     left_kind.promoted()
@@ -954,6 +975,39 @@ impl Emitter<'_> {
         if from == Type::Bool || to == Type::Bool {
             return self.temporary(to, &cast);
         }
+        if matches!(from, Type::Float(_)) || matches!(to, Type::Float(_)) {
+            let location = self.runtime_location(span);
+            if matches!(from, Type::Float(_))
+                && let Some(target) = self.types.integer_representation(to)
+            {
+                let wide = self.temporary(
+                    Type::Float(FloatType::LongDouble),
+                    &format!("(long double)({value})"),
+                );
+                let upper = if target.signed() {
+                    target.bits() - 1
+                } else {
+                    target.bits()
+                };
+                let lower = if target.signed() {
+                    format!("({wide} >= -0x1p{upper}L || {wide} > (-0x1p{upper}L - 1.0L))")
+                } else {
+                    format!("{wide} > -1.0L")
+                };
+                self.line(&format!("if (!({lower} && {wide} < 0x1p{upper}L)) {{ crust_rt_fail(\"floating-to-integer conversion out of range\", {location}); }}"));
+            }
+            if let (Type::Float(source), Type::Float(target)) = (from, to)
+                && source > target
+            {
+                let maximum = if target == FloatType::Float {
+                    "FLT_MAX"
+                } else {
+                    "DBL_MAX"
+                };
+                self.line(&format!("if (isfinite({value}) && ((long double)({value}) > (long double){maximum} || (long double)({value}) < -(long double){maximum})) {{ crust_rt_fail(\"floating conversion out of range\", {location}); }}"));
+            }
+            return self.temporary(to, &cast);
+        }
         let source = self
             .types
             .integer_representation(from)
@@ -1099,7 +1153,7 @@ impl Emitter<'_> {
                 let address =
                     self.temporary(self.address_type(target, true), &format!("&({place})"));
                 let old = self.temporary(ty, &format!("*{address}"));
-                let value = if matches!(ty, Type::Pointer(_)) {
+                let value = if matches!(ty, Type::Pointer(_) | Type::Float(_)) {
                     let operator = if *increment { "+" } else { "-" };
                     self.temporary(ty, &format!("{old} {operator} 1"))
                 } else {
@@ -1242,6 +1296,9 @@ impl Emitter<'_> {
                 ));
             }
             ExpressionKind::Boolean(value) => return Some(value.to_string()),
+            ExpressionKind::Floating { spelling, .. } => {
+                return Some(self.temporary(self.expression_type(expression), spelling));
+            }
             ExpressionKind::MethodCall { .. } | ExpressionKind::StaticCall { .. } => {
                 let call = self.method_calls[&expression.span].clone();
                 return self.expression_inner(&call);
@@ -1359,6 +1416,23 @@ impl Emitter<'_> {
                 if name == "box_int" {
                     values.push(self.runtime_location(expression.span));
                 }
+                if name == "print"
+                    && let Type::Float(kind) = self.expression_type(&arguments[0])
+                {
+                    match kind {
+                        FloatType::Float => {
+                            self.line(&format!("printf(\"%.9g\\n\", (double){});", values[0]))
+                        }
+                        FloatType::Double => {
+                            self.line(&format!("printf(\"%.17g\\n\", (double){});", values[0]))
+                        }
+                        FloatType::LongDouble => self.line(&format!(
+                            "printf(\"%.*Lg\\n\", LDBL_DECIMAL_DIG, (long double){});",
+                            values[0]
+                        )),
+                    }
+                    return None;
+                }
                 let function = if name == "print" {
                     let argument_type = self.expression_type(&arguments[0]);
                     if let Some(length) = self.types.byte_array_length(argument_type) {
@@ -1447,6 +1521,12 @@ impl Emitter<'_> {
                     UnaryOperator::Not => format!("!{value}"),
                     UnaryOperator::BitNot => format!("~({value})"),
                     UnaryOperator::Negate => {
+                        if matches!(self.expression_type(expression), Type::Float(_)) {
+                            return Some(self.temporary(
+                                self.expression_type(expression),
+                                &format!("-({value})"),
+                            ));
+                        }
                         let family = self
                             .expression_type(expression)
                             .integer()
@@ -1499,6 +1579,15 @@ impl Emitter<'_> {
                     return Some(self.temporary(
                         self.expression_type(expression),
                         &format!("{left_value} {symbol} {right}"),
+                    ));
+                }
+                if matches!(self.expression_type(left), Type::Float(_))
+                    || matches!(self.expression_type(right), Type::Float(_))
+                {
+                    let right = self.value_expression(right);
+                    return Some(self.temporary(
+                        self.expression_type(expression),
+                        &format!("({left_value} {} {right})", operator.numeric_symbol()),
                     ));
                 }
                 let kind = if operator.is_shift() {
@@ -1787,6 +1876,8 @@ const RUNTIME: &str = r#"/* Generated by Crust. */
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
+#include <math.h>
 
 #if defined(_WIN32) && defined(CRUST_BUILD_SHARED)
 #define CRUST_EXPORT __declspec(dllexport)

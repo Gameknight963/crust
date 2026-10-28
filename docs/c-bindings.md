@@ -36,7 +36,7 @@ command protects its input header from replacement.
 
 ## Imported declarations
 
-- Native C integers, booleans, and `void`
+- Native C integers, booleans, floating-point types, and `void`
 - Raw pointers with const pointees and multiple pointer levels
 - Adjusted array parameters and top-level parameter qualifiers
 - Opaque struct and union tags

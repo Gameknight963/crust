@@ -782,6 +782,7 @@ impl Parser {
         return match ty {
             Type::Integer(IntType::I32) => "int".to_owned(),
             Type::Integer(kind) => kind.c_name().to_owned(),
+            Type::Float(kind) => kind.c_name().to_owned(),
             Type::Bool => "bool".to_owned(),
             Type::Void => "void".to_owned(),
             Type::BoxInt => "BoxInt".to_owned(),
