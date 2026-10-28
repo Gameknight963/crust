@@ -13,6 +13,30 @@ impl Types {
         return self.borrow_property(ty, true, &mut HashSet::new());
     }
 
+    pub fn destructor_uses_borrows(&self, ty: Type) -> bool {
+        return self.borrowed_destructor(ty, &mut HashSet::new());
+    }
+
+    fn borrowed_destructor(&self, ty: Type, visited: &mut HashSet<Type>) -> bool {
+        if !visited.insert(ty) {
+            return false;
+        }
+        return match ty {
+            Type::Struct(id) => {
+                (self.structs[id].has_destructor && self.contains_borrows(ty))
+                    || self.structs[id]
+                        .fields
+                        .iter()
+                        .any(|field| self.borrowed_destructor(field.ty, visited))
+            }
+            Type::Array(id) => {
+                self.arrays[id].length != 0
+                    && self.borrowed_destructor(self.arrays[id].element, visited)
+            }
+            _ => false,
+        };
+    }
+
     fn borrow_property(&self, ty: Type, mutable: bool, visited: &mut HashSet<Type>) -> bool {
         if !visited.insert(ty) {
             return false;

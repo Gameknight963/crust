@@ -49,6 +49,7 @@ fn main() {
         include_str!("generic_box.cr"),
         include_str!("strings.cr"),
         include_str!("reference_fields.cr"),
+        include_str!("reference_destructor.cr"),
         "int sum(const int[]& s) { int n = 0; for (size_t i = 0; i < s.length; i++) n += s[i]; return n; } int main() { int[2] a = {1,2}; return sum(&a); }",
         "static T identity<T>(T value) { return value; } int main() { return identity<int>(1); }",
         "const int[2] values = {1,2}; static int count; int main() { static int calls = 1; unsafe { count += calls; return count; } }",

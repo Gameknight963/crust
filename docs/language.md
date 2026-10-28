@@ -770,13 +770,19 @@ Replacing a local view retains both its old and new source loans until its
 block ends. Returned views conservatively retain all declared source regions.
 A holder containing references must remain within those sources' lifetimes.
 
-Reference-containing types currently support value storage. Raw pointers to
-these types, custom destructors on these types, and reference fields in untagged
-unions require further support. Whole-value replacement through borrowed
-storage also requires additional lifetime handling. Ordinary methods can read
-and modify referents through their fields.
+A reference source that owns resources must be declared before a holder in the
+same block. This keeps it alive through the holder's cleanup. Destructors can
+read shared fields and modify mutable fields. Returning a reference is rejected
+when a remaining destructor could invalidate it.
 
-See [the reference-field example](../examples/reference_fields.cr).
+Reference-containing types currently support value storage. Raw pointers to
+these types and reference fields in untagged unions require further support.
+Whole-value replacement through borrowed storage also requires additional
+lifetime handling. Ordinary methods can read and modify referents through
+their fields.
+
+See [the reference-field example](../examples/reference_fields.cr) and
+[the reference destructor](../examples/reference_destructor.cr).
 
 ### Borrowed returns
 

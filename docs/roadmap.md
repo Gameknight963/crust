@@ -22,6 +22,7 @@
 - Distinct enum types, explicit representations, scoped and unscoped values, and checked casts
 - Borrowed returns tied to a single input or receiver, returned-reference chaining, and expression temporary loans
 - Reference fields in value aggregates with source lifetimes through copies, moves, nested values, slices, and returned views
+- Reference-aware destructor checks, declaration-order lifetime validation, and protected returned values during cleanup
 - Explicit borrows(...) return contracts with multiple possible sources and inherited reborrow guards
 - Alias-style `T&` references with contextual address-taking and direct value, field, method, and indexing access
 - Disjoint struct-field borrows with parent overlap checking

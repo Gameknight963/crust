@@ -184,10 +184,10 @@ impl Types {
             order: Vec::new(),
         };
         for (id, info) in types.structs.iter().enumerate() {
-            if types.contains_borrows(Type::Struct(id)) && (info.has_destructor || info.is_union) {
+            if types.contains_borrows(Type::Struct(id)) && info.is_union {
                 return Err(Diagnostic::new(
                     program.struct_names[id].1,
-                    "reference fields in structs with destructors and untagged unions are not supported yet",
+                    "reference fields in untagged unions are not supported yet",
                 ));
             }
         }

@@ -4,6 +4,7 @@ use crate::ast::*;
 use crate::diagnostic::{Diagnostic, Span};
 use crate::types::Types;
 mod captures;
+mod drop_borrows;
 mod storage;
 
 fn return_borrow_sources(
@@ -681,7 +682,7 @@ fn analyze(
                     Some(parameter.span)
                 },
             )?;
-            checker.initialize_captures(parameter);
+            checker.initialize_captures(parameter)?;
         }
 
         if let Some(sources) = &function.return_borrows {
@@ -708,6 +709,9 @@ fn analyze(
                     function.description()
                 ),
             ));
+        }
+        if !completion {
+            checker.check_scope_drops(1, function.body.span)?;
         }
         analyses.insert(function.name.clone(), analysis);
     }
@@ -773,6 +777,7 @@ impl FunctionChecker<'_> {
         self.scopes.push(HashMap::new());
         let returns = self.statements(&block.statements)?;
         let scope = self.scopes.len() - 1;
+        self.check_scope_drops(scope, block.span)?;
         self.loans.retain(|loan| loan.scope != Some(scope));
         self.scopes.pop();
         self.capture_bindings.retain(|root, _| root.0 != scope);
@@ -1073,6 +1078,7 @@ impl FunctionChecker<'_> {
                         ));
                     }
                 }
+                self.check_return_drops(value.as_ref(), statement.span)?;
                 return Ok(true);
             }
             StatementKind::Block(block) => {
@@ -1104,6 +1110,11 @@ impl FunctionChecker<'_> {
                 return Ok(then_returns && else_returns);
             }
             StatementKind::Break | StatementKind::Continue => {
+                if let Some(context) = self.loops.iter().rev().find(|context| {
+                    matches!(statement.kind, StatementKind::Break) || !context.is_switch
+                }) {
+                    self.check_scope_drops(context.scope_count, statement.span)?;
+                }
                 let Some(context) = self.loops.iter_mut().rev().find(|context| {
                     matches!(statement.kind, StatementKind::Break) || !context.is_switch
                 }) else {
@@ -2705,7 +2716,13 @@ impl FunctionChecker<'_> {
         self.references.insert(expression.span, id);
         if self.types.contains_borrows(capture_type) {
             let mut fields = Vec::new();
-            captures::reference_fields(self.types, capture_type, Vec::new(), &mut fields);
+            captures::reference_fields(
+                self.types,
+                capture_type,
+                Vec::new(),
+                &mut fields,
+                expression.span,
+            )?;
             self.remember_captures(
                 expression.span,
                 fields
@@ -3448,6 +3465,12 @@ impl FunctionChecker<'_> {
                     &field.name
                 });
             }
+            if captures.len() + nested.len() > 4096 {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    "reference-field tracking exceeds 4096 fields",
+                ));
+            }
             captures.extend(nested);
         }
         self.remember_captures(expression.span, captures);
@@ -3780,9 +3803,13 @@ impl FunctionChecker<'_> {
                 && !authorized.contains(&loan.id)
                 && (exclusive || loan.mutable)
         }) {
+            let name = root
+                .1
+                .strip_prefix("!capture:")
+                .map_or_else(|| root.1.clone(), |capture| capture.replace(':', "."));
             return Err(Diagnostic::new(
                 span,
-                format!("conflicting access to '{}' while it is borrowed", root.1),
+                format!("conflicting access to '{name}' while it is borrowed"),
             ));
         }
         return Ok(());
@@ -3925,7 +3952,13 @@ impl FunctionChecker<'_> {
         }
         if self.types.contains_borrows(return_type.referent()) {
             let mut fields = Vec::new();
-            captures::reference_fields(self.types, return_type.referent(), Vec::new(), &mut fields);
+            captures::reference_fields(
+                self.types,
+                return_type.referent(),
+                Vec::new(),
+                &mut fields,
+                span,
+            )?;
             let captures = fields
                 .into_iter()
                 .map(|(path, _)| captures::Capture::at(path, id))

@@ -227,7 +227,6 @@ fn replacement_retains_branch_origins_and_unsupported_storage_is_rejected() {
         assert!(crust::compile(&source).is_err(), "accepted {mutation}");
     }
     for source in [
-        "struct View { const int& value; ~View() { print(this.value); } }; int main() { return 0; }",
         "struct View { const int& value; }; View* pointer; int main() { return 0; }",
         "union View { const int& value; int number; }; int main() { return 0; }",
         "struct View { const int& value; }; void replace(View& target,const int& source) { target=(View){.value=source}; } int main() { return 0; }",

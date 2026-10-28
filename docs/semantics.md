@@ -87,8 +87,8 @@ containing value move-only. Shared access to a holder freezes those fields.
 Local replacement retains every possible source until the holder's block ends.
 See [reference fields](language.md#reference-fields) for storage restrictions.
 
-Heap-backed reference storage, destructors on reference-containing types, and
-borrowed temporary owners remain in the [roadmap](roadmap.md).
+Heap-backed reference storage and borrowed temporary owners remain in the
+[roadmap](roadmap.md).
 
 ## Cleanup
 
@@ -99,6 +99,12 @@ Unused owning expression results are destroyed after evaluation.
 
 A struct's destructor runs before its owning fields are destroyed in reverse
 declaration order. Arrays destroy owning elements in reverse index order.
+A holder's owning reference sources must be declared earlier in the same block,
+so they survive its cleanup. Ending local reborrows release before destructors
+run. Returned reference values stay protected while cleanup runs, including
+references inside returned aggregates. A destructor that could invalidate a
+returned value causes a diagnostic.
+
 Tagged unions destroy their active payload. Moving a whole value transfers its
 cleanup responsibility. Consuming a tagged payload transfers that payload and
 disables its former container's cleanup.

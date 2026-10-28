@@ -32,7 +32,17 @@ pub(super) fn reference_fields(
     ty: Type,
     path: Vec<String>,
     output: &mut Vec<(Vec<String>, Type)>,
-) {
+    span: Span,
+) -> Result<(), Diagnostic> {
+    if !types.contains_borrows(ty) {
+        return Ok(());
+    }
+    if output.len() >= 4096 {
+        return Err(Diagnostic::new(
+            span,
+            "reference-field tracking exceeds 4096 fields",
+        ));
+    }
     match ty {
         Type::Borrow { .. } => output.push((path, ty)),
         Type::Struct(id) => {
@@ -46,20 +56,33 @@ pub(super) fn reference_fields(
                     }
                     .to_owned(),
                 );
-                reference_fields(types, field.ty, nested, output);
+                reference_fields(types, field.ty, nested, output, field.span)?;
             }
         }
         Type::Array(id) => {
-            reference_fields(types, types.arrays[id].element, path, output);
+            reference_fields(
+                types,
+                types.arrays[id].element,
+                path,
+                output,
+                types.arrays[id].span,
+            )?;
         }
         _ => {}
     }
+    return Ok(());
 }
 
 impl FunctionChecker<'_> {
-    pub(super) fn initialize_captures(&mut self, parameter: &Parameter) {
+    pub(super) fn initialize_captures(&mut self, parameter: &Parameter) -> Result<(), Diagnostic> {
         let mut fields = Vec::new();
-        reference_fields(self.types, parameter.ty.referent(), Vec::new(), &mut fields);
+        reference_fields(
+            self.types,
+            parameter.ty.referent(),
+            Vec::new(),
+            &mut fields,
+            parameter.span,
+        )?;
         let mut captures = Vec::new();
         for (path, ty) in fields {
             let root = (1, format!("!capture:{}:{}", parameter.name, path.join(".")));
@@ -87,6 +110,7 @@ impl FunctionChecker<'_> {
             self.capture_bindings
                 .insert((1, parameter.name.clone()), captures);
         }
+        return Ok(());
     }
 
     pub(super) fn captures_at(&self, place: &Place) -> Captures {
@@ -114,6 +138,9 @@ impl FunctionChecker<'_> {
     }
 
     pub(super) fn capture_value(&mut self, span: Span, place: &Place) {
+        if !self.types.contains_borrows(place.ty) {
+            return;
+        }
         let mut captures = self.captures_at(place);
         if let Some(parent) = place.via {
             for capture in &mut captures {
@@ -133,6 +160,12 @@ impl FunctionChecker<'_> {
             .get(&value.span)
             .cloned()
             .unwrap_or_default();
+        if captures.len() > 4096 {
+            return Err(Diagnostic::new(
+                value.span,
+                "reference-field tracking exceeds 4096 fields",
+            ));
+        }
         for capture in &captures {
             let loan = self
                 .loans
@@ -144,6 +177,7 @@ impl FunctionChecker<'_> {
                     .iter()
                     .map(|(root, fields)| (root, fields)),
             ) {
+                self.check_source_drop_order(place, root, value.span)?;
                 if root.0 > place.root.0 {
                     return Err(Diagnostic::new(
                         value.span,
@@ -177,6 +211,12 @@ impl FunctionChecker<'_> {
             path.extend(capture.path);
             capture.path = path;
             if !destination.contains(&capture) {
+                if destination.len() >= 4096 {
+                    return Err(Diagnostic::new(
+                        value.span,
+                        "reference-field tracking exceeds 4096 fields",
+                    ));
+                }
                 destination.push(capture);
             }
         }

@@ -30,7 +30,10 @@ ownership checking, C generation, and native compilation.
 | `src/parser/integers.rs` | C integer type specifiers |
 | `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
 | `src/check.rs` | Names, types, ownership states, call-argument borrows |
+| `src/check/captures.rs` | Stored reference paths, lifetime sources, and retained loans |
+| `src/check/drop_borrows.rs` | Source cleanup order and references protected through destructors |
 | `src/types.rs` | Struct and array layout dependencies and ownership propagation |
+| `src/types/borrows.rs` | Reference-containing types, mutability, and destructor queries |
 | `src/emit_c.rs` | Generated C and cleanup |
 | `src/header.rs` | C export prototypes, callback declarations, and native tag preservation |
 | `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
@@ -370,3 +373,16 @@ frees, and destructor output to verify cleanup behavior.
 
 Language-server tests launch `crust-lsp` and exchange framed protocol messages
 through its standard input and output.
+
+
+## Stored reference tracking
+
+Reference-containing values retain source loans through construction, copies,
+moves, calls, and returns. The checker tracks nested field paths and merges
+possible sources after replacements and branches. Reference tracking supports
+up to 4096 retained field entries per value or binding. It reports a diagnostic
+when a larger shape or accumulation exceeds that limit.
+
+Cleanup checks keep returned loans live while destructors run. Same-block
+owning sources must be declared before their reference holders. Destructor
+queries visit each concrete type once, including repeated aggregate shapes.
