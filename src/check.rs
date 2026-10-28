@@ -1069,7 +1069,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
-                if self.types.carries_borrows(place.ty) {
+                if self.types.contains_borrows(place.ty) {
                     self.check_capture_move(&place, target.span)?;
                     self.bind_captures(&place, value)?;
                 }
@@ -1625,6 +1625,12 @@ impl FunctionChecker<'_> {
                 }
                 if let Some(value) = value {
                     self.require_type(value, destination.pointee)?;
+                    if self.types.contains_borrows(destination.pointee)
+                        && let Some(mut target) = self.raw_storage_target(pointer)?
+                    {
+                        target.ty = destination.pointee;
+                        self.bind_captures(&target, value)?;
+                    }
                 }
                 return Ok(Type::Void);
             }
@@ -1724,6 +1730,7 @@ impl FunctionChecker<'_> {
                         ));
                     }
                     self.conversions.insert(operand.span, *ty);
+                    self.copy_captures(expression.span, operand.span);
                     return Ok(*ty);
                 }
                 if self.types.integer_representation(*ty).is_none() && !matches!(ty, Type::Float(_))
@@ -2218,6 +2225,8 @@ impl FunctionChecker<'_> {
                             arguments[0].span,
                         )?;
                         self.expression_types.insert(arguments[0].span, place.ty);
+                        self.check_capture_move(&place, arguments[0].span)?;
+                        self.capture_value(expression.span, &place);
                         return Ok(place.ty);
                     }
                     return Err(Diagnostic::new(
@@ -2333,6 +2342,7 @@ impl FunctionChecker<'_> {
                         place.via,
                         expression.span,
                     )?;
+                    self.capture_value(expression.span, &place);
                     if self.types.owns(place.ty) && !self.unevaluated {
                         return Err(Diagnostic::new(
                             expression.span,
@@ -2386,6 +2396,7 @@ impl FunctionChecker<'_> {
                         && right_type.integer().is_some()
                     {
                         self.pointer_offset(left_type, right, right_type)?;
+                        self.copy_captures(expression.span, left.span);
                         return Ok(left_type);
                     }
                     if *operator == BinaryOperator::Subtract
@@ -2511,6 +2522,7 @@ impl FunctionChecker<'_> {
                 if matches!(right_type, Type::Pointer(_)) {
                     if *operator == BinaryOperator::Add {
                         self.pointer_offset(right_type, left, left_type)?;
+                        self.copy_captures(expression.span, right.span);
                         return Ok(right_type);
                     }
                     if !matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
@@ -2560,6 +2572,18 @@ impl FunctionChecker<'_> {
             } = &expression.kind
         {
             self.conditional(condition, then_value, else_value, Some(expected))?;
+            let mut captures = self
+                .capture_expressions
+                .get(&then_value.span)
+                .cloned()
+                .unwrap_or_default();
+            captures.extend(
+                self.capture_expressions
+                    .get(&else_value.span)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            self.remember_captures(expression.span, captures);
             self.expression_types.insert(expression.span, expected);
             return Ok(());
         }
@@ -3992,7 +4016,7 @@ impl FunctionChecker<'_> {
                 .expect("borrowed argument has a loan");
             origins.push((loan.root.clone(), loan.fields.clone()));
             origins.extend(loan.alternatives.clone());
-            if loan.scope == Some(usize::MAX)
+            if loan.scope.is_some()
                 || self.loans[..previous_loans]
                     .iter()
                     .any(|existing| existing.id == id)

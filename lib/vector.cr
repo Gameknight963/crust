@@ -42,12 +42,12 @@ struct Vector<T> {
         return Result<Unit, AllocError>::success(Unit::Value);
     }
 
-    Result<Unit, AllocationFailure<T>> try_push(T value) {
+    Result<Unit, AllocationFailure<T>> try_push(T value) borrows(value) {
         size_t index = this.length;
         return this.try_insert(index, move(value));
     }
 
-    Result<Unit, AllocationFailure<T>> try_insert(size_t index, T value) {
+    Result<Unit, AllocationFailure<T>> try_insert(size_t index, T value) borrows(value) {
         if (index > this.length) { unsafe { abort(); } }
         if (this.length == this.capacity) {
             size_t next = 2;
@@ -93,7 +93,7 @@ struct Vector<T> {
         if (!result.is_ok()) { unsafe { abort(); } }
     }
 
-    T pop() {
+    T pop() borrows(this) {
         if (this.length == 0) { unsafe { abort(); } }
         unsafe {
             T value = move(this.data[this.length - 1]);
@@ -102,7 +102,7 @@ struct Vector<T> {
         }
     }
 
-    T remove(size_t index) {
+    T remove(size_t index) borrows(this) {
         if (index >= this.length) { unsafe { abort(); } }
         unsafe {
             T value = move(this.data[index]);

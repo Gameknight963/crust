@@ -177,7 +177,24 @@ impl FunctionChecker<'_> {
                             };
                             captured.push(captures::Capture::at(path.clone(), id));
                         }
+                        let retained: Vec<_> = captured.iter().map(captures::Capture::id).collect();
                         self.bind_capture_set(&place, captured, span)?;
+                        if signature
+                            .return_borrow
+                            .as_ref()
+                            .is_some_and(|sources| sources.contains(&source))
+                        {
+                            let values = self
+                                .capture_expressions
+                                .entry(arguments[source].span)
+                                .or_default();
+                            for id in retained {
+                                let capture = captures::Capture::new(id);
+                                if !values.contains(&capture) {
+                                    values.push(capture);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -302,6 +319,32 @@ fn retention_regions(
     output: &mut Vec<Vec<String>>,
     span: Span,
 ) -> Result<(), Diagnostic> {
+    return retention_regions_inner(
+        types,
+        ty,
+        projection,
+        path,
+        target,
+        output,
+        span,
+        &mut HashSet::new(),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn retention_regions_inner(
+    types: &Types,
+    ty: Type,
+    projection: &[String],
+    path: Vec<String>,
+    target: Type,
+    output: &mut Vec<Vec<String>>,
+    span: Span,
+    active: &mut HashSet<(Type, usize)>,
+) -> Result<(), Diagnostic> {
+    if !active.insert((ty, projection.len())) {
+        return Ok(());
+    }
     if !types.contains_borrows(ty) {
         return Ok(());
     }
@@ -313,10 +356,21 @@ fn retention_regions(
     }
     if projection.is_empty() && ty == target {
         output.push(path);
+        active.remove(&(ty, projection.len()));
         return Ok(());
     }
     match ty {
-        Type::Array(id) => retention_regions(
+        Type::Pointer(id) => retention_regions_inner(
+            types,
+            types.pointers[id].pointee,
+            projection,
+            path,
+            target,
+            output,
+            span,
+            active,
+        )?,
+        Type::Array(id) => retention_regions_inner(
             types,
             types.arrays[id].element,
             projection,
@@ -324,6 +378,7 @@ fn retention_regions(
             target,
             output,
             span,
+            active,
         )?,
         Type::Struct(id) => {
             for field in &types.structs[id].fields {
@@ -350,6 +405,7 @@ fn retention_regions(
         }
         _ => {}
     }
+    active.remove(&(ty, projection.len()));
     return Ok(());
 }
 
@@ -396,5 +452,42 @@ impl FunctionChecker<'_> {
         self.loans = loans.into_values().collect();
         self.loans.sort_by_key(|loan| loan.id);
         self.capture_bindings = captures;
+    }
+}
+
+impl FunctionChecker<'_> {
+    pub(super) fn copy_captures(&mut self, target: Span, source: Span) {
+        let captures = self
+            .capture_expressions
+            .get(&source)
+            .cloned()
+            .unwrap_or_default();
+        self.remember_captures(target, captures);
+    }
+    pub(super) fn raw_storage_target(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<Option<Place>, Diagnostic> {
+        return match &expression.kind {
+            ExpressionKind::Binary { left, right, .. } => {
+                if matches!(
+                    self.expression_types.get(&left.span),
+                    Some(Type::Pointer(_))
+                ) {
+                    self.raw_storage_target(left)
+                } else {
+                    self.raw_storage_target(right)
+                }
+            }
+            ExpressionKind::Cast { operand, .. } => self.raw_storage_target(operand),
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Address,
+                operand,
+            } => self.checked_place(operand).map(Some),
+            ExpressionKind::Variable { .. }
+            | ExpressionKind::Field { .. }
+            | ExpressionKind::Index { .. } => self.checked_place(expression).map(Some),
+            _ => Ok(None),
+        };
     }
 }

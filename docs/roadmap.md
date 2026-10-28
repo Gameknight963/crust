@@ -114,7 +114,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Floating-point types, literals, arithmetic, conversions, and C calls
 - [x] Integer and enum switch statements
 - [x] Global definitions and static variables
-- [ ] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
+- [x] References stored in structs, returned-reference contracts with multiple inputs, and temporary lifetimes
 - [x] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
 - [x] Migrate examples and tests from BoxInt and remove the built-in type
 - [x] Project dependencies, library-supplied native dependencies, and reliable rebuilds
@@ -138,7 +138,6 @@ Signature help uses the same resolved call analysis.
 ## Further design
 
 - Borrowed-field lifetimes and field moves in the presence of destructors
-- Temporary owner lifetimes
 - File-local helper types and further visibility controls
 - Constrained `weak`, `expect`, and `replace` typedefs across a build
 - Static-only types and first-use type initialization

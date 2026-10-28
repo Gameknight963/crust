@@ -34,6 +34,20 @@ pub(super) fn reference_fields(
     output: &mut Vec<(Vec<String>, Type)>,
     span: Span,
 ) -> Result<(), Diagnostic> {
+    return reference_fields_inner(types, ty, path, output, span, &mut HashSet::new());
+}
+
+fn reference_fields_inner(
+    types: &Types,
+    ty: Type,
+    path: Vec<String>,
+    output: &mut Vec<(Vec<String>, Type)>,
+    span: Span,
+    active: &mut HashSet<Type>,
+) -> Result<(), Diagnostic> {
+    if !active.insert(ty) {
+        return Ok(());
+    }
     if !types.contains_borrows(ty) {
         return Ok(());
     }
@@ -56,20 +70,30 @@ pub(super) fn reference_fields(
                     }
                     .to_owned(),
                 );
-                reference_fields(types, field.ty, nested, output, field.span)?;
+                reference_fields_inner(types, field.ty, nested, output, field.span, active)?;
             }
         }
         Type::Array(id) => {
-            reference_fields(
+            reference_fields_inner(
                 types,
                 types.arrays[id].element,
                 path,
                 output,
                 types.arrays[id].span,
+                active,
             )?;
         }
+        Type::Pointer(id) => reference_fields_inner(
+            types,
+            types.pointers[id].pointee,
+            path,
+            output,
+            span,
+            active,
+        )?,
         _ => {}
     }
+    active.remove(&ty);
     return Ok(());
 }
 
@@ -159,6 +183,12 @@ impl FunctionChecker<'_> {
         place: &Place,
         value: &Expression,
     ) -> Result<(), Diagnostic> {
+        if matches!(place.ty, Type::Pointer(_))
+            && constant_integer(value) == Some(0)
+            && let Some(captures) = self.capture_bindings.get_mut(&place.root)
+        {
+            captures.retain(|capture| !capture.path.starts_with(&place.fields));
+        }
         let captures = self
             .capture_expressions
             .get(&value.span)

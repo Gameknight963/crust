@@ -13,7 +13,7 @@ tagged union AllocationFailure<T> {
         }
     }
 
-    T take_value(Self this) {
+    T take_value(Self this) borrows(this) {
         switch (this) {
             case out_of_memory: return move(this.out_of_memory);
             case capacity_overflow: return move(this.capacity_overflow);

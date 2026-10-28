@@ -421,3 +421,10 @@ Branch checking snapshots loans and captured origins independently, then merges
 possible outcomes. A function can infer at most 4096 relationships, and each call
 can track at most 4096 destination regions. Lifetime tracking remains
 conservative across fields of the same stored type.
+
+Typed pointer storage carries the reference origins of its stored values.
+Initialization, pointer offsets, copies, moves, and null assignments update that
+metadata. Generic factories and consuming extraction use specialization-aware
+return contracts. A value returned after a fallible store shares a reborrow
+guard with the possible retained value, keeping mutable reference access
+exclusive across success and error paths.

@@ -784,8 +784,10 @@ same block. This keeps it alive through the holder's cleanup. Destructors can
 read shared fields and modify mutable fields. Returning a reference is rejected
 when a remaining destructor could invalidate it.
 
-Reference-containing types currently support value storage. Raw pointers to
-these types and reference fields in untagged unions require further support.
+Reference-containing types support value storage and typed heap storage through
+`Box<T>`, `Buffer<T>`, and `Vector<T>`. Typed raw-storage initialization preserves
+the stored values' source lifetimes. Reference fields in untagged unions are
+rejected.
 Functions can replace reference-containing values through mutable borrows. The
 compiler infers which input lifetimes they retain, including through forwarding
 and recursive calls. Callers keep those sources borrowed while the destination
@@ -793,7 +795,8 @@ lives. Ordinary methods can read and modify referents through their fields.
 Destructors can mutate referents. Retaining references in external storage from
 a destructor is rejected.
 
-See [the reference-field example](../examples/reference_fields.cr) and
+See [heap-stored views](../examples/heap_views.cr),
+[the reference-field example](../examples/reference_fields.cr), and
 [the reference destructor](../examples/reference_destructor.cr).
 
 ### Borrowed returns

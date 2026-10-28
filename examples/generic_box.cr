@@ -5,7 +5,7 @@ extern void abort();
 struct Box<T> {
     private T* data;
 
-    static Self create(T value) {
+    static Self create(T value) borrows(value) {
         unsafe {
             T* data = (T*)malloc(sizeof(T));
             if (data == 0) { abort(); }
@@ -22,7 +22,7 @@ struct Box<T> {
         unsafe { return &*this.data; }
     }
 
-    T take(Self this) {
+    T take(Self this) borrows(this) {
         unsafe {
             T value = move(*this.data);
             free(this.data);

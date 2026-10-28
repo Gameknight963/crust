@@ -96,7 +96,12 @@ the enclosing statement expression, initializer, return expression, or control
 condition. Short-circuit operands and conditional branches share that cleanup
 boundary. Saving a reference to a temporary requires a named owner.
 
-Heap-backed reference storage remains in the [roadmap](roadmap.md).
+Typed heap storage preserves reference origins through initialization, pointer
+offsets, container growth, and consuming extraction. Generic allocation APIs use
+conditional `borrows(...)` clauses for reference-containing specializations.
+Removing or replacing elements conservatively retains possible sources until
+the container's block ends. Extracted views can also retain a borrow of their
+container when the method's contract names `this`.
 
 ## Cleanup
 

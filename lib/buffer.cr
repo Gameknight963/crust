@@ -5,7 +5,7 @@ struct Buffer<T> {
     private T* data;
     private size_t length;
 
-    static Result<Self, AllocationFailure<T>> try_create(size_t length, T initial) {
+    static Result<Self, AllocationFailure<T>> try_create(size_t length, T initial) borrows(initial) {
         if (length == 0) {
             return Result<Self, AllocationFailure<T>>::success(
                 (Self){ .data = 0, .length = 0 });
@@ -28,7 +28,7 @@ struct Buffer<T> {
         }
     }
 
-    static Self create(size_t length, T initial) {
+    static Self create(size_t length, T initial) borrows(initial) {
         Result<Self, AllocationFailure<T>> result = Self::try_create(length, move(initial));
         if (!result.is_ok()) { unsafe { abort(); } }
         return move(result).take_value();

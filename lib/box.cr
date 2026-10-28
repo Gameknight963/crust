@@ -4,7 +4,7 @@ import "allocation.cr";
 struct Box<T> {
     private T* data;
 
-    static Result<Self, AllocationFailure<T>> try_create(T value) {
+    static Result<Self, AllocationFailure<T>> try_create(T value) borrows(value) {
         unsafe {
             T* data = (T*)malloc(sizeof(T));
             if (data == 0) {
@@ -16,7 +16,7 @@ struct Box<T> {
         }
     }
 
-    static Self create(T value) {
+    static Self create(T value) borrows(value) {
         Result<Self, AllocationFailure<T>> result = Self::try_create(move(value));
         if (!result.is_ok()) { unsafe { abort(); } }
         return move(result).take_value();
@@ -30,7 +30,7 @@ struct Box<T> {
         unsafe { return &*this.data; }
     }
 
-    T take(Self this) {
+    T take(Self this) borrows(this) {
         unsafe {
             T value = move(*this.data);
             free(this.data);

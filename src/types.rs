@@ -191,24 +191,6 @@ impl Types {
                 ));
             }
         }
-        for pointer in &types.pointers {
-            if types.carries_borrows(pointer.pointee) {
-                return Err(Diagnostic::new(
-                    program
-                        .struct_names
-                        .first()
-                        .map(|entry| entry.1)
-                        .or_else(|| program.functions.first().map(|function| function.span))
-                        .unwrap_or(Span {
-                            start: 0,
-                            end: 0,
-                            line: 1,
-                            column: 1,
-                        }),
-                    "raw pointers to types containing references are not supported yet",
-                ));
-            }
-        }
         let mut states = vec![0; types.structs.len()];
         let mut array_states = vec![0; types.arrays.len()];
         for id in 0..states.len() {
