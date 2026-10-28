@@ -5,6 +5,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
 
+#[allow(dead_code)]
+pub fn allocation_source() -> String {
+    return include_str!("../../lib/allocation.cr")
+        .replace("import \"result.cr\";", include_str!("../../lib/result.cr"));
+}
+
 // Instrument the generated C's allocator, rather than inferring cleanup from
 // text matching. Real compiled executions verify frees and their scope order.
 #[allow(dead_code)]
@@ -41,7 +47,13 @@ pub fn tracked_generated_c(generated: &str, sizes: bool) -> Output {
         struct tracked_allocation { void *pointer; size_t size; struct tracked_allocation *next; };
         static struct tracked_allocation *allocations = NULL;
         static size_t live_allocations = 0;
+        static size_t allocation_budget = SIZE_MAX;
+        static void crust_test_fail_allocations_after(size_t successes) {
+            allocation_budget = successes;
+        }
         static void *tracked_malloc(size_t bytes) {
+            if (allocation_budget == 0) { return NULL; }
+            if (allocation_budget != SIZE_MAX) { allocation_budget -= 1; }
             void *value = malloc(bytes);
             if (value != NULL) {
                 struct tracked_allocation *record = malloc(sizeof(*record));

@@ -2,7 +2,8 @@ mod common;
 
 fn library() -> String {
     let vector = include_str!("../lib/vector.cr")
-        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"))
+        .replace("import \"allocation.cr\";", &common::allocation_source());
     return include_str!("../lib/sort.cr").replace("import \"vector.cr\";", &vector);
 }
 

@@ -1,15 +1,25 @@
 import "memory.cr";
+import "allocation.cr";
 
 struct Box<T> {
     private T* data;
 
-    static Self create(T value) {
+    static Result<Self, AllocationFailure<T>> try_create(T value) {
         unsafe {
             T* data = (T*)malloc(sizeof(T));
-            if (data == 0) { abort(); }
+            if (data == 0) {
+                return Result<Self, AllocationFailure<T>>::failure(
+                    (AllocationFailure<T>){ .out_of_memory = move(value) });
+            }
             init(data, move(value));
-            return (Self){ .data = data };
+            return Result<Self, AllocationFailure<T>>::success((Self){ .data = data });
         }
+    }
+
+    static Self create(T value) {
+        Result<Self, AllocationFailure<T>> result = Self::try_create(move(value));
+        if (!result.is_ok()) { unsafe { abort(); } }
+        return move(result).take_value();
     }
 
     const T& get() const {

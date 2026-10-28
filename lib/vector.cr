@@ -1,4 +1,5 @@
 import "memory.cr";
+import "allocation.cr";
 
 struct Vector<T> {
     private T* data;
@@ -19,12 +20,18 @@ struct Vector<T> {
         unsafe { return slice(this.data, this.length); }
     }
 
-    void reserve(size_t capacity) {
-        if (capacity <= this.capacity) { return; }
+    Result<Unit, AllocError> try_reserve(size_t capacity) {
+        if (capacity <= this.capacity) {
+            return Result<Unit, AllocError>::success(Unit::Value);
+        }
         unsafe {
-            if (capacity > ~(size_t)0 / sizeof(T)) { abort(); }
+            if (capacity > ~(size_t)0 / sizeof(T)) {
+                return Result<Unit, AllocError>::failure(AllocError::CapacityOverflow);
+            }
             T* next = (T*)malloc(capacity * sizeof(T));
-            if (next == 0) { abort(); }
+            if (next == 0) {
+                return Result<Unit, AllocError>::failure(AllocError::OutOfMemory);
+            }
             for (size_t i = 0; i < this.length; i += 1) {
                 init(next + i, move(this.data[i]));
             }
@@ -32,22 +39,34 @@ struct Vector<T> {
             this.data = next;
             this.capacity = capacity;
         }
+        return Result<Unit, AllocError>::success(Unit::Value);
     }
 
-    void push(T value) {
+    Result<Unit, AllocationFailure<T>> try_push(T value) {
         size_t index = this.length;
-        this.insert(index, move(value));
+        return this.try_insert(index, move(value));
     }
 
-    void insert(size_t index, T value) {
+    Result<Unit, AllocationFailure<T>> try_insert(size_t index, T value) {
         if (index > this.length) { unsafe { abort(); } }
         if (this.length == this.capacity) {
             size_t next = 2;
             if (this.capacity > 0) {
-                if (this.capacity > ~(size_t)0 / 2) { unsafe { abort(); } }
+                if (this.capacity > ~(size_t)0 / 2) {
+                    return Result<Unit, AllocationFailure<T>>::failure(
+                        (AllocationFailure<T>){ .capacity_overflow = move(value) });
+                }
                 next = this.capacity * 2;
             }
-            this.reserve(next);
+            Result<Unit, AllocError> reserved = this.try_reserve(next);
+            if (!reserved.is_ok()) {
+                if (reserved.error_value() == AllocError::CapacityOverflow) {
+                    return Result<Unit, AllocationFailure<T>>::failure(
+                        (AllocationFailure<T>){ .capacity_overflow = move(value) });
+                }
+                return Result<Unit, AllocationFailure<T>>::failure(
+                    (AllocationFailure<T>){ .out_of_memory = move(value) });
+            }
         }
         unsafe {
             for (size_t i = this.length; i > index; i -= 1) {
@@ -56,6 +75,22 @@ struct Vector<T> {
             init(this.data + index, move(value));
         }
         this.length += 1;
+        return Result<Unit, AllocationFailure<T>>::success(Unit::Value);
+    }
+
+    void reserve(size_t capacity) {
+        Result<Unit, AllocError> result = this.try_reserve(capacity);
+        if (!result.is_ok()) { unsafe { abort(); } }
+    }
+
+    void push(T value) {
+        size_t index = this.length;
+        this.insert(index, move(value));
+    }
+
+    void insert(size_t index, T value) {
+        Result<Unit, AllocationFailure<T>> result = this.try_insert(index, move(value));
+        if (!result.is_ok()) { unsafe { abort(); } }
     }
 
     T pop() {

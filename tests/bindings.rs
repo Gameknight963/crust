@@ -1178,7 +1178,8 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
     let path = header("#include <stdlib.h>\n");
     let bindings = generate(&path, &options(&["qsort"])).unwrap();
     let vector = include_str!("../lib/vector.cr")
-        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"));
+        .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"))
+        .replace("import \"allocation.cr\";", &common::allocation_source());
     let source = format!(
         r#"
         {bindings}

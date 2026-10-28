@@ -43,6 +43,7 @@
 - Generic tagged unions, checked payload access, active-payload cleanup, and consuming extraction
 - Tagged-union switch cases with fallthrough, default, loop control, and ownership-state merging
 - Library Result<T, E> values with success/error construction and borrowed or consuming access
+- Fallible box and buffer factories and vector growth, with rejected values returned in allocation errors
 - Unsafe function and method contracts, including generic instances and interface requirements
 - Explicit raw-storage initialization and destruction, plus a generic heap owner for copyable values and owning types
 - Unsafe whole-value moves from raw storage, consuming box extraction, and growable vectors of owning elements
