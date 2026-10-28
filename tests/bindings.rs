@@ -86,7 +86,13 @@ fn imports_integer_and_boolean_macros_with_native_types_and_exact_values() {
         ..Options::default()
     };
     let bindings = generate(&path, &options).unwrap();
-    assert!(bindings.contains("const unsigned long NATIVE_LONG"));
+    let native_long =
+        if std::mem::size_of::<std::ffi::c_long>() == 8 && !cfg!(target_vendor = "apple") {
+            "uint64_t"
+        } else {
+            "unsigned long"
+        };
+    assert!(bindings.contains(&format!("const {native_long} NATIVE_LONG")));
     let output = common::tracked_run(&format!(
         "{bindings} int main() {{ print(COUNT); print(NEGATIVE); print(MAXIMUM); print(MINIMUM); print(FLAG); print(c_unsafe); print(NATIVE_LONG); return 0; }}"
     ));

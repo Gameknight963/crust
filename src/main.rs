@@ -90,7 +90,7 @@ fn run() -> Result<ExitCode, String> {
             path,
             options.mode,
             &output,
-            &[path.to_owned()],
+            std::slice::from_ref(path),
             &crust::native::Options::default(),
             TargetKind::Executable,
             &options.program_arguments,

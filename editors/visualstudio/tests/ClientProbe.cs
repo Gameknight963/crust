@@ -178,6 +178,9 @@ internal static class ClientProbe
         startInfo.RedirectStandardError = true;
         startInfo.StandardOutputEncoding = Encoding.UTF8;
         startInfo.StandardErrorEncoding = Encoding.UTF8;
+        // .NET Framework uses Console.InputEncoding for redirected process input.
+        // A UTF-8 BOM would reach scanf before the first digit.
+        Console.InputEncoding = new UTF8Encoding(false);
         using (var console = Process.Start(startInfo))
         {
             Assert(console != null, "console launch");

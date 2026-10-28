@@ -84,7 +84,7 @@ fn stable_sorting_preserves_equal_key_order_and_handles_inconsistent_comparisons
         .map(|line| line.parse().unwrap())
         .collect();
     assert_eq!(ids.len(), 8);
-    for phase in ids.chunks_exact(4) {
+    for phase in ids.as_chunks::<4>().0 {
         let mut ids = phase.to_vec();
         ids.sort_unstable();
         assert_eq!(ids, [0, 1, 2, 3]);

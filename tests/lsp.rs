@@ -1889,7 +1889,9 @@ fn semantic_tokens(server: &mut Server, uri: &str) -> Vec<[u64; 5]> {
     assert_eq!(data.len() % 5, 0);
     let (mut line, mut column) = (0, 0);
     return data
-        .chunks_exact(5)
+        .as_chunks::<5>()
+        .0
+        .iter()
         .map(|token| {
             let delta_line = token[0].as_u64().unwrap();
             line += delta_line;
