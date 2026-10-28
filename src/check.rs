@@ -299,7 +299,7 @@ fn analyze(
         if global.ty == Type::Void
             || !types.is_sized(global.ty)
             || types.owns(global.ty)
-            || global.ty.is_borrow()
+            || types.carries_borrows(global.ty)
             || matches!(global.ty, Type::Function(_))
             || (global.external && matches!(global.ty, Type::Array(_)))
         {
@@ -400,11 +400,11 @@ fn analyze(
             ));
         }
         if function.link_name.is_some()
-            && (function.return_type.is_borrow()
+            && (types.carries_borrows(function.return_type)
                 || types.owns(function.return_type)
                 || matches!(function.return_type, Type::Array(_))
                 || function.parameters.iter().any(|parameter| {
-                    parameter.ty.is_borrow()
+                    types.carries_borrows(parameter.ty)
                         || types.owns(parameter.ty)
                         || matches!(parameter.ty, Type::Array(_))
                 }))

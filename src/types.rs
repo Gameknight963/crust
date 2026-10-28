@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+mod borrows;
 
 use crate::ast::{
     ArrayType, CallingConvention, EnumDefinition, EnumVariant, Field, FunctionType, IntType,
@@ -244,7 +245,7 @@ impl Types {
         }
         let Type::Struct(id) = ty else { unreachable!() };
         states[id] = 1;
-        let mut owns = self.structs[id].has_destructor;
+        let mut owns = self.structs[id].has_destructor || self.contains_mutable_borrows(ty);
         for field in self.structs[id].fields.clone() {
             if !self.is_sized(field.ty) {
                 return Err(Diagnostic::new(
@@ -314,7 +315,10 @@ impl Types {
 
     fn check_function_type(&self, function_type: &FunctionType) -> Result<(), Diagnostic> {
         let valid = |ty| {
-            self.is_sized(ty) && !self.owns(ty) && !ty.is_borrow() && !matches!(ty, Type::Array(_))
+            self.is_sized(ty)
+                && !self.owns(ty)
+                && !self.carries_borrows(ty)
+                && !matches!(ty, Type::Array(_))
         };
         if (function_type.result != Type::Void && !valid(function_type.result))
             || function_type.parameters.iter().any(|ty| !valid(*ty))
