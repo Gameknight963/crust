@@ -48,6 +48,7 @@ pub(super) fn initializer_functions(globals: &[ExternalVariable], functions: &mu
     for global in globals {
         if let Some(initializer) = &global.initializer {
             functions.push(Function {
+                specialized: false,
                 name: format!("?init_{}", global.name),
                 name_span: global.name_span,
                 span: global.span,

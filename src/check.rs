@@ -14,14 +14,15 @@ fn return_borrow_sources(
     let aggregate =
         !function.return_type.is_borrow() && types.carries_borrows(function.return_type);
     let mutable = matches!(function.return_type, Type::Borrow { mutable: true, .. });
-    if !function.return_type.is_borrow() && !aggregate {
-        if function.return_borrows.is_some() {
-            return Err(Diagnostic::new(
-                function.span,
-                "borrows applies to a borrowed return",
-            ));
-        }
+    let carries_return = function.return_type.is_borrow() || aggregate;
+    if !carries_return && function.return_borrows.is_none() {
         return Ok(None);
+    }
+    if !carries_return && !function.specialized {
+        return Err(Diagnostic::new(
+            function.span,
+            "borrows applies to a borrowed return",
+        ));
     }
     let sources = if let Some(names) = &function.return_borrows {
         if names.is_empty() {
@@ -36,14 +37,21 @@ fn return_borrow_sources(
             let index = function
                 .parameters
                 .iter()
-                .position(|parameter| parameter.name == *name && types.carries_borrows(parameter.ty))
+                .position(|parameter| parameter.name == *name)
                 .ok_or_else(|| {
                     Diagnostic::new(*span, "a borrow source must name a borrowed parameter or a value containing references")
                 })?;
             if !seen.insert(index) {
                 return Err(Diagnostic::new(*span, "duplicate borrow source"));
             }
-            sources.push(index);
+            if types.carries_borrows(function.parameters[index].ty) {
+                sources.push(index);
+            } else if !function.specialized {
+                return Err(Diagnostic::new(
+                    *span,
+                    "a borrow source must name a borrowed parameter or a value containing references",
+                ));
+            }
         }
         sources
     } else {
@@ -62,6 +70,9 @@ fn return_borrow_sources(
         }
         sources
     };
+    if !carries_return {
+        return Ok(None);
+    }
     if mutable
         && sources.iter().any(|index| {
             !matches!(
@@ -1000,7 +1011,7 @@ impl FunctionChecker<'_> {
             StatementKind::Store { target, value } => {
                 let target_type = self.receiver_type(target)?;
                 self.require_type(value, target_type)?;
-                let place = self.checked_place(target)?;
+                let place = self.checked_place_access(target, true)?;
                 if !place.mutable || place.ty.is_borrow() {
                     return Err(Diagnostic::new(
                         target.span,
@@ -3190,7 +3201,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Field { base, name, .. } => {
                 let ty = self.receiver_type(base)?;
-                return self.field_type(ty, name, expression.span);
+                return self.declared_field_type(ty, name, expression.span);
             }
             ExpressionKind::Index { base, .. } => {
                 return match self.receiver_type(base)? {
@@ -3426,9 +3437,6 @@ impl FunctionChecker<'_> {
         }
         let declared = self.types.structs[id].fields.clone();
         let is_union = self.types.structs[id].is_union;
-        if is_union {
-            self.require_unsafe(expression.span, "initializing a union")?;
-        }
         if (is_union || self.types.structs[id].tagged) && fields.len() != 1 {
             return Err(Diagnostic::new(
                 expression.span,
@@ -3444,7 +3452,7 @@ impl FunctionChecker<'_> {
                     format!("field '{}' is initialized more than once", field.name),
                 ));
             }
-            let ty = self.field_type(Type::Struct(id), &field.name, field.span)?;
+            let ty = self.declared_field_type(Type::Struct(id), &field.name, field.span)?;
             self.record_field_symbol(Type::Struct(id), &field.name, field.name_span);
             self.require_type(&field.value, ty)?;
             let mut nested = if ty.is_borrow() && !self.unevaluated {
@@ -3485,7 +3493,15 @@ impl FunctionChecker<'_> {
     }
 
     fn checked_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
-        let place = match self.check_place(expression) {
+        return self.checked_place_access(expression, false);
+    }
+
+    fn checked_place_access(
+        &mut self,
+        expression: &Expression,
+        writing: bool,
+    ) -> Result<Place, Diagnostic> {
+        let place = match self.check_place_access(expression, writing) {
             Ok(place) => place,
             Err(error) => {
                 if self.completion
@@ -3508,6 +3524,14 @@ impl FunctionChecker<'_> {
     }
 
     fn check_place(&mut self, expression: &Expression) -> Result<Place, Diagnostic> {
+        return self.check_place_access(expression, false);
+    }
+
+    fn check_place_access(
+        &mut self,
+        expression: &Expression,
+        writing: bool,
+    ) -> Result<Place, Diagnostic> {
         match &expression.kind {
             ExpressionKind::Call { .. }
             | ExpressionKind::MethodCall { .. }
@@ -3523,7 +3547,7 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Index { base, index } => {
                 let place = if base.is_place() {
-                    self.checked_place(base)?
+                    self.checked_place_access(base, writing)?
                 } else {
                     self.temporary_place(base)?
                 };
@@ -3577,8 +3601,12 @@ impl FunctionChecker<'_> {
                 name,
                 name_span,
             } => {
-                let place = self.checked_place(base)?;
-                let ty = self.field_type(place.ty, name, expression.span)?;
+                let place = self.checked_place_access(base, writing)?;
+                let ty = if writing {
+                    self.declared_field_type(place.ty, name, expression.span)?
+                } else {
+                    self.field_type(place.ty, name, expression.span)?
+                };
                 self.record_field_symbol(place.ty, name, *name_span);
                 let projection = if matches!(place.ty, Type::Struct(id) if self.types.structs[id].is_union || self.types.structs[id].tagged)
                 {
@@ -3671,10 +3699,14 @@ impl FunctionChecker<'_> {
     }
 
     fn field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
-        let field_type = self.types.field(ty, name, span)?;
         if matches!(ty, Type::Struct(id) if self.types.structs[id].is_union) {
-            self.require_unsafe(span, "accessing a union field")?;
+            self.require_unsafe(span, "reading or borrowing a union field")?;
         }
+        return self.declared_field_type(ty, name, span);
+    }
+
+    fn declared_field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
+        let field_type = self.types.field(ty, name, span)?;
         if let Type::Struct(id) = ty
             && self.current_struct != Some(id)
             && self.types.structs[id]

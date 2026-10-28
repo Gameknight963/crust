@@ -1111,6 +1111,7 @@ impl Parser {
                 }
                 let body = self.block()?;
                 self.methods.push(Function {
+                    specialized: !self.generics.bindings.is_empty(),
                     return_borrows: None,
                     dll_import: false,
                     calling_convention: CallingConvention::C,
@@ -1522,6 +1523,7 @@ impl Parser {
         self.value_scopes.pop();
         let span = start.through(body.span);
         return Ok(Function {
+            specialized: !self.generics.bindings.is_empty(),
             return_borrows,
             dll_import: false,
             calling_convention: CallingConvention::C,

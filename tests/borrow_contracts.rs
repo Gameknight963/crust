@@ -147,3 +147,41 @@ fn contract_names_participate_in_navigation_rename_and_signature_help() {
     let help = analysis.signature_help_at(0, call).unwrap();
     assert!(help.signatures[0].label.ends_with("borrows(a)"));
 }
+
+#[test]
+fn generic_borrow_contracts_apply_only_to_reference_carrying_specializations() {
+    let source = r#"
+        struct View { const int& value; };
+        T identity<T>(T value) borrows(value) { return move(value); }
+        struct Factory<T> {
+            int unused;
+            static T forward(T value) borrows(value) { return identity<T>(move(value)); }
+        };
+        int main() {
+            print(identity<int>(42)); print(Factory<int>::forward(7));
+            int value=9;
+            View view=identity<View>((View){.value=&const value});
+            print(view.value);
+            return 0;
+        }
+    "#;
+    let output = common::tracked_run(source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n7\n9\n"
+    );
+    for clause in ["missing", "value,value", ""] {
+        let source = format!(
+            "T identity<T>(T value) borrows({clause}) {{ return move(value); }} int main() {{ return identity<int>(1); }}"
+        );
+        assert!(crust::check(&source).is_err(), "{clause}");
+    }
+    let source =
+        "T& bad<T>(T value) borrows(value) { return &value; } int main(){return bad<int>(42);}";
+    assert!(crust::check(source).is_err());
+}

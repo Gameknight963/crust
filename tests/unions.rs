@@ -90,11 +90,9 @@ fn union_destructors_make_the_whole_value_move_only() {
 }
 
 #[test]
-fn union_initializers_select_one_field_and_field_operations_require_unsafe() {
+fn union_reads_and_borrows_require_unsafe_and_initializers_select_one_field() {
     for body in [
-        "U value = { .first = 1 };",
         "U value = make(); print(value.first);",
-        "U value = make(); value.first = 1;",
         "U value = make(); const int& field = &const value.first;",
         "unsafe { U value = {}; }",
         "unsafe { U value = { .first = 1, .second = 2 }; }",
@@ -115,5 +113,39 @@ fn union_initializers_select_one_field_and_field_operations_require_unsafe() {
         "enum U { Value }; typedef union U* Handle; int main() { return 0; }",
     ] {
         assert!(crust::check(source).is_err(), "should reject {source}");
+    }
+}
+
+#[test]
+fn union_initialization_assignment_and_whole_value_copies_are_safe() {
+    run(
+        r#"
+        struct Pair { int x; int y; };
+        union U { int number; Pair pair; int values[2]; };
+        U make() { return (U){.number=1}; }
+        int main() {
+            U first=make(); first.number=42;
+            U second=first;
+            first.pair=(Pair){.x=7,.y=8}; first.pair.x=9;
+            U third={.values={10,11}}; third.values[1]=12;
+            unsafe { print(second.number); print(first.pair.x); print(third.values[1]); }
+            return 0;
+        }
+    "#,
+        "42\n9\n12\n",
+    );
+    for body in [
+        "value.first += 1;",
+        "value.first++;",
+        "print(value.first);",
+        "int& reference=&value.first;",
+        "const int& reference=&const value.first;",
+        "value.first = value.second;",
+        "int index=value.first;",
+    ] {
+        let source = format!(
+            "union U {{ int first; int second; }}; int main() {{ U value={{.first=1}}; {body} return 0; }}"
+        );
+        assert!(crust::check(&source).is_err(), "{body}");
     }
 }

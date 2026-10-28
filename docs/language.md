@@ -741,6 +741,11 @@ Borrows distinguish separate struct fields. Array element borrows lock the whole
 array. Local references remain active to the end of the block, including after
 their last use. Reference fields retain their source loans through their holder.
 
+Generic declarations can use `borrows(value)` for a type parameter that may
+contain references. Parameter names and duplicate sources are always checked.
+Each specialization retains the sources that carry references. A specialization
+whose return type carries no references has no returned-lifetime contract.
+
 ### Reference fields
 
 ```c
@@ -1274,7 +1279,8 @@ int main() {
 
 - Union fields share storage and use the native C union layout
 - Initializers select exactly one field
-- Initializing a union and accessing, assigning, or borrowing a field require an unsafe context
+- Initializing a selected union field, assigning a field, and moving or copying the whole union are safe
+- Reading or borrowing a union field requires an unsafe context
 - The caller ensures the selected field contains a valid value of its type
 - The borrow checker treats union fields and their nested fields as overlapping
 - Fields contain copyable values or raw pointers
