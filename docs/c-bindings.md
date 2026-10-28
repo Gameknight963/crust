@@ -44,7 +44,8 @@ command protects its input header from replacement.
 - Named enums with native integer representations and member values
 - Selected scalar, pointer, callback, and opaque aggregate typedefs
 - Function pointers, callback returns, and variadic functions
-- Header-defined `static inline` functions, including callback APIs
+- Header-defined static functions, including `static inline` and callback APIs
+- Header-local static variables with native initialization
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
 - [Native calling conventions](language.md#calling-conventions)
@@ -66,15 +67,21 @@ searches, and copies arrays through the C standard library.
 
 The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.
-Aggregates passed by value and non-inline header-local static functions need a
-native C wrapper with an exported pointer-based interface.
+Aggregates passed by value need a native C wrapper with an exported
+pointer-based interface.
 
-For `static inline` functions, generated bindings retain an `extern header`
-reference. The native compiler compiles the function body from that header in
-each consuming translation unit. Keep the header available and use the same
-include paths and preprocessor definitions when generating bindings and building
-the project. A selected static inline function must have a definition in the
-header.
+For header-local static functions and variables, generated bindings retain an
+`extern header` reference. The native compiler compiles their definitions from
+that header in each consuming translation unit. Keep the header available and
+use the same include paths and preprocessor definitions when generating bindings and building
+the project. A selected static function must have a definition in the header.
+Header-local storage has a separate instance in each translation unit, following
+C linkage rules. All Crust source imports for one target share a translation
+unit.
+
+The [header-only example](../examples/header_only_project/) wraps a packed C
+record with bitfields in a move-only Crust type. Its bindings call ordinary
+static functions and a static inline getter, and expose a header-local counter.
 
 Thread-local data require native C accessor functions.
 

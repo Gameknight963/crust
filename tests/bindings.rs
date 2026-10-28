@@ -634,11 +634,7 @@ fn preserves_vectorcall_in_native_and_nested_callback_signatures() {
 #[test]
 fn rejects_internal_linkage_missing_exports_and_unsupported_types() {
     for (source, name, expected) in [
-        (
-            "static int hidden(int n) { return n; }",
-            "hidden",
-            "internal linkage",
-        ),
+        ("static int hidden(int n);", "hidden", "internal linkage"),
         ("int present(void);", "missing", "no function declaration"),
         (
             "double _Complex floating(double _Complex);",
@@ -891,7 +887,6 @@ fn cli_can_select_functions_and_variables_from_one_header() {
 #[test]
 fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarations() {
     for source in [
-        "static int value;",
         "extern _Thread_local int value;",
         "extern _Atomic(int) value;",
         "extern int value[4];",
@@ -1469,4 +1464,84 @@ fn inline_opaque_api_preserves_packing_bitfields_alignment_and_owner_cleanup() {
         "42\n1\n32\n"
     );
     assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
+}
+
+#[test]
+fn imports_header_local_functions_and_storage_with_shared_native_identity() {
+    let path = header(
+        r#"
+        static int counter;
+        extern int counter;
+        static const int limit = 42;
+        static int *const saved = &counter;
+        static volatile int unsafe = 7;
+        static int next(void) { return ++counter; }
+        static int read_volatile(void) { return unsafe; }
+    "#,
+    );
+    let mut selected = options(&["next", "read_volatile"]);
+    selected.variables = ["counter", "limit", "saved", "unsafe"]
+        .map(str::to_owned)
+        .to_vec();
+    let bindings = generate(&path, &selected).unwrap();
+    let output = common::tracked_run(&format!(
+        r#"
+        {bindings}
+        int main() {{
+            unsafe {{
+                counter = 40; print(next()); print(*saved);
+                print(limit); c_unsafe = 9; print(read_volatile());
+            }}
+            return 0;
+        }}
+    "#
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "41\n41\n42\n9\n"
+    );
+    assert!(
+        crust::check(&format!(
+            "{bindings} int main() {{ print(counter); return 0; }}"
+        ))
+        .is_err()
+    );
+    assert!(
+        crust::check(&format!(
+            "{bindings} int main() {{ unsafe {{ limit=1; }} return 0; }}"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn imports_zero_initialized_header_storage_without_selecting_functions() {
+    let path = header("static int value;");
+    let mut selected = options(&[]);
+    selected.variables.push("value".to_owned());
+    let bindings = generate(&path, &selected).unwrap();
+    assert!(bindings.contains("extern header"));
+    let output = common::tracked_run(&format!(
+        "{bindings} int main() {{ unsafe {{ print(value); value=42; print(value); }} return 0; }}"
+    ));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "0\n42\n"
+    );
+}
+
+#[test]
+fn header_only_example_uses_relative_native_headers_and_drops_its_owner() {
+    common::assert_example(
+        "examples/header_only_project/main.cr",
+        "42\n1\n",
+        "drop:bytes:6\n",
+        true,
+    );
 }

@@ -1,0 +1,7 @@
+[project]
+name = "header-only"
+
+[[targets]]
+name = "sample"
+kind = "executable"
+entry = "main.cr"

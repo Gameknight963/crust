@@ -58,6 +58,7 @@ use UTF-8 byte arrays.
 ### C integration
 
 - [Headers](examples/header_project/): generated bindings and an opaque handle wrapper
+- [Header-only C](examples/header_only_project/): static functions, packed records, and bitfields
 - [C algorithms](examples/c_algorithms.cr): sorting and searching through standard library callbacks
 - [Volatile access](examples/volatile.cr): qualified pointers and borrowed views
 - [Exports](examples/export_project/): a C source file calling a named Crust function

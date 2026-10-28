@@ -217,7 +217,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         );
     }
     let mut imported = HashSet::new();
-    let mut has_header_functions = false;
+    let mut has_header_declarations = false;
     for (index, name) in names.iter().enumerate() {
         let function = index < options.functions.len();
         let alias = index >= options.functions.len() + options.variables.len();
@@ -244,15 +244,15 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                 "C header has no {label} declaration named '{name}'"
             ));
         }
-        let header_function = function
+        let header_declaration = !alias
             && matches.iter().any(|declaration| {
                 declaration["storageClass"] == "static"
-                    && declaration["inline"] == true
-                    && children(declaration)
-                        .iter()
-                        .any(|node| kind(node) == "CompoundStmt")
+                    && (!function
+                        || children(declaration)
+                            .iter()
+                            .any(|node| kind(node) == "CompoundStmt"))
             });
-        has_header_functions |= header_function;
+        has_header_declarations |= header_declaration;
         for declaration in matches {
             if children(declaration)
                 .iter()
@@ -269,7 +269,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                     "C variable '{name}' is declared for DLL export. Use the header's consumer configuration"
                 ));
             }
-            if declaration["storageClass"] == "static" && !header_function {
+            if declaration["storageClass"] == "static" && !header_declaration {
                 return Err(format!(
                     "C {label} '{name}' has internal linkage. Expose it through a native C wrapper"
                 ));
@@ -315,7 +315,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let reserved: Vec<_> = names.iter().chain(&options.macros).cloned().collect();
     let mut renderer = render::Renderer::new(&declarations, &probes, &reserved);
     let enums = enums::load(&header, options, &probes)?;
-    let needs_header = !enums.is_empty() || has_header_functions;
+    let needs_header = !enums.is_empty() || has_header_declarations;
     renderer.enums(enums)?;
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
