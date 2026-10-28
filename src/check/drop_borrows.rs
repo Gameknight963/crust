@@ -30,12 +30,22 @@ impl FunctionChecker<'_> {
         first_scope: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let ending: Vec<_> = self
+        return self.check_drops(first_scope, span, &[]);
+    }
+
+    fn check_drops(
+        &self,
+        first_scope: usize,
+        span: Span,
+        temporaries: &[usize],
+    ) -> Result<(), Diagnostic> {
+        let mut ending: Vec<_> = self
             .loans
             .iter()
             .filter(|loan| loan.scope.is_some_and(|scope| scope >= first_scope))
             .map(|loan| loan.id)
             .collect();
+        ending.extend_from_slice(temporaries);
         for (index, scope) in self.scopes.iter().enumerate().skip(first_scope) {
             for (name, variable) in scope {
                 if !self.types.owns(variable.ty)
@@ -79,6 +89,13 @@ impl FunctionChecker<'_> {
         value: Option<&Expression>,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        let mut escaping = HashSet::new();
+        if self.return_type.is_borrow()
+            && let Some(value) = value
+            && let Some(id) = self.references.get(&value.span)
+        {
+            escaping.insert(*id);
+        }
         if self.types.carries_borrows(self.return_type)
             && let Some(value) = value
             && let Some(captures) = self.capture_expressions.get(&value.span)
@@ -88,8 +105,14 @@ impl FunctionChecker<'_> {
             let mutable = self.types.contains_mutable_borrows(self.return_type);
             // This loan survives the ending locals while their destructors
             // run. The value's intrinsic loans can themselves end here.
-            self.capture_loan(&parents, mutable);
+            escaping.insert(self.capture_loan(&parents, mutable));
         }
-        return self.check_scope_drops(1, span);
+        let temporaries: Vec<_> = self
+            .loans
+            .iter()
+            .filter(|loan| loan.scope.is_none() && !escaping.contains(&loan.id))
+            .map(|loan| loan.id)
+            .collect();
+        return self.check_drops(1, span, &temporaries);
     }
 }

@@ -168,3 +168,24 @@ fn repeated_aggregate_shapes_bound_reference_tracking_work() {
     let error = crust::compile(&source).unwrap_err();
     assert!(error.message.contains("tracking exceeds"), "{error}");
 }
+
+#[test]
+fn return_value_reads_finish_before_dropping_the_source_owner() {
+    run(
+        r#"
+struct Resource {
+    BoxInt value;
+    const int& read() const { return &*this.value; }
+    int finish(Self this) { return this.read(); }
+};
+int consume(Resource value) { return value.read(); }
+int main() {
+    print((Resource){.value=box_int(7)}.finish());
+    print(consume((Resource){.value=box_int(8)}));
+    return 0;
+}
+"#,
+        "7\n8\n",
+        "drop:7\ndrop:8\n",
+    );
+}
