@@ -44,6 +44,7 @@ command protects its input header from replacement.
 - Named enums with native integer representations and member values
 - Selected scalar, pointer, callback, and opaque aggregate typedefs
 - Function pointers, callback returns, and variadic functions
+- Header-defined `static inline` functions, including callback APIs
 - Mutable and const external variables, including pointers and callback globals
 - Windows DLL imports for functions and data
 - [Native calling conventions](language.md#calling-conventions)
@@ -65,8 +66,16 @@ searches, and copies arrays through the C standard library.
 
 The generator checks its declarations against the original C types before
 returning them. Types requiring further compiler support produce a diagnostic.
-Aggregates passed by value and header-local static functions need a native C
-wrapper with an exported pointer-based interface.
+Aggregates passed by value and non-inline header-local static functions need a
+native C wrapper with an exported pointer-based interface.
+
+For `static inline` functions, generated bindings retain an `extern header`
+reference. The native compiler compiles the function body from that header in
+each consuming translation unit. Keep the header available and use the same
+include paths and preprocessor definitions when generating bindings and building
+the project. A selected static inline function must have a definition in the
+header.
+
 Thread-local data require native C accessor functions.
 
 ## Macro constants

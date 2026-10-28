@@ -217,6 +217,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         );
     }
     let mut imported = HashSet::new();
+    let mut has_header_functions = false;
     for (index, name) in names.iter().enumerate() {
         let function = index < options.functions.len();
         let alias = index >= options.functions.len() + options.variables.len();
@@ -243,6 +244,15 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                 "C header has no {label} declaration named '{name}'"
             ));
         }
+        let header_function = function
+            && matches.iter().any(|declaration| {
+                declaration["storageClass"] == "static"
+                    && declaration["inline"] == true
+                    && children(declaration)
+                        .iter()
+                        .any(|node| kind(node) == "CompoundStmt")
+            });
+        has_header_functions |= header_function;
         for declaration in matches {
             if children(declaration)
                 .iter()
@@ -259,7 +269,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
                     "C variable '{name}' is declared for DLL export. Use the header's consumer configuration"
                 ));
             }
-            if declaration["storageClass"] == "static" {
+            if declaration["storageClass"] == "static" && !header_function {
                 return Err(format!(
                     "C {label} '{name}' has internal linkage. Expose it through a native C wrapper"
                 ));
@@ -305,7 +315,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let reserved: Vec<_> = names.iter().chain(&options.macros).cloned().collect();
     let mut renderer = render::Renderer::new(&declarations, &probes, &reserved);
     let enums = enums::load(&header, options, &probes)?;
-    let has_native_types = !enums.is_empty();
+    let needs_header = !enums.is_empty() || has_header_functions;
     renderer.enums(enums)?;
     let mut declarations = Vec::new();
     let mut checks = Vec::new();
@@ -382,7 +392,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
         declarations.push(constant.declaration(&name));
         macro_checks.push_str(&constant.verification());
     }
-    let mut output = if has_native_types {
+    let mut output = if needs_header {
         format!(
             "extern header {};\n",
             serde_json::to_string(&header_reference(&header, options.binding_dir.as_deref())?)
@@ -397,7 +407,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     }
     output.push_str(&declarations.join("\n"));
     output.push('\n');
-    let header_declaration = if has_native_types {
+    let header_declaration = if needs_header {
         format!(
             "extern header {};\n",
             serde_json::to_string(
@@ -421,7 +431,7 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
     let checked =
         crate::check::check(program).map_err(|error| format!("generated C bindings: {error}"))?;
     let mut verification = format!("{undefines}{}", crate::emit_c::generate(&checked));
-    // Native enum emission includes the header again. Its macros must not
+    // Native header emission includes the header again. Its macros must not
     // replace selected typedef names in the checks appended below.
     verification.push_str(&undefines);
     verification.push_str(&macro_checks);
@@ -467,13 +477,6 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             verification.push_str(&format!("_Static_assert(sizeof({native}) == sizeof({inner}) && _Alignof({native}) == _Alignof({inner}), \"unsupported C typedef layout for {native}\");\n"));
         }
     }
-    invoke_clang(
-        &header,
-        options,
-        &verification,
-        false,
-        None,
-        !has_native_types,
-    )?;
+    invoke_clang(&header, options, &verification, false, None, !needs_header)?;
     return Ok(output);
 }

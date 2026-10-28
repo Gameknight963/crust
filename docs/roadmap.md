@@ -72,6 +72,7 @@
 - Opaque C tag aliases with keyword-safe imports, preserved export headers, and binding-checked source rename
 - Per-target C preprocessor definitions, including function macros and quoted values
 - Selected integer and boolean C macro constants with native scalar types and checked full-width values
+- Header-defined static inline functions with native compilation and opaque APIs for packed records and bitfields
 - Shared source-analysis snapshots and LSP hover, definition, and document-symbol requests
 - Navigation for typedefs, type names, interfaces, and generic parameters, with outlines for unused generic declarations
 - Reference searches across source imports with binding-aware redeclaration grouping

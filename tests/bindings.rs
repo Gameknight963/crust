@@ -1368,3 +1368,105 @@ fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
         assert!(error.message.contains("borrow"), "{}", error.message);
     }
 }
+
+#[test]
+fn imports_static_inline_definitions_and_callbacks_without_native_bridge() {
+    // No include guard: verification must include this header exactly once.
+    let path = header(
+        r#"
+        static int native_add(int value);
+        static inline int native_add(int value) { return value + 1; }
+        static inline int unsafe(int value) { return native_add(value); }
+        static inline int native_apply(int (*callback)(int), int value) {
+            return callback(value);
+        }
+    "#,
+    );
+    let bindings = generate(&path, &options(&["native_add", "unsafe", "native_apply"])).unwrap();
+    assert!(bindings.contains("extern header"));
+    assert!(bindings.contains("c_unsafe"));
+    let output = common::tracked_run(&format!(
+        "{bindings} int twice(int value) {{ return value * 2; }} int main() {{ unsafe {{ print(native_add(40)); print(c_unsafe(41)); print(native_apply(&twice, 21)); }} return 0; }}"
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "41\n42\n42\n"
+    );
+}
+
+#[test]
+fn static_inline_import_requires_a_header_definition() {
+    let path = header("static inline int missing(int value);");
+    let error = generate(&path, &options(&["missing"])).unwrap_err();
+    assert!(error.contains("internal linkage"), "{error}");
+}
+
+#[test]
+fn inline_opaque_api_preserves_packing_bitfields_alignment_and_owner_cleanup() {
+    let path = header(
+        r#"
+        #include <stddef.h>
+        #include <stdint.h>
+        #include <stdlib.h>
+        #pragma pack(push, 1)
+        struct PackedSample { uint8_t tag; uint32_t value; unsigned char flag : 3; };
+        #pragma pack(pop)
+        struct AlignedSample { _Alignas(32) unsigned char data[32]; };
+        static inline struct PackedSample *sample_create(uint32_t value) {
+            struct PackedSample *result = malloc(sizeof(*result));
+            if (!result) abort();
+            result->tag = 7; result->value = value; result->flag = 5;
+            return result;
+        }
+        static inline uint32_t sample_value(const struct PackedSample *sample) {
+            return sample->value + sample->tag + sample->flag;
+        }
+        static inline size_t sample_offset(void) { return offsetof(struct PackedSample, value); }
+        static inline size_t sample_alignment(void) { return _Alignof(struct AlignedSample); }
+        static inline void sample_destroy(struct PackedSample *sample) { free(sample); }
+    "#,
+    );
+    let bindings = generate(
+        &path,
+        &options(&[
+            "sample_create",
+            "sample_value",
+            "sample_offset",
+            "sample_alignment",
+            "sample_destroy",
+        ]),
+    )
+    .unwrap();
+    let output = common::tracked_run(&format!(
+        r#"
+        {bindings}
+        struct Sample {{
+            private PackedSample* handle;
+            static Self create() {{ unsafe {{ return (Self){{.handle=sample_create(30)}}; }} }}
+            uint32_t value() const {{ unsafe {{ return sample_value(this.handle); }} }}
+            ~Sample() {{ unsafe {{ sample_destroy(this.handle); }} }}
+        }};
+        int main() {{
+            Sample first=Sample::create(); Sample second=move(first);
+            print(second.value());
+            unsafe {{ print(sample_offset()); print(sample_alignment()); }}
+            return 0;
+        }}
+    "#
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n1\n32\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
+}
