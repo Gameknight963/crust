@@ -2062,7 +2062,9 @@ impl FunctionChecker<'_> {
                         self.probe_receiver_type(&arguments[0])
                             .ok()
                             .is_some_and(|ty| {
-                                ty.is_borrow() && self.types.byte_array_length(ty).is_some()
+                                ty.is_borrow()
+                                    && (self.types.byte_array_length(ty).is_some()
+                                        || self.types.is_byte_slice(ty))
                             });
                     let actual = if borrowed_text {
                         // Preserve bounded, volatile reads instead of copying
@@ -2072,6 +2074,7 @@ impl FunctionChecker<'_> {
                         self.expression(&arguments[0])?
                     };
                     if self.types.byte_array_length(actual).is_none()
+                        && !self.types.is_byte_slice(actual)
                         && !matches!(actual, Type::Float(_))
                     {
                         self.integer(actual, arguments[0].span)?;

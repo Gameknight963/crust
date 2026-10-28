@@ -386,6 +386,11 @@ impl Types {
         };
     }
 
+    pub fn is_byte_slice(&self, ty: Type) -> bool {
+        return matches!(ty, Type::Borrow { pointee: crate::ast::Pointee::Slice(id), .. }
+            if matches!(self.arrays[id].element, Type::Integer(IntType::U8 | IntType::Char)));
+    }
+
     pub fn enumerator(&self, name: &str) -> Option<(usize, &EnumVariant)> {
         return self.enums.iter().find_map(|definition| {
             if definition.scoped {

@@ -34,6 +34,12 @@ static inline uint64_t crust_rt_shift_right_unsigned(uint64_t value, uint64_t co
     return value >> count;
 }
 
+static inline void crust_rt_print_span(const void *text, size_t length)
+{
+    if (length != 0) { fwrite(text, 1, length, stdout); }
+    fputc('\n', stdout);
+}
+
 static inline void crust_rt_print_bytes(const void *text, size_t capacity)
 {
     const uint8_t *bytes = (const uint8_t *)text;

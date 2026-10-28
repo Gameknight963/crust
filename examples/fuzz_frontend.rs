@@ -22,6 +22,10 @@ fn main() {
         include_str!("strings.cr"),
         "int sum(const int[]& s) { int n = 0; for (size_t i = 0; i < s.length; i++) n += s[i]; return n; } int main() { int[2] a = {1,2}; return sum(&a); }",
         "static T identity<T>(T value) { return value; } int main() { return identity<int>(1); }",
+        "const int[2] values = {1,2}; static int count; int main() { static int calls = 1; unsafe { count += calls; return count; } }",
+        "int& choose(int& a, int& b) borrows(a,b) { if (a > b) return a; return b; } int main() { int a=1; int b=2; print(choose(&a,&b)); return 0; }",
+        "tagged union Value { double number; int integer; }; int main() { Value value = {.number=1.5}; switch(value) { case number: print(value.number); break; case integer: print(value.integer); break; } return 0; }",
+        "int main() { uint8_t[3] bytes={65,0,66}; const uint8_t[]& view=&bytes; print(view); return 0; }",
     ];
     let fragments: &[&[u8]] = &[
         b"{}",

@@ -841,15 +841,27 @@ impl Parser {
         ) {
             return true;
         }
-        if self.next_at(&Token::Star) {
+        if self.next_at(&Token::Star) || self.next_at(&Token::LeftBracket) {
             let mut position = self.position + 1;
-            while self.tokens.get(position).is_some_and(|token| {
-                matches!(
-                    token.kind,
-                    Token::Star | Token::Const | Token::Volatile | Token::Ampersand
-                )
-            }) {
-                position += 1;
+            while let Some(token) = self.tokens.get(position) {
+                match token.kind {
+                    Token::Star | Token::Const | Token::Volatile | Token::Ampersand => {
+                        position += 1
+                    }
+                    Token::LeftBracket => {
+                        let mut depth = 1usize;
+                        position += 1;
+                        while position < self.tokens.len() && depth != 0 {
+                            match self.tokens[position].kind {
+                                Token::LeftBracket => depth += 1,
+                                Token::RightBracket => depth -= 1,
+                                _ => {}
+                            }
+                            position += 1;
+                        }
+                    }
+                    _ => break,
+                }
             }
             return matches!(
                 self.tokens.get(position).map(|token| &token.kind),

@@ -1458,6 +1458,11 @@ impl Emitter<'_> {
                 }
                 let function = if name == "print" {
                     let argument_type = self.expression_type(&arguments[0]);
+                    if self.types.is_byte_slice(argument_type) {
+                        let value = &values[0];
+                        self.line(&format!("crust_rt_print_span(({value}).crust_elements, ({value}).crust_field_length);"));
+                        return None;
+                    }
                     if let Some(length) = self.types.byte_array_length(argument_type) {
                         let value = &values[0];
                         let member = if argument_type.is_borrow() { "->" } else { "." };
