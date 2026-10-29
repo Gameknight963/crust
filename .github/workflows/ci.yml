@@ -27,6 +27,7 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
       CARGO_TERM_COLOR: always
+      CRUST_TEST_SQLITE: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,14 +43,15 @@ jobs:
           if (Test-Path -LiteralPath $crustLlvmBin) {
             Add-Content -LiteralPath $env:GITHUB_PATH -Value $crustLlvmBin
           }
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python examples/sqlite_project/prepare.py
       - run: cargo fetch --locked
       - run: cargo fmt --check
       - run: cargo clippy --locked --offline --all-targets -- -D warnings
       - run: cargo test --locked --offline --no-fail-fast
       - run: cargo run --locked --offline --example fuzz_frontend -- 2000 42
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
       - name: Build and verify compiler archive
         run: python tools/package.py --offline
       - uses: actions/upload-artifact@v7
@@ -74,6 +76,7 @@ jobs:
     env:
       CC: clang
       CRUST_TEST_SANITIZERS: address,undefined
+      CRUST_TEST_SQLITE: '1'
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
@@ -81,8 +84,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python examples/sqlite_project/prepare.py
       - run: cargo fetch --locked
-      - run: cargo test --locked --offline --no-fail-fast --test sanitizers --test native_records --test heap_references --test stored_borrows --test temporary_owners --test ownership_model --test bindings --test floats --test library --test files --test release_app --test debug_names --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test reference_fields --test reference_drops --test borrow_contracts --test tagged_unions
+      - run: cargo test --locked --offline --no-fail-fast --test sqlite --test sanitizers --test native_records --test heap_references --test stored_borrows --test temporary_owners --test ownership_model --test bindings --test floats --test library --test files --test release_app --test debug_names --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test reference_fields --test reference_drops --test borrow_contracts --test tagged_unions
 
   vscode:
     runs-on: ubuntu-latest

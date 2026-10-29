@@ -95,7 +95,10 @@ fn invoke_clang(
         command.arg("-D").arg(define);
     }
     if include {
-        command.arg("-include").arg(header);
+        // Clang cannot resolve relative includes from Windows verbatim paths.
+        command
+            .arg("-include")
+            .arg(crate::source::display_path(header));
     }
     if ast {
         command.args(["-Xclang", "-ast-dump=json"]);

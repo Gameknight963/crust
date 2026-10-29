@@ -26,6 +26,27 @@ fn options(functions: &[&str]) -> Options {
 }
 
 #[test]
+fn canonical_header_paths_resolve_nested_relative_includes() {
+    let path = header("#include \"nested/declarations.h\"\n");
+    let directory = path.parent().unwrap().join("nested");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("declarations.h"),
+        "int nested_function(int value);\n",
+    )
+    .unwrap();
+    let bindings = generate(
+        &path.canonicalize().unwrap(),
+        &options(&["nested_function"]),
+    )
+    .unwrap();
+    assert!(
+        bindings.contains("extern int nested_function(int);"),
+        "{bindings}"
+    );
+}
+
+#[test]
 fn cli_imports_macro_constants_using_the_selected_header_configuration() {
     let path = header("#define FEATURE_VALUE (FEATURE + 1u)\n");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))

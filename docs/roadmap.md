@@ -75,6 +75,7 @@
 - Header-local static functions and variables with native compilation and opaque APIs for packed records and bitfields
 - Complete native C struct and union imports with header-verified field types and layouts
 - Native fixed-array fields and const/volatile fields with qualified borrows and fresh-value initialization
+- Pinned SQLite integration with native owners, borrowed statement lifetimes, recoverable SQL errors, and allocation-failure checks
 - Safe packed-field access and borrows, plus alignment-aware generic heap allocation
 - Safe untagged-union initialization and assignment with unsafe reads and field borrows
 - Full-expression temporary owners and inferred lifetime retention through reference stores and generic containers

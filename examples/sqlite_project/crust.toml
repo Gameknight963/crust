@@ -1,0 +1,11 @@
+[project]
+name = "sqlite-example"
+
+[[targets]]
+name = "sqlite-example"
+kind = "executable"
+entry = "main.cr"
+
+[targets.native]
+sources = ["target/sqlite/sqlite3.c"]
+defines = ["SQLITE_THREADSAFE=0", "SQLITE_OMIT_LOAD_EXTENSION=1", "SQLITE_DQS=0"]

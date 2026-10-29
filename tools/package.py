@@ -4,8 +4,10 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import uuid
 import tomllib
@@ -105,6 +107,15 @@ def main():
     records = command([str(compiler), "run", "--project", "examples/records_project"], cwd=extracted)
     if records != "42\n5\n1\n43":
         raise RuntimeError(f"Unexpected native record example output: {records!r}")
+    if os.environ.get("CRUST_TEST_SQLITE") == "1":
+        sqlite_example = extracted / "examples/sqlite_project"
+        sqlite_cache = sqlite_example / "target/sqlite"
+        sqlite_cache.mkdir(parents=True)
+        shutil.copyfile(ROOT / "examples/sqlite_project/target/sqlite/sqlite.zip", sqlite_cache / "sqlite.zip")
+        subprocess.run([sys.executable, str(sqlite_example / "prepare.py"), "--offline"], cwd=extracted, check=True)
+        sqlite = command([str(compiler), "run", "--project", str(sqlite_example)], cwd=extracted)
+        if sqlite != "1\n1\n3\n33":
+            raise RuntimeError(f"Unexpected SQLite example output: {sqlite!r}")
     contents = (extracted / "README.md").read_bytes()
     lines = contents.count(b"\n")
     counts = command([str(compiler), "run", "--project", "examples/crustwc", "--", "--utf8", "README.md"], cwd=extracted)
