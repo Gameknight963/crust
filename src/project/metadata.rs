@@ -19,6 +19,7 @@ pub struct TargetMetadata {
     pub output: PathBuf,
     pub link_targets: Vec<String>,
     pub debug: bool,
+    pub profile: crate::native::Profile,
     pub runtime_paths: Vec<PathBuf>,
     pub runtime_libraries: Vec<PathBuf>,
 }
@@ -39,6 +40,7 @@ impl Project {
                 output: target.kind.artifact_path(&self.output_base(target))?,
                 link_targets: target.native.link_targets.clone(),
                 debug: target.native.debug,
+                profile: target.native.profile,
                 runtime_paths: super::links::runtime_directories(&runtime_libraries),
                 runtime_libraries,
             });

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +23,7 @@ pub use shared::{application_manifest, compile_shared_library, import_library};
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Options {
+    pub profile: Profile,
     pub sanitizers: Vec<Sanitizer>,
     pub debug: bool,
     pub defines: Vec<String>,
@@ -35,6 +36,23 @@ pub struct Options {
     #[serde(skip)]
     pub runtime_dirs: Vec<PathBuf>,
     pub runtime_libraries: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    #[default]
+    Debug,
+    Release,
+}
+
+impl Profile {
+    pub(crate) fn compiler_flag(self) -> &'static str {
+        return match self {
+            Self::Debug => "-O0",
+            Self::Release => "-O2",
+        };
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -176,6 +194,7 @@ fn invoke_compiler(
     let mut command = paths.command(&compiler);
     configure_windows_toolchain(&mut command);
     command.arg("-std=c11");
+    command.arg(options.profile.compiler_flag());
     instrumentation(&mut command, options);
     if options.debug {
         command.arg("-g");

@@ -95,6 +95,10 @@ $env:CC = 'clang'
 
 ## Commands
 
+Use `--release` with `build` or `run` to optimize generated programs with native
+`-O2`. Builds default to `-O0`. `--debug` selects `-O0` with debug symbols.
+Project flags apply to linked project dependencies too.
+
 Use `cargo run -- <command> <file.cr>` for a source file, or run a command in a
 directory containing `crust.toml`:
 

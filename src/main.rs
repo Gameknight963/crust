@@ -25,6 +25,7 @@ struct Options {
     project: Option<PathBuf>,
     target: Option<String>,
     program_arguments: Vec<OsString>,
+    profile: Option<crust::native::Profile>,
 }
 
 fn main() -> ExitCode {
@@ -61,6 +62,9 @@ fn run() -> Result<ExitCode, String> {
         println!("Project commands discover crust.toml in the current directory or its parents.");
         println!("A source filename compiles and runs that file.");
         println!("build/run use CC, or clang on Windows and cc elsewhere.");
+        println!(
+            "--release selects native -O2 optimization; --debug selects -O0 and debug symbols."
+        );
         return Ok(ExitCode::SUCCESS);
     }
     let options = options(arguments)?;
@@ -91,7 +95,7 @@ fn run() -> Result<ExitCode, String> {
             options.mode,
             &output,
             std::slice::from_ref(path),
-            &crust::native::Options::default(),
+            &native_options(options.profile),
             TargetKind::Executable,
             &options.program_arguments,
         );
@@ -108,6 +112,7 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
         project: None,
         target: None,
         program_arguments: Vec::new(),
+        profile: None,
     };
     let mut arguments = arguments.into_iter().peekable();
     if let Some(mode) = arguments
@@ -148,6 +153,15 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
             if result.target.replace(name).is_some() {
                 return Err(String::from("--target can be specified once"));
             }
+        } else if argument == "--release" || argument == "--debug" {
+            let profile = if argument == "--release" {
+                crust::native::Profile::Release
+            } else {
+                crust::native::Profile::Debug
+            };
+            if result.profile.replace(profile).is_some() {
+                return Err("specify --release or --debug once".to_owned());
+            }
         } else if argument.to_string_lossy().starts_with('-') {
             return Err(format!("unknown option '{}'", argument.to_string_lossy()));
         } else if result.input.replace(PathBuf::from(&argument)).is_some() {
@@ -163,7 +177,23 @@ fn options(arguments: Vec<OsString>) -> Result<Options, String> {
     return Ok(result);
 }
 
-fn run_project(project: Project, options: &Options) -> Result<ExitCode, String> {
+fn native_options(profile: Option<crust::native::Profile>) -> crust::native::Options {
+    return crust::native::Options {
+        profile: profile.unwrap_or_default(),
+        debug: profile == Some(crust::native::Profile::Debug),
+        ..Default::default()
+    };
+}
+
+fn run_project(mut project: Project, options: &Options) -> Result<ExitCode, String> {
+    if let Some(profile) = options.profile {
+        for target in &mut project.targets {
+            target.native.profile = profile;
+            if profile == crust::native::Profile::Debug {
+                target.native.debug = true;
+            }
+        }
+    }
     let single = matches!(
         options.mode,
         Mode::Run | Mode::EmitC | Mode::EmitHeader | Mode::Tokens

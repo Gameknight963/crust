@@ -86,6 +86,58 @@ fn success(output: &Output) {
     );
 }
 
+#[test]
+fn native_profiles_apply_to_dependencies_native_sources_and_metadata() {
+    let fixture = Fixture::new();
+    fixture.write("base.cr", "extern int base(){return 1;}");
+    fixture.write("app.cr", "extern int dep_optimized(); extern int app_optimized(); int main(){unsafe{print(dep_optimized());print(app_optimized());}return 0;}");
+    for (file, function) in [("base.c", "dep_optimized"), ("app.c", "app_optimized")] {
+        fixture.write(file, &format!("int {function}(void){{\n#ifdef __OPTIMIZE__\nreturn 2;\n#else\nreturn 0;\n#endif\n}}\n"));
+    }
+    fixture.manifest(
+        r#"
+        [[targets]]
+        name='base'
+        kind='static-library'
+        entry='base.cr'
+        [targets.native]
+        sources=['base.c']
+        [[targets]]
+        name='app'
+        kind='executable'
+        entry='app.cr'
+        [targets.native]
+        sources=['app.c']
+        link-targets=['base']
+    "#,
+    );
+    for (flags, expected) in [
+        (vec!["run", "--target", "app"], "0\n0\n"),
+        (vec!["run", "--target", "app", "--release"], "2\n2\n"),
+        (vec!["run", "--target", "app", "--debug"], "0\n0\n"),
+    ] {
+        let output = fixture.invoke(&flags);
+        success(&output);
+        assert_eq!(text(&output), expected);
+    }
+    let output = fixture.invoke(&["metadata", "--release"]);
+    success(&output);
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        metadata["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|target| target["profile"] == "release")
+    );
+    assert!(
+        !fixture
+            .invoke(&["build", "--release", "--debug"])
+            .status
+            .success()
+    );
+}
+
 fn executable(fixture: &Fixture) -> PathBuf {
     return fixture
         .directory

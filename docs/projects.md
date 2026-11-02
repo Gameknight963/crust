@@ -363,6 +363,8 @@ link-inputs = ["native/extra.o"]
 - `sources` compile as C11 translation units alongside the generated C
 - `include-dirs` configure the native preprocessor's header search
 - `defines` pass object-like or function-like C macro definitions through `-D`
+- `profile = "debug"` selects native `-O0` compilation, which is the default
+- `profile = "release"` selects native `-O2` compilation for generated C and native sources
 - `debug` enables native debug information, defaulting to false
 - `runtime-libraries` lists existing shared-library files used when running the target
 - `library-dirs` configure the linker's library search
@@ -371,6 +373,7 @@ link-inputs = ["native/extra.o"]
 - `link-inputs` pass explicit object or library files to the driver
 - `link-targets` build and link named library targets from this project
 - Each target has its own native configuration
+- `--release` or `--debug` overrides the profile for every target in the build, including path dependencies. `--debug` also enables symbols. Release optimization can retain `debug = true` symbols
 - Macro names are validated and each name appears once per target
 - `check`, `tokens`, `emit-c`, and `emit-header` validate configuration without invoking a C compiler
 
