@@ -9,6 +9,52 @@ const DEFINITIONS: &str = r#"
 "#;
 
 #[test]
+fn recursive_records_retain_sources_through_returned_field_borrows() {
+    for records in [
+        "struct Node { Node* next; View view; };",
+        "struct Link { Node* next; }; struct Node { Link* next; View view; };",
+    ] {
+        let declarations = format!(
+            r#"{DEFINITIONS}
+            {records}
+            View& access(Node& node) {{ return &node.view; }}
+            void update(Node& node, const int& value) {{ set(access(node), value); }}
+        "#
+        );
+        let output = common::tracked_run(&format!(
+            r#"{declarations}
+            int main() {{
+                int first=1; int second=42;
+                {{ Node node={{.next=0,.view={{.value=&const first}}}};
+                   update(&node,&const second); print(node.view.value); }}
+                second=7; print(second); return 0;
+            }}
+        "#
+        ));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+            "42\n7\n"
+        );
+        for body in [
+            "int first=1; Node node={.next=0,.view={.value=&const first}}; { int inner=42; update(&node,&const inner); } print(node.view.value);",
+            "int first=1; int second=42; Node node={.next=0,.view={.value=&const first}}; update(&node,&const second); second=7; print(node.view.value);",
+        ] {
+            let error = crust::check(&format!("{declarations} int main() {{{body} return 0;}} "))
+                .unwrap_err();
+            assert!(
+                error.message.contains("outlive") || error.message.contains("borrowed"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn stores_infer_input_lifetimes_through_forward_calls() {
     let output = common::tracked_run(&format!(
         r#"{DEFINITIONS}

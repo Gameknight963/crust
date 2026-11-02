@@ -69,6 +69,9 @@ fn main() {
         "extern struct NativeFields { const int id; volatile int ticks; int values[2][2]; }; NativeFields create(int id) { return (NativeFields){.id=id,.ticks=0,.values={{1,2},{3,4}}}; } int main() { NativeFields value=true?create(42):create(7); value.ticks++; value.values[1][0]=5; print(value.id); return 0; }",
         "extern struct NativeBits { unsigned int bits:3; signed int delta:5; union { int number; struct { short low; short high; }; }; }; int main() { NativeBits value={.bits=3,.delta=-2,.number=42}; value.bits++; unsafe { print(value.number); } return 0; }",
         "extern struct NativeTail { size_t length; int values[]; }; void inspect(const NativeTail& value) { const int* pointer=value.values; unsafe { print(pointer[0]); } } int main() { return 0; }",
+        "struct View { const int& value; }; struct Node { Node* next; View view; }; void set(View& target,const int& value){target=(View){.value=value};} View& access(Node& node){return &node.view;} void update(Node& node,const int& value){set(access(node),value);} int main(){int a=1;int b=42;Node node={.next=0,.view={.value=&const a}};update(&node,&const b);return node.view.value;}",
+        "struct Watch { int& value; ~Watch(){this.value++;} }; int main(){int n=0;for(int i=0;i<3;i++){Watch watch={.value=&n};if(i==0)continue;if(i==1)break;}print(n);return 0;}",
+        "struct View { const int& value; }; View wrap(const int& value){return (View){.value=value};} int main(){int n=42;View view=wrap(&const n);print(sizeof(wrap(&view.value)));print(view.value);return 0;}",
         library.as_str(),
     ];
     for source in &corpus {

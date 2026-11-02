@@ -400,7 +400,9 @@ fn retention_regions_inner(
                 } else {
                     &projection[1..]
                 };
-                retention_regions(types, field.ty, remaining, nested, target, output, span)?;
+                retention_regions_inner(
+                    types, field.ty, remaining, nested, target, output, span, active,
+                )?;
             }
         }
         _ => {}

@@ -90,7 +90,7 @@ jobs:
           python-version: '3.13'
       - run: python examples/sqlite_project/prepare.py
       - run: cargo fetch --locked
-      - run: cargo test --locked --offline --no-fail-fast --test sqlite --test sanitizers --test native_records --test heap_references --test stored_borrows --test temporary_owners --test ownership_model --test bindings --test floats --test library --test files --test release_app --test debug_names --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test reference_fields --test reference_drops --test borrow_contracts --test tagged_unions
+      - run: cargo test --locked --offline --no-fail-fast --test sqlite --test sanitizers --test native_records --test heap_references --test stored_borrows --test temporary_owners --test ownership_model --test ownership_audit --test ownership --test destructors --test arrays --test methods --test loops --test conditional --test borrowing --test borrowed_locals --test borrowed_returns --test disjoint_fields --test bindings --test floats --test library --test files --test release_app --test debug_names --test global_storage --test bytes --test text --test storage --test slices --test reference_aliases --test reference_fields --test reference_drops --test borrow_contracts --test tagged_unions
 
   vscode:
     runs-on: ubuntu-latest

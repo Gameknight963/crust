@@ -128,11 +128,15 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Migrate examples and tests from BoxInt and remove the built-in type
 - [x] Project dependencies, library-supplied native dependencies, and reliable rebuilds
 - [x] C compatibility checklist with native layouts, bitfields, anonymous groups, flexible tails, fixed-array typedefs, and tested wrapper routes
-- [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
+- [x] Ownership audit, cleanup models, mutation testing, sanitizer runs, and Windows/Linux/macOS regression CI
 - [x] Compiler, LSP, and editor release packages with native compiler setup
 - [x] VS Code native debugger launch and original source names in debug information
 - [x] Language specification covering lifetimes, conversions, initialization, cleanup, and ABI rules
 - [x] Build and maintain the release validation application
+
+The [ownership audit](ownership-audit.md) records the finding, reviewed paths,
+validation commands, and unsafe boundary contracts. Release acceptance requires
+green CI for the revision being packaged.
 
 ## Editor support
 

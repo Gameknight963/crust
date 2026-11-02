@@ -16,6 +16,81 @@ fn drop_all(values: &mut Vec<i32>, expected: &mut String) {
 }
 
 #[test]
+fn control_flow_cleanup_matches_drop_events_and_frees_each_owner_once() {
+    let declarations = r#"
+        struct Item {
+            Box<int> value;
+            static Self create(int value) {return (Self){.value=Box<int>::create(value)};}
+            ~Item() {print(this.value.get());}
+        };
+        Item route(int mode,int id) {
+            Item owner=Item::create(id);
+            for(int i=0;i<3;i++) {
+                Item local=Item::create(id+10+i);
+                if(i==mode%3) {
+                    if(mode%2==0) break;
+                    continue;
+                }
+                if(mode==7) return move(owner);
+            }
+            Item selected=mode%2==0 ? Item::create(id+100) : Item::create(id+200);
+            owner=move(selected);
+            return move(owner);
+        }
+    "#;
+    let mut source = format!("{declarations} int main(){{");
+    let mut expected = String::new();
+    let mut freed = Vec::new();
+    for mode in 0..12 {
+        let id = mode * 1000;
+        writeln!(
+            source,
+            "{{Item result=route({mode},{id});print(result.value.get()+10000);}}"
+        )
+        .unwrap();
+        let early = mode == 7;
+        for iteration in 0..3 {
+            let local = id + 10 + iteration;
+            writeln!(expected, "{local}").unwrap();
+            freed.push(local);
+            if (mode % 2 == 0 && iteration == mode % 3) || early {
+                break;
+            }
+        }
+        let returned = if early {
+            id
+        } else {
+            id + if mode % 2 == 0 { 100 } else { 200 }
+        };
+        if !early {
+            writeln!(expected, "{id}").unwrap();
+            freed.push(id);
+        }
+        writeln!(expected, "{}\n{returned}", returned + 10000).unwrap();
+        freed.push(returned);
+    }
+    source.push_str("return 0;}");
+    let output = common::tracked_run(&source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        expected
+    );
+    let expected_frees = freed
+        .iter()
+        .map(|value| format!("drop:{value}\n"))
+        .collect::<String>();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace('\r', ""),
+        expected_frees
+    );
+}
+
+#[test]
 fn mixed_owner_operations_match_a_model_and_free_every_allocation() {
     let mut declarations = [
         include_str!("../lib/memory.cr"),
