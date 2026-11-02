@@ -69,19 +69,19 @@ fn optimized_borrowed_and_projected_accesses_keep_volatile_loads_and_stores() {
         struct Pair { int values[2]; };
         typedef char Text[4];
         int sample(const volatile int& value) { return value + value; }
-        extern int read_twice(const volatile int* source) { return sample(&const *source); }
-        extern void bump(volatile int* target, int increment) {
+        extern int read_twice(const volatile int* source) { unsafe { return sample(&const *source); } }
+        extern void bump(volatile int* target, int increment) { unsafe {
             volatile int& value = &*target;
             value += increment;
-        }
-        extern void bump_field(volatile Pair* target, int increment) {
+        } }
+        extern void bump_field(volatile Pair* target, int increment) { unsafe {
             target->values[0] += increment;
-        }
-        extern void show(volatile Text* target) { print(&const *target); }
-        extern int update(volatile int* target) {
+        } }
+        extern void show(volatile Text* target) { unsafe { print(&const *target); } }
+        extern int update(volatile int* target) { unsafe {
             int previous = (*target)++;
             return previous + ++*target;
-        }
+        } }
     "#;
     let generated = crate::compile_with_kind(source, crate::ProgramKind::Library).unwrap();
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

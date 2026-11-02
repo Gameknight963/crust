@@ -107,7 +107,14 @@ fn exports_check_bodies_c_abi_contracts_and_native_definition_uniqueness() {
         let source = format!("{declaration} int main() {{ return 0; }}");
         assert!(crust::check(&source).is_err(), "{source}");
     }
-    assert!(crust::check("extern int f() { return 1; } int main() { return f(); }").is_err());
+    assert!(crust::check("extern int f() { return 1; } int main() { return f(); }").is_ok());
+    assert!(
+        crust::check("extern unsafe int f() { return 1; } int main() { return f(); }").is_err()
+    );
+    assert!(
+        crust::check("extern int read(int* value) { return *value; } int main() {return 0;}")
+            .is_err()
+    );
 }
 
 #[test]

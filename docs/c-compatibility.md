@@ -1,13 +1,13 @@
 # C compatibility
 
-Crust uses native C declarations, generated header bindings, and native C source
-files to work with C libraries. Generated code targets C11 and uses the host ABI.
+Crust uses [inline C regions](mixed-source.md), native C declarations, generated
+header bindings, and native C source files to work with C libraries. Generated code targets C11 and uses the host ABI.
 
 | Feature | Direct support | Remaining work or wrapper route |
 | --- | --- | --- |
 | Native integer types, fixed-width aliases, and booleans | Yes | Integer operations and narrowing conversions use checked Crust rules |
 | `float`, `double`, and `long double` | Yes | Floating constant evaluation in integer constant expressions |
-| Raw pointers, qualifiers, and pointer arithmetic | Yes | Raw storage access and C calls require `unsafe` |
+| Raw pointers, qualifiers, and pointer arithmetic | Yes | Raw storage access requires `unsafe`. Direct C calls follow explicit caller contracts |
 | Functions, callbacks, variadic declarations, calling conventions | Yes | Old declarations with unspecified parameter types need explicit prototypes |
 | Named enums and explicit values | Yes | Selected header enums preserve their native representation |
 | Fixed-size arrays, array typedefs, and strings | Yes | Native flexible members expose raw pointer/length views. Variable-length arrays and C pointers to whole arrays use native wrappers |
@@ -15,7 +15,7 @@ files to work with C libraries. Generated code targets C11 and uses the host ABI
 | Packing, explicit alignment, and bitfields | Native record layout, packed-field borrows, aligned generic allocation, and native bitfield reads/writes | Bitfields have checked stores and cannot be addressed |
 | External variables, including DLL data | Yes | Source globals use generated symbols and can expose access through exported functions |
 | Source globals and local static storage | Constant initialization and copyable types | Resource-owning static storage requires initialization and shutdown rules |
-| C preprocessor definitions and header preprocessing | Definitions, preprocessing, and selected integer/boolean macro constants | Native wrappers for function, string, and floating macros |
+| C preprocessor definitions and header preprocessing | Whole-file preprocessing with the selected C compiler | Legacy `import-c` can also materialize selected integer/boolean macro constants |
 | Header-local functions and variables | Import static function definitions, inline functions, and static storage | Header-local storage follows C translation-unit linkage |
 | Atomics and thread-local storage | Through native C wrappers | Expose checked synchronization and storage APIs |
 | Complex numbers and extended integer types | Through native C wrappers with scalar components or fixed-width limbs | Native representation and arithmetic remain inside the wrapper |

@@ -21,6 +21,7 @@
     <DeployExtension>false</DeployExtension>
     <ServerExecutable Condition="'$(ServerExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/release/crust-lsp.exe</ServerExecutable>
     <CompilerExecutable Condition="'$(CompilerExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/release/crust.exe</CompilerExecutable>
+    <LibClangRuntime Condition="'$(LibClangRuntime)' == ''">$(MSBuildThisFileDirectory)../../target/native-runtime/libclang.dll</LibClangRuntime>
     <ConsoleExecutable Condition="'$(ConsoleExecutable)' == ''">$(MSBuildThisFileDirectory)../../target/visualstudio-console/Crust.Console.exe</ConsoleExecutable>
   </PropertyGroup>
   <ItemGroup>
@@ -70,6 +71,12 @@
     <Content Include="$(CompilerExecutable)">
       <Link>Server/crust.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="$(LibClangRuntime)">
+      <Link>Server/libclang.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../third-party/llvm/LICENSE.TXT">
+      <Link>Server/third-party/llvm/LICENSE.TXT</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="$(ConsoleExecutable)">
       <Link>Tools/Crust.Console.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -87,6 +94,7 @@
     </Content>
   </ItemGroup>
   <Target Name="RequireLanguageServer" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(LibClangRuntime)')" Text="Run editors/visualstudio/build.ps1 to stage the bundled libclang runtime." />
     <Error Condition="!Exists('$(ServerExecutable)')" Text="Build the bundled server with cargo build --release --bin crust-lsp, or pass /p:ServerExecutable with its full path." />
     <Error Condition="!Exists('$(CompilerExecutable)') Or !Exists('$(ConsoleExecutable)')" Text="Run editors/visualstudio/build.ps1 to build the bundled compiler and console launcher." />
   </Target>

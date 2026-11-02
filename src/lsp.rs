@@ -384,19 +384,23 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
         };
         for target in project.targets {
             targets.insert(target.entry.clone(), target.kind.program_kind());
-            if graphs
-                .iter()
-                .any(|sources| sources.files()[0].path == target.entry)
-            {
-                continue;
-            }
-            if let Ok(sources) = crate::source::SourceSet::load_with(&target.entry, read)
-                && sources
-                    .files()
-                    .iter()
-                    .any(|file| paths.contains_key(&file.path))
-            {
-                graphs.push(sources);
+            graphs.retain(|sources| sources.files()[0].path != target.entry);
+            errors.retain(|error| error.path != target.entry);
+            match crate::source::SourceSet::load_with_options(&target.entry, &target.native, read) {
+                Ok(sources)
+                    if sources
+                        .files()
+                        .iter()
+                        .any(|file| paths.contains_key(&file.path)) =>
+                {
+                    graphs.push(sources)
+                }
+                Err(error)
+                    if paths.contains_key(&target.entry) || paths.contains_key(&error.path) =>
+                {
+                    errors.push(error)
+                }
+                _ => {}
             }
         }
     }

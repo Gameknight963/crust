@@ -949,7 +949,7 @@ int main() {
 - Raw addresses retain no checked loan and do not transfer ownership or change automatic cleanup
 - Changing the surrounding `unsafe` block does not change address-taking behavior
 - Address arguments passed through C varargs produce raw pointers
-- Raw pointer dereferencing, casts, and external C calls require `unsafe`
+- Raw pointer dereferencing and casts require `unsafe`
 - Raw pointer indexing, addition, subtraction, `+=`, and `-=` require `unsafe`
 - Pointer offsets count elements and must fit `ptrdiff_t`
 - Pointer subtraction requires matching object types and returns `ptrdiff_t`
@@ -981,7 +981,8 @@ extern int native_destroy(int value) = "destroy";
 
 Calls and function addresses use the named C symbol directly. Multiple Crust
 names can refer to the same symbol when their signatures match. The symbol uses
-a C function identifier, and the import retains its unsafe caller contract.
+a C function identifier. Direct calls require `unsafe` only when the declaration
+explicitly uses `unsafe`.
 See [renamed imports](../examples/renamed_imports.cr) for direct and callback use.
 
 Functions and methods can declare an unsafe caller contract:
@@ -1048,7 +1049,8 @@ source file calling a Crust definition.
 - Parameters and results follow the C import rules for copyable values and raw pointers
 - Compatible prototypes and renamed imports can refer to the same definition
 - Each C symbol has one definition, with matching signatures and calling conventions across aliases
-- `extern` establishes an unsafe boundary, including calls from Crust and raw-pointer operations in the body
+- `extern` selects C linkage. An explicit `unsafe` modifier establishes an unsafe caller contract
+- Raw-pointer operations in an exported body follow the ordinary `unsafe` rules
 - Rename preserves the exported C name through an explicit alias
 
 ## Raw storage
@@ -1319,7 +1321,8 @@ raw pointers, and copyable C structs retain their types.
 
 Additional arguments must be C values or raw pointers. Arrays require an explicit
 pointer, and owners and borrows require a suitable C representation. Calls retain
-left-to-right evaluation and require an unsafe context. The caller supplies the
+left-to-right evaluation. Direct calls follow the declaration's explicit unsafe
+contract, and indirect calls require an unsafe context. The caller supplies the
 types expected by the C function's argument protocol after promotion.
 
 Variadic and fixed function pointer signatures are distinct types. See
@@ -1366,3 +1369,16 @@ objects. Const fields can be initialized and copied into fresh values. Records
 and arrays containing them cannot be assigned as whole values. Mutable references
 can still modify the record's other fields. Volatile fields retain volatile
 accesses and borrows through indexing and nested field projection.
+
+
+## C preprocessing and native regions
+
+`#define`, `#if`, and other preprocessing directives work in Crust source.
+The selected C compiler preprocesses the mixed file before Crust parses it.
+Macros can expand to Crust syntax, including generics and ownership moves.
+Ownership and borrow checks inspect the expanded program.
+
+File-scope native C regions use `#pragma crust begin_c` and
+`#pragma crust end_c`. `#include` inside a region has ordinary C preprocessing
+semantics. See [mixed C and Crust](mixed-source.md) for examples and current
+editor limitations.

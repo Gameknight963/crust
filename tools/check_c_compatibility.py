@@ -8,7 +8,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = (
-    "bindings", "native_records", "native_integers", "calling_conventions",
+    "mixed_source", "bindings", "native_records", "native_integers", "calling_conventions",
     "dll_imports", "external_variables", "export_headers", "exports",
     "projects", "runtime_locations", "sqlite",
 )

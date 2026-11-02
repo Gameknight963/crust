@@ -65,15 +65,15 @@ fn headers_preserve_scalar_pointer_const_callback_and_returned_callback_abis() {
         enum Flags : unsigned short { Enabled = 3 };
         int private_helper(int value) { return value; }
         extern int imported_private(int);
-        extern int apply(Operation callback, int value) { return callback(value); }
-        extern Operation select(Factory factory) = "example_select" { return factory(); }
-        extern const char* text(const char* const* slot) { return *slot; }
+        extern int apply(Operation callback, int value) { unsafe { return callback(value); } }
+        extern Operation select(Factory factory) = "example_select" { unsafe { return factory(); } }
+        extern const char* text(const char* const* slot) { unsafe { return *slot; } }
         extern bool equal(int left, int right) { return left == right; }
         extern unsigned long long wide(unsigned long long value) { return value; }
         extern Flags flags() { return Enabled; }
-        extern int variadic(Variadic callback) { return callback(0, (unsigned short)65535); }
-        extern int read_register(const volatile int* value) { return *value; }
-        extern void write_register(volatile int* value, int next) { *value = next; }
+        extern int variadic(Variadic callback) { unsafe { return callback(0, (unsigned short)65535); } }
+        extern int read_register(const volatile int* value) { unsafe { return *value; } }
+        extern void write_register(volatile int* value, int next) { unsafe { *value = next; } }
     "#;
     let kind = crust::ProgramKind::Library;
     let header = crust::emit_header(source, kind).unwrap();
@@ -150,7 +150,7 @@ fn headers_keep_native_enum_identity_and_opaque_tags_when_c_macros_share_their_n
 #[test]
 #[cfg(windows)]
 fn headers_preserve_vectorcall_in_exports_and_callback_parameters() {
-    let source = "typedef int (__vectorcall *Callback)(int); extern int __vectorcall apply(Callback callback, int value) { return callback(value); }";
+    let source = "typedef int (__vectorcall *Callback)(int); extern int __vectorcall apply(Callback callback, int value) { unsafe { return callback(value); } }";
     let kind = crust::ProgramKind::Library;
     run(
         &crust::compile_with_kind(source, kind).unwrap(),

@@ -12,6 +12,7 @@ import tarfile
 import uuid
 import tomllib
 import zipfile
+from native_runtime import runtime_files
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,13 +40,15 @@ def main():
     name = f"crust-{version}-{host}"
     suffix = ".exe" if os.name == "nt" else ""
     files = {}
+    native_runtime, libclang_name = runtime_files()
+    files.update(native_runtime)
     for binary in ["crust", "crust-lsp"]:
         path = target / host / "release" / f"{binary}{suffix}"
         subprocess.run([str(path), "--help"], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         files[f"bin/{path.name}"] = path
     tracked = subprocess.check_output([
         "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "Cargo.toml", "Cargo.lock", "README.md",
-        "src", "lib", "docs", "examples", "editors", "tests", "tools",
+        "src", "lib", "docs", "examples", "editors", "tests", "tools", "third-party",
     ], cwd=ROOT)
     for entry in tracked.decode("utf-8").split("\0"):
         if entry and (ROOT / entry).is_file():
@@ -94,6 +97,13 @@ def main():
         if hashlib.sha256((extracted / entry).read_bytes()).hexdigest() != digest:
             raise RuntimeError(f"Archive checksum mismatch: {entry}")
     compiler = extracted / "bin" / f"crust{suffix}"
+    mixed = extracted / "examples/mixed.cr"
+    mixed_output = subprocess.check_output(
+        [str(compiler), "run", str(mixed), "--release"], cwd=extracted, text=True,
+        env={**os.environ, "CRUST_LIBCLANG": str(extracted / "bin" / libclang_name)},
+    ).strip()
+    if mixed_output != "42\n42":
+        raise RuntimeError(f"Unexpected mixed-source output: {mixed_output!r}")
     server = extracted / "bin" / f"crust-lsp{suffix}"
     subprocess.run([str(server), "--help"], cwd=extracted, check=True, stdout=subprocess.DEVNULL)
     text = command([str(compiler), "run", "examples/text.cr"], cwd=extracted)

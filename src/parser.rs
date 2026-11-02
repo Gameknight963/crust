@@ -13,6 +13,14 @@ mod switches;
 mod symbols;
 
 pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
+    let mut native_code = String::new();
+    tokens.retain(|token| {
+        if let Token::NativeCode(code) = &token.kind {
+            native_code.push_str(code);
+            return false;
+        }
+        return true;
+    });
     let mut scoped_enums = HashSet::new();
     let mut tagged_unions = HashSet::new();
     let mut position = 0;
@@ -217,6 +225,7 @@ pub fn parse(mut tokens: Vec<SpannedToken>) -> Result<Program, Diagnostic> {
     structs.append(&mut parser.generics.struct_definitions);
     storage::initializer_functions(&globals, &mut functions);
     return Ok(Program {
+        native_code,
         native_headers,
         globals,
         source_declarations: parser.source_declarations,
@@ -1406,7 +1415,7 @@ impl Parser {
             ));
         }
         let unsafe_suffix = self.consume(&Token::Unsafe);
-        let requires_unsafe = unsafe_suffix || unsafe_prefix || external;
+        let requires_unsafe = unsafe_suffix || unsafe_prefix;
         let (return_type, qualifiers) = self.qualified_type_name(true)?;
         let convention = self.calling_convention()?;
         let (mut name, name_span) = self.identifier()?;
@@ -1690,7 +1699,7 @@ impl Parser {
             name_span,
             link_name,
             variadic,
-            requires_unsafe: external,
+            requires_unsafe: false,
             external: external && !defined_export,
             name,
             return_type,

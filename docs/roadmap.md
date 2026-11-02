@@ -120,6 +120,11 @@
 The release target is a maintained command-line application using multiple Crust
 files, a native C library, containers, files, and recoverable errors.
 
+- [x] Whole-file C preprocessing, file-scope native regions, and bundled libclang declaration discovery
+- [x] Native debug/release optimization profiles
+- [ ] Preserve stateful preprocessor extensions across mixed-source analysis and native emission
+- [ ] Unsaved included-header overlays and C-region editor analysis
+- [ ] Share declaration analysis with the legacy binding generator
 - [x] Floating-point types, literals, arithmetic, conversions, and C calls
 - [x] Integer and enum switch statements
 - [x] Global definitions and static variables

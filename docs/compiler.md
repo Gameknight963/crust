@@ -448,3 +448,22 @@ Generic allocation helpers use malloc for fundamental alignments. Over-aligned
 allocations reserve extra space, align the payload, and save the base pointer
 for deallocation. Allocation overflow and failure return null to the fallible
 source-library APIs.
+
+
+## Mixed-source frontend
+
+`src/preprocess.rs` runs the selected C compiler's preprocessor before parsing
+Crust. It keeps native C regions opaque, resolves included headers through the
+preprocessor's include trace, and maps expanded tokens to original source
+locations. The original native text and directives are retained for emission.
+
+`src/bindings/libclang.rs` loads the stable libclang C API and analyzes only the
+preprocessed C regions. Referenced C declarations enter the existing native type
+renderer before Crust's parser and semantic checker run. Function bodies stay
+with the native compiler. `tools/native_runtime.py` collects the shared runtime
+for compiler archives and the Visual Studio extension. LLVM license text ships
+with both packages.
+
+Source mapping aligns unchanged tokens within each expanded line and maps
+new tokens to their macro invocation. Macro-generated edits are rejected by
+rename. Included C headers currently require saved disk contents.

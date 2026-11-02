@@ -52,7 +52,6 @@ fn raw_addresses_check_creation_permissions_and_keep_unsafe_uses_explicit() {
         "pointer++;",
         "int* next=pointer+1;",
         "void* erased=(void*)pointer;",
-        "release(pointer);",
         "print(callback(1));",
         "Choice choice={.number=42}; print(choice.number);",
     ] {

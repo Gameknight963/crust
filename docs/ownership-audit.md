@@ -79,10 +79,11 @@ package checks.
 ## Boundaries
 
 Raw addresses retain no checked loan and transfer no ownership. Taking an
-address checks the required access at creation. Dereferencing it or calling C
-requires an unsafe boundary whose author establishes validity, lifetime,
+address checks the required access at creation. Dereferencing it requires an
+unsafe boundary whose author establishes validity, lifetime,
 alignment, aliasing, allocation ownership, and any retention by C. A const
-pointer constrains writes through that pointer.
+pointer constrains writes through that pointer. Direct C calls require an unsafe
+caller only when the declaration explicitly uses `unsafe`.
 
 The audit and tests establish the behaviors covered above. They do not prove
 the compiler sound for every program or verify arbitrary native wrapper

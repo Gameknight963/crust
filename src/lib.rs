@@ -4,6 +4,7 @@ mod emit_c;
 mod frontend;
 mod header;
 mod parser;
+mod preprocess;
 mod types;
 
 pub mod analysis;
@@ -52,6 +53,17 @@ fn analyze_snapshot(
     completion: bool,
     kind: ProgramKind,
 ) -> Result<analysis::Analysis, Diagnostic> {
+    if preprocess::needed(source) {
+        let sources = memory_sources(source)?;
+        let mut analysis = if completion {
+            sources.analyze_completion_with_kind(kind)
+        } else {
+            sources.analyze_with_kind(kind)
+        }
+        .map_err(|e| e.diagnostic)?;
+        analysis.files[0].path = None;
+        return Ok(analysis);
+    }
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     let checked = if completion {
@@ -78,6 +90,11 @@ pub fn check_with_kind(source: &str, kind: ProgramKind) -> Result<(), Diagnostic
 }
 
 fn check_inner(source: &str, kind: ProgramKind) -> Result<(), Diagnostic> {
+    if preprocess::needed(source) {
+        return memory_sources(source)?
+            .check_with_kind(kind)
+            .map_err(|e| e.diagnostic);
+    }
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     check::check_with_kind(program, kind)?;
@@ -94,6 +111,11 @@ pub fn compile_with_kind(source: &str, kind: ProgramKind) -> Result<String, Diag
 
 pub fn emit_header(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
     return frontend::run(|| {
+        if preprocess::needed(source) {
+            return memory_sources(source)?
+                .emit_header(kind)
+                .map_err(|e| e.diagnostic);
+        }
         let program = parser::parse(lexer::tokenize(source)?)?;
         let checked = check::check_with_kind(program, kind)?;
         return header::generate(&checked);
@@ -101,10 +123,39 @@ pub fn emit_header(source: &str, kind: ProgramKind) -> Result<String, Diagnostic
 }
 
 fn compile_inner(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
+    if preprocess::needed(source) {
+        return memory_sources(source)?
+            .compile_with_kind(kind)
+            .map_err(|e| e.diagnostic);
+    }
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
     let checked = check::check_with_kind(program, kind)?;
     return Ok(emit_c::generate(&checked));
+}
+
+fn memory_sources(text: &str) -> Result<source::SourceSet, Diagnostic> {
+    let path = std::env::current_dir()
+        .map_err(|e| {
+            Diagnostic::new(
+                diagnostic::Span {
+                    start: 0,
+                    end: 0,
+                    line: 1,
+                    column: 1,
+                },
+                e.to_string(),
+            )
+        })?
+        .join("__crust_memory__.cr");
+    return source::SourceSet::load_with(&path, |input| {
+        if input == path {
+            Ok(text.to_owned())
+        } else {
+            std::fs::read_to_string(input)
+        }
+    })
+    .map_err(|e| e.diagnostic);
 }
 
 #[cfg(test)]

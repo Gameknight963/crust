@@ -6,9 +6,12 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 mod enums;
+mod libclang;
 mod macros;
 mod records;
 mod render;
+
+pub(crate) use libclang::declarations as native_declarations;
 
 #[derive(Debug, Default)]
 pub struct Options {

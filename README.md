@@ -63,6 +63,7 @@ use UTF-8 byte arrays.
 - [SQLite](examples/sqlite_project/): native database owners, prepared statements, and recoverable SQL errors
 - [C algorithms](examples/c_algorithms.cr): sorting and searching through standard library callbacks
 - [Volatile access](examples/volatile.cr): qualified pointers and borrowed views
+- [Mixed C and Crust](examples/mixed.cr): ordinary preprocessing and inline C functions
 - [Exports](examples/export_project/): a C source file calling a named Crust function
 - [Static library](examples/library_project/): a native archive linked into a C consumer
 - [Shared library](examples/shared_project/): a C export linked into a Crust executable
@@ -76,6 +77,8 @@ See [installation](docs/installation.md) for binary setup and archive builds.
 
 Install Rust and Cargo, plus a C11 compiler and its development libraries.
 The compiler driver defaults to Clang on Windows and `cc` elsewhere.
+For [mixed-source builds](docs/mixed-source.md) from a checkout, install libclang
+or set `CRUST_LIBCLANG` to its library file. Compiler archives bundle it.
 
 ```powershell
 cargo run -- examples/hello.cr

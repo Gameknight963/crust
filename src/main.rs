@@ -235,8 +235,12 @@ fn run_project(mut project: Project, options: &Options) -> Result<ExitCode, Stri
         .collect();
     if matches!(options.mode, Mode::Build | Mode::Run) {
         for target in &project.targets {
-            let sources =
-                crust::source::SourceSet::load(&target.entry).map_err(|error| error.to_string())?;
+            let sources = crust::source::SourceSet::load_with_options(
+                &target.entry,
+                &target.native,
+                |path| fs::read_to_string(path),
+            )
+            .map_err(|error| error.to_string())?;
             protected.extend(sources.files().iter().map(|file| file.path.clone()));
             protected.extend_from_slice(sources.native_headers());
         }
@@ -286,11 +290,11 @@ fn process_source(
     }
     match mode {
         Mode::Tokens => {
-            let source = fs::read_to_string(path)
-                .map_err(|error| format!("{}: could not read file: {error}", path.display()))?;
-            let tokens = crust::lexer::tokenize(&source)
-                .map_err(|error| format!("{}:{error}", path.display()))?;
-            for token in tokens {
+            let sources = crust::source::SourceSet::load_with_options(path, native, |path| {
+                fs::read_to_string(path)
+            })
+            .map_err(|error| error.to_string())?;
+            for (path, token) in sources.tokens() {
                 println!(
                     "{}:{}:{}  {:?}",
                     path.display(),
@@ -302,8 +306,10 @@ fn process_source(
             return Ok(ExitCode::SUCCESS);
         }
         Mode::Check => {
-            let sources =
-                crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
+            let sources = crust::source::SourceSet::load_with_options(path, native, |path| {
+                fs::read_to_string(path)
+            })
+            .map_err(|error| error.to_string())?;
             sources
                 .check_with_kind(kind.program_kind())
                 .map_err(|error| error.to_string())?;
@@ -312,7 +318,9 @@ fn process_source(
         }
         _ => {}
     }
-    let sources = crust::source::SourceSet::load(path).map_err(|error| error.to_string())?;
+    let sources =
+        crust::source::SourceSet::load_with_options(path, native, |path| fs::read_to_string(path))
+            .map_err(|error| error.to_string())?;
     if mode == Mode::EmitHeader {
         let header = sources
             .emit_header(kind.program_kind())

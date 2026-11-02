@@ -39,9 +39,10 @@ fn renamed_variadic_imports_preserve_their_argument_protocol_and_callback_type()
 }
 
 #[test]
-fn renamed_imports_require_unsafe_and_conflicting_native_signatures_are_rejected() {
+fn renamed_imports_allow_direct_calls_and_reject_conflicting_native_signatures() {
+    crust::check("extern int absolute(int value) = \"abs\"; int main() { return absolute(-1); }")
+        .unwrap();
     for source in [
-        "extern int absolute(int value) = \"abs\"; int main() { return absolute(-1); }",
         "extern int first(int) = \"native\"; extern char second(int) = \"native\"; int main() { return 0; }",
         "extern int first(int) = \"native\"; extern int second(char) = \"native\"; int main() { return 0; }",
         "extern int first(int) = \"native\"; extern int second(int, ...) = \"native\"; int main() { return 0; }",

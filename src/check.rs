@@ -251,6 +251,7 @@ fn analyze(
     kind: crate::ProgramKind,
 ) -> Result<AnalyzedProgram, Diagnostic> {
     if program.native_headers.is_empty()
+        && program.native_code.is_empty()
         && let Some(definition) = program
             .enums
             .iter()
@@ -2098,9 +2099,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
 
-                if signature.external {
-                    self.require_unsafe(expression.span, "calling an external C function")?;
-                } else if signature.requires_unsafe {
+                if signature.requires_unsafe {
                     self.require_unsafe(expression.span, "calling an unsafe function")?;
                 }
 

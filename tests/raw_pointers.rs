@@ -178,14 +178,13 @@ fn unsafe_blocks_scope_owners_and_preserve_cleanup_on_return_and_loop_control() 
 }
 
 #[test]
-fn raw_pointer_operations_and_c_calls_require_explicit_unsafe_contexts() {
+fn raw_pointer_operations_require_explicit_unsafe_contexts() {
     for source in [
         "int read(int* p) { return *p; } int main() { return 0; }",
         "int main() { int* p = 0; *p = 1; return 0; }",
         "int main() { int* p = 0; int& r = &*p; return 0; }",
         "int main() { int* p = (int*)0; return 0; }",
         "int main() { int* p = 0; uintptr_t bits = (uintptr_t)p; return 0; }",
-        "extern void abort(); int main() { abort(); return 0; }",
     ] {
         let error = crust::check(source).expect_err(source);
         assert!(error.message.contains("unsafe block"), "{source}: {error}");

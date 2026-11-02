@@ -38,9 +38,11 @@ pub struct SourceFile {
     pub path: PathBuf,
     pub text: String,
     offset: usize,
+    prepared: Option<crate::preprocess::Prepared>,
 }
 
 pub struct SourceSet {
+    native: crate::native::Options,
     native_headers: Vec<PathBuf>,
     files: Vec<SourceFile>,
     tokens: Vec<SpannedToken>,
@@ -97,9 +99,18 @@ impl SourceSet {
 
     pub fn load_with(
         entry: &Path,
+        read: impl FnMut(&Path) -> io::Result<String>,
+    ) -> Result<Self, SourceError> {
+        return Self::load_with_options(entry, &crate::native::Options::default(), read);
+    }
+
+    pub fn load_with_options(
+        entry: &Path,
+        native: &crate::native::Options,
         mut read: impl FnMut(&Path) -> io::Result<String>,
     ) -> Result<Self, SourceError> {
         let mut sources = Self {
+            native: native.clone(),
             native_headers: Vec::new(),
             files: Vec::new(),
             tokens: Vec::new(),
@@ -112,6 +123,21 @@ impl SourceSet {
 
     pub fn files(&self) -> &[SourceFile] {
         return &self.files;
+    }
+
+    /// Expanded Crust tokens with positions in their original source files.
+    pub fn tokens(&self) -> Vec<(PathBuf, SpannedToken)> {
+        return self
+            .tokens
+            .iter()
+            .filter(|token| !matches!(token.kind, Token::NativeCode(_)))
+            .map(|token| {
+                let location = self.location(token.span);
+                let mut token = token.clone();
+                token.span = location.span;
+                return (self.files[location.file].path.clone(), token);
+            })
+            .collect();
     }
 
     pub fn native_headers(&self) -> &[PathBuf] {
@@ -162,12 +188,34 @@ impl SourceSet {
         let sources = self
             .files
             .iter()
-            .map(|file| {
-                return crate::emit_c::Source::new(
+            .flat_map(|file| {
+                if let Some(prepared) = &file.prepared {
+                    let mut previous = None;
+                    return prepared
+                        .origins
+                        .iter()
+                        .filter(|origin| {
+                            let key = (&origin.path, origin.span.line);
+                            if previous == Some(key) {
+                                return false;
+                            }
+                            previous = Some(key);
+                            return true;
+                        })
+                        .map(|origin| {
+                            crate::emit_c::Source::mapped(
+                                file.offset + origin.start,
+                                display_path(&origin.path),
+                                origin.span.line,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                }
+                return vec![crate::emit_c::Source::new(
                     file.offset,
                     display_path(&file.path),
                     &file.text,
-                );
+                )];
             })
             .collect::<Vec<_>>();
         return Ok(crate::emit_c::generate_with_sources(&checked, &sources));
@@ -221,36 +269,63 @@ impl SourceSet {
                 text: file.text.clone(),
             })
             .collect();
-        return Ok(crate::analysis::build(&checked, files, |mut span| {
-            let file = self
-                .files
-                .iter()
-                .rposition(|file| span.start >= file.offset)
-                .unwrap();
-            span.start -= self.files[file].offset;
-            span.end = span
-                .end
-                .saturating_sub(self.files[file].offset)
-                .min(self.files[file].text.len());
-            crate::analysis::Location { file, span }
-        }));
+        let mut analysis = crate::analysis::build(&checked, files, |span| self.location(span));
+        for symbol in &mut analysis.symbols {
+            if symbol.detail.is_empty() {
+                let text = &analysis.files[symbol.location.file].text;
+                let start = text[..symbol.location.span.start.min(text.len())]
+                    .rfind('\n')
+                    .map_or(0, |offset| offset + 1);
+                symbol.detail = text[start..]
+                    .split(['{', ';', '\n'])
+                    .next()
+                    .unwrap_or(&symbol.name)
+                    .trim()
+                    .to_owned();
+            }
+        }
+        analysis.native_options = Some(self.native.clone());
+        for file in &self.files {
+            if let Some(prepared) = &file.prepared {
+                for origin in prepared.origins.iter().filter(|origin| origin.generated) {
+                    analysis.macro_expansions.push(self.location(Span {
+                        start: file.offset + origin.start,
+                        end: file.offset + origin.end,
+                        ..origin.span
+                    }));
+                }
+            }
+        }
+        return Ok(analysis);
     }
 
-    fn locate(&self, mut diagnostic: Diagnostic) -> SourceError {
+    fn location(&self, mut span: Span) -> crate::analysis::Location {
         let file = self
             .files
             .iter()
-            .rev()
-            .find(|file| diagnostic.span.start >= file.offset)
+            .rposition(|file| span.start >= file.offset)
             .unwrap();
-        diagnostic.span.start = diagnostic.span.start.saturating_sub(file.offset);
-        diagnostic.span.end = diagnostic
-            .span
-            .end
-            .saturating_sub(file.offset)
-            .min(file.text.len());
+        span.start -= self.files[file].offset;
+        span.end = span.end.saturating_sub(self.files[file].offset);
+        if let Some(prepared) = &self.files[file].prepared
+            && let Some((path, mapped)) = prepared.locate(span)
+        {
+            let file = self
+                .files
+                .iter()
+                .position(|file| file.path == path)
+                .unwrap_or(file);
+            return crate::analysis::Location { file, span: mapped };
+        }
+        span.end = span.end.min(self.files[file].text.len());
+        return crate::analysis::Location { file, span };
+    }
+
+    fn locate(&self, mut diagnostic: Diagnostic) -> SourceError {
+        let location = self.location(diagnostic.span);
+        diagnostic.span = location.span;
         return SourceError {
-            path: file.path.clone(),
+            path: self.files[location.file].path.clone(),
             diagnostic,
         };
     }
@@ -295,18 +370,50 @@ impl SourceSet {
                 }
             };
         })?;
-        let mut tokens = lexer::tokenize(&text).map_err(|diagnostic| SourceError {
-            path: path.clone(),
-            diagnostic,
-        })?;
+        let mut prepared = if crate::preprocess::needed(&text) || !self.native.defines.is_empty() {
+            Some(crate::preprocess::prepare(
+                &path,
+                &text,
+                &self.native,
+                read,
+            )?)
+        } else {
+            None
+        };
+        let mut tokens = if let Some(prepared) = &mut prepared {
+            std::mem::take(&mut prepared.tokens)
+        } else {
+            lexer::tokenize(&text).map_err(|diagnostic| SourceError {
+                path: path.clone(),
+                diagnostic,
+            })?
+        };
         let mut end = tokens.pop().unwrap();
         let offset = self.next_offset;
-        self.next_offset += text.len() + 1;
+        self.next_offset += prepared.as_ref().map_or(text.len(), |p| p.text.len()) + 1;
+        let inputs = prepared
+            .as_ref()
+            .map(|p| p.inputs.clone())
+            .unwrap_or_default();
         self.files.push(SourceFile {
             path: path.clone(),
             text,
             offset,
+            prepared,
         });
+        for (input, content) in inputs {
+            if self.files.iter().any(|file| file.path == input) {
+                continue;
+            }
+            self.native_headers.push(input.clone());
+            self.files.push(SourceFile {
+                path: input,
+                text: content.clone(),
+                offset: self.next_offset,
+                prepared: None,
+            });
+            self.next_offset += content.len() + 1;
+        }
         for token in &mut tokens {
             token.span.start += offset;
             token.span.end += offset;

@@ -59,7 +59,9 @@ pub(super) fn native_bindings(
         let alias = if tokens.iter().any(|token| token.kind == Token::Equal) {
             None
         } else {
-            let last = tokens.last().unwrap();
+            let Some(last) = tokens.last() else {
+                continue;
+            };
             Some(Location {
                 file: range.file,
                 span: Span {
@@ -333,6 +335,18 @@ impl Analysis {
                 edit.location.span.end,
             )
         });
+        if edits.iter().any(|edit| {
+            self.macro_expansions.iter().any(|origin| {
+                origin.file == edit.location.file
+                    && origin.span.start < edit.location.span.end
+                    && edit.location.span.start < origin.span.end
+            })
+        }) {
+            return Err(
+                "rename affects native or macro-generated code; edit its definition explicitly"
+                    .to_owned(),
+            );
+        }
         self.validate_rename_edits(&edits)?;
         return Ok(edits);
     }
@@ -433,7 +447,8 @@ impl Analysis {
             text.replace_range(span.start..span.end, &edit.new_text);
         }
         let candidate = if let Some(entry) = &self.files[0].path {
-            let sources = crate::source::SourceSet::load_with(entry, |path| {
+            let native = self.native_options.clone().unwrap_or_default();
+            let sources = crate::source::SourceSet::load_with_options(entry, &native, |path| {
                 let file = self
                     .files
                     .iter()

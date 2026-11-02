@@ -13,6 +13,7 @@ pub(crate) struct Source {
     start: usize,
     name: String,
     line_starts: Vec<usize>,
+    mapped_line: Option<usize>,
 }
 
 impl Source {
@@ -28,6 +29,15 @@ impl Source {
             start,
             name,
             line_starts,
+            mapped_line: None,
+        };
+    }
+    pub fn mapped(start: usize, name: String, line: usize) -> Self {
+        return Self {
+            start,
+            name,
+            line_starts: vec![start],
+            mapped_line: Some(line),
         };
     }
 }
@@ -38,11 +48,14 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 
 pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]) -> String {
     let program = &checked.program;
-    let mut native_headers = program
-        .native_headers
-        .iter()
-        .map(|name| format!("#include \"{name}\"\n"))
-        .collect::<String>();
+    let mut native_headers = program.native_code.clone();
+    native_headers.push_str(
+        &program
+            .native_headers
+            .iter()
+            .map(|name| format!("#include \"{name}\"\n"))
+            .collect::<String>(),
+    );
     native_headers.push_str(RUNTIME_HEADERS);
     for name in program
         .functions
@@ -2121,7 +2134,9 @@ impl Emitter<'_> {
                 .checked_sub(1)
         {
             let source = &self.source_files[index];
-            let line = source.line_starts.partition_point(|start| *start <= offset);
+            let line = source
+                .mapped_line
+                .unwrap_or_else(|| source.line_starts.partition_point(|start| *start <= offset));
             if self.mapped_location != Some((index, line)) {
                 let filename = if self.mapped_location.is_some_and(|(file, _)| file == index) {
                     String::new()

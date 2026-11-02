@@ -25,10 +25,14 @@ impl Server {
     }
 
     fn start_with_params(params: Value) -> Server {
+        return Self::start_with_compiler(params, "missing-crust-test-compiler".as_ref());
+    }
+
+    fn start_with_compiler(params: Value, compiler: &std::ffi::OsStr) -> Server {
         let visual_studio = params["initializationOptions"]["visualStudioClassifications"] == true;
         let mut child = Command::new(env!("CARGO_BIN_EXE_crust-lsp"))
             .arg("--stdio")
-            .env("CC", "missing-crust-test-compiler")
+            .env("CC", compiler)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2680,6 +2684,45 @@ fn global_rename_rejects_shared_calls_bound_to_different_target_definitions() {
         error.message.contains("which declaration"),
         "{}",
         error.message
+    );
+    server.stop();
+}
+
+#[test]
+fn mixed_source_uses_unsaved_macros_and_native_declarations() {
+    let compiler = std::env::var_os("CC").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "clang".into()
+        } else {
+            "cc".into()
+        }
+    });
+    let mut server = Server::start_with_compiler(json!({"capabilities":{}}), &compiler);
+    let uri = "untitled:mixed-source.cr";
+    let source = "#define ANSWER 42\n#pragma crust begin_c\nstatic int native_value(int value){return value;}\n#pragma crust end_c\nint main(){int answer=ANSWER;print(native_value(answer));return 0;}\n";
+    assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+    let response = server.request(
+        "textDocument/hover",
+        json!({"textDocument":{"uri":uri},"position":point(source,"native_value(answer)")}),
+    );
+    assert!(response.error.is_none(), "{:?}", response.error);
+    assert!(
+        response
+            .result
+            .as_ref()
+            .is_some_and(|v| v.to_string().contains("native_value")),
+        "response: {:?}",
+        response
+    );
+    let broken = source.replace("ANSWER 42", "ANSWER missing");
+    server.change(uri, 2, &broken);
+    let diagnostics = server.diagnostics();
+    assert_eq!(diagnostics["diagnostics"][0]["range"]["start"]["line"], 4);
+    assert!(
+        diagnostics["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing")
     );
     server.stop();
 }

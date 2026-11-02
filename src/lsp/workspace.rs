@@ -176,9 +176,11 @@ pub(super) fn source_graphs(
             if !entries.insert(target.entry.clone()) {
                 continue;
             }
-            match crate::source::SourceSet::load_with(&target.entry, |path| {
-                source_text(path, &sources.paths, documents)
-            }) {
+            match crate::source::SourceSet::load_with_options(
+                &target.entry,
+                &target.native,
+                |path| source_text(path, &sources.paths, documents),
+            ) {
                 Ok(graph) => sources.graphs.push(graph),
                 Err(error) => sources.errors.push(error),
             }

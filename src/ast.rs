@@ -320,6 +320,7 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Program {
+    pub native_code: String,
     pub native_headers: Vec<String>,
     pub globals: Vec<ExternalVariable>,
     pub source_declarations: Vec<SourceDeclaration>,

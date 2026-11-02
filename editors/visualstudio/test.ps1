@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustPackage = Join-Path $crustRepoRoot 'target/crust-visualstudio.vsix'
 $crustArchive = [IO.Compression.ZipFile]::OpenRead($crustPackage)
 try {
-    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
+    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
         if (-not $crustArchive.GetEntry($crustRequired)) { throw "VSIX is missing $crustRequired" }
     }
     if ($crustArchive.Entries | Where-Object { $_.Name -like 'Microsoft.VisualStudio.*.dll' -or $_.Name -like 'Microsoft.Build.*.dll' }) {
@@ -34,6 +34,8 @@ $crustSources = @{
     'language-configuration.json' = 'editors/vscode/language-configuration.json'
     'Server/crust-lsp.exe' = 'target/release/crust-lsp.exe'
     'Server/crust.exe' = 'target/release/crust.exe'
+    'Server/libclang.dll' = 'target/native-runtime/libclang.dll'
+    'Server/third-party/llvm/LICENSE.TXT' = 'third-party/llvm/LICENSE.TXT'
     'Tools/Crust.Console.exe' = 'target/visualstudio-console/Crust.Console.exe'
     'Sdk/Crust.props' = 'editors/msbuild/Crust.props'
     'Sdk/Crust.targets' = 'editors/msbuild/Crust.targets'

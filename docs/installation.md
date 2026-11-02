@@ -2,12 +2,15 @@
 
 Extract a compiler archive and add its `bin` directory to `PATH`. It contains
 `crust` and the standalone `crust-lsp` server. The archive also includes the
-source library, examples, documentation, and compiler sources.
+source library, examples, documentation, compiler sources, and the libclang
+runtime used to analyze C declarations.
 
 Install a C11 compiler and its development libraries. Crust defaults to Clang
 on Windows and `cc` on Linux and macOS. On Windows, Clang uses the headers and
 libraries supplied by Visual Studio C++ Build Tools. Set `CC` to select a
-compiler executable.
+compiler executable. Mixed-source builds use this compiler for preprocessing
+and final compilation. The archive supplies libclang, so these builds do not
+require a separate Clang installation.
 
 From the extracted directory:
 
@@ -27,7 +30,9 @@ crust run --project examples/file_project
 ## Building archives
 
 Building an archive uses Rust, Cargo, Git, Python 3.12 or later, and a native C
-compiler. Run this from the checkout:
+compiler and libclang. On Linux, install `libclang-dev`. On Windows, the LLVM
+installation provides `libclang.dll`. On macOS, Xcode supplies libclang. Set
+`CRUST_LIBCLANG` to an explicit library file when needed. Run this from the checkout:
 
 ```text
 python tools/package.py --offline
@@ -39,7 +44,7 @@ and macOS use gzip-compressed tar archives.
 
 The packager extracts the archive, verifies every file's SHA-256 digest, starts
 the packaged language server, and compiles and runs the text and native-file
-examples. It also builds the file-statistics CLI and compares its UTF-8 counts
+examples, including a mixed C/Crust program using the bundled runtime. It also builds the file-statistics CLI and compares its UTF-8 counts
 against the packaged README. It writes the completed archive and a `.sha256` file after these checks
 pass. `manifest.json` records the version, target, source revision, working-tree
 state, and file digests.

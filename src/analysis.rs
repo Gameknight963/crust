@@ -71,6 +71,8 @@ pub struct TypeInfo {
 
 #[derive(Debug)]
 pub struct Analysis {
+    pub(crate) macro_expansions: Vec<Location>,
+    pub(crate) native_options: Option<crate::native::Options>,
     pub(crate) kind: crate::ProgramKind,
     pub files: Vec<File>,
     pub symbols: Vec<Symbol>,
@@ -285,6 +287,8 @@ pub(crate) fn build(
     let mut builder = Builder {
         seen: HashSet::new(),
         analysis: Analysis {
+            macro_expansions: Vec::new(),
+            native_options: None,
             kind: checked.kind,
             files,
             symbols: Vec::new(),

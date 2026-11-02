@@ -186,6 +186,12 @@ pub(crate) fn generate(checked: &CheckedProgram) -> Result<String, Diagnostic> {
     let mut output =
         "#pragma once\n#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n".to_owned();
     if native_enums {
+        if checked.program.native_headers.is_empty() && !checked.program.native_code.is_empty() {
+            return Err(Diagnostic::new(
+                checked.program.functions[0].span,
+                "C header generation for native region types requires an extern header declaration",
+            ));
+        }
         for header in &checked.program.native_headers {
             output.push_str(&format!("#include \"{header}\"\n"));
         }

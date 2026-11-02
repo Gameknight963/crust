@@ -15,6 +15,7 @@ pub enum IntegerSuffix {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
+    NativeCode(String),
     // Keywords.
     Int,
     Float,
@@ -133,6 +134,10 @@ pub struct SpannedToken {
 }
 
 pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
+    return tokenize_raw(&crate::preprocess::editor_text(source));
+}
+
+pub(crate) fn tokenize_raw(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     let mut lexer = Lexer {
         source,
         offset: 0,
@@ -222,7 +227,7 @@ impl Lexer<'_> {
             "double" => Token::Double,
             "short" => Token::Short,
             "long" => Token::Long,
-            "bool" => Token::Bool,
+            "bool" | "_Bool" => Token::Bool,
             "true" => Token::True,
             "false" => Token::False,
             "void" => Token::Void,

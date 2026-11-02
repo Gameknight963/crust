@@ -24,6 +24,8 @@ if ($Offline) {
 }
 & cargo @crustCargoArgs
 if ($LASTEXITCODE -ne 0) { throw 'Language server build failed' }
+& python (Join-Path $crustRepoRoot 'tools/native_runtime.py') --stage (Join-Path $crustRepoRoot 'target/native-runtime')
+if ($LASTEXITCODE -ne 0) { throw 'libclang runtime staging failed' }
 $crustTaskArgs = @('build', (Join-Path $PSScriptRoot '../msbuild/Tasks/Crust.Build.Tasks.csproj'), '-c', $Configuration, '-v:minimal', '-m:1', '-nr:false', '-p:UseSharedCompilation=false')
 if ($Offline) { $crustTaskArgs += '--source', $crustPackageCache, '-p:NuGetAudit=false' }
 & dotnet @crustTaskArgs
