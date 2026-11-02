@@ -369,6 +369,30 @@ fn header(function: &Function, kind: crate::ProgramKind) -> String {
     );
 }
 
+enum CapturedPlace {
+    Address(String),
+    Bitfield {
+        pointer: String,
+        id: usize,
+        name: String,
+        access: &'static str,
+    },
+}
+
+impl CapturedPlace {
+    fn read(&self) -> String {
+        return match self {
+            Self::Address(pointer) => format!("*{pointer}"),
+            Self::Bitfield {
+                pointer,
+                id,
+                name,
+                access,
+            } => format!("crust_native_bit_load_{access}_{id}_{name}({pointer})"),
+        };
+    }
+}
+
 #[derive(Clone)]
 struct Local {
     mutable: bool,
@@ -755,6 +779,12 @@ impl Emitter<'_> {
             }
             StatementKind::Store { target, value } => {
                 let value = self.value_expression(value);
+                if self.bitfield(target).is_some() {
+                    let value = self.temporary(self.place_type(target), &value);
+                    let destination = self.capture_destination(target);
+                    self.store_destination(target, &destination, &value);
+                    return;
+                }
                 let place = self.place(target);
                 self.drop_value(self.place_type(target), &place);
                 self.line(&format!("{place} = {value};"));
@@ -800,23 +830,30 @@ impl Emitter<'_> {
                     self.line(&format!("*{address} = {result};"));
                     return;
                 }
-                let left_kind = target_type.integer().unwrap();
+                let left_kind = if let Some((id, name, _)) = self.bitfield(target) {
+                    let field = self.types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|field| field.name == name)
+                        .unwrap();
+                    self.types.bitfield_value_type(field).integer().unwrap()
+                } else {
+                    target_type.integer().unwrap()
+                };
                 let common = if operator.is_shift() {
                     left_kind.promoted()
                 } else {
                     left_kind.common(self.expression_type(value).integer().unwrap())
                 };
-                let place = self.place(target);
-                let address =
-                    self.temporary(self.address_type(target, true), &format!("&({place})"));
-                let old = self.temporary(target_type, &format!("*{address}"));
+                let destination = self.capture_destination(target);
+                let old = self.temporary(target_type, &destination.read());
                 let left = self.convert_value(old, target_type, Type::Integer(common), target.span);
                 let right = self.value_expression(value);
                 let operation = self.operation(*operator, common, &left, &right, statement.span);
                 let result = self.temporary(Type::Integer(common), &operation);
                 let result =
                     self.convert_value(result, Type::Integer(common), target_type, statement.span);
-                self.line(&format!("*{address} = {result};"));
+                self.store_destination(target, &destination, &result);
             }
             StatementKind::Expression(expression) => {
                 if let Some(value) = self.expression(expression) {
@@ -1226,10 +1263,8 @@ impl Emitter<'_> {
                 prefix,
             } => {
                 let ty = self.expression_type(expression);
-                let place = self.place(target);
-                let address =
-                    self.temporary(self.address_type(target, true), &format!("&({place})"));
-                let old = self.temporary(ty, &format!("*{address}"));
+                let destination = self.capture_destination(target);
+                let old = self.temporary(ty, &destination.read());
                 let value = if matches!(ty, Type::Pointer(_) | Type::Float(_)) {
                     let operator = if *increment { "+" } else { "-" };
                     self.temporary(ty, &format!("{old} {operator} 1"))
@@ -1246,7 +1281,7 @@ impl Emitter<'_> {
                     let value = self.temporary(Type::Integer(kind), &operation);
                     self.convert_value(value, Type::Integer(kind), ty, expression.span)
                 };
-                self.line(&format!("*{address} = {value};"));
+                self.store_destination(target, &destination, &value);
                 return Some(if *prefix { value } else { old });
             }
             ExpressionKind::Conditional {
@@ -1407,6 +1442,9 @@ impl Emitter<'_> {
                             .iter()
                             .find(|info| info.name == field.name)
                             .unwrap();
+                        if let Some(width) = info.bit_width {
+                            self.check_bitfield_value(info.ty, width, &value, field.value.span);
+                        }
                         if matches!(info.ty, Type::Array(_))
                             && !info.readonly
                             && self.types.assignable(info.ty)
@@ -1788,6 +1826,13 @@ impl Emitter<'_> {
                 (true, true) => "mutv",
                 (false, true) => "constv",
             };
+            if self.types.structs[id]
+                .fields
+                .iter()
+                .any(|field| field.name == *name && field.bit_width.is_some())
+            {
+                return format!("crust_native_bit_load_{access}_{id}_{name}(&({place}))");
+            }
             return format!("(*crust_native_field_{access}_{id}_{name}(&({place})))");
         }
         if let Type::Struct(id) = self.place_type(base)

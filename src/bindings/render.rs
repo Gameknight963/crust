@@ -160,9 +160,13 @@ impl Renderer {
                 format!(" = \"{}\"", record.name)
             };
             let mut declaration = format!("extern {} {name}{link} {{\n", record.tag);
-            let occupied: HashSet<_> = record.fields.iter().map(|(name, _)| name.clone()).collect();
+            let occupied: HashSet<_> = record
+                .fields
+                .iter()
+                .map(|(name, _, _)| name.clone())
+                .collect();
             let mut aliases = HashSet::new();
-            for (native, probe) in &record.fields {
+            for (native, probe, bit_width) in &record.fields {
                 let node = probes
                     .iter()
                     .find(|node| node["name"] == *probe)
@@ -196,7 +200,10 @@ impl Renderer {
                 } else {
                     format!(" = \"{native}\"")
                 };
-                declaration.push_str(&format!("    {ty} {field}{dimensions}{link};\n"));
+                let width = bit_width
+                    .map(|width| format!(" : {width}"))
+                    .unwrap_or_default();
+                declaration.push_str(&format!("    {ty} {field}{dimensions}{width}{link};\n"));
             }
             declaration.push_str("};");
             self.declarations.push((None, declaration));

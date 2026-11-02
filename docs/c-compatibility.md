@@ -12,7 +12,7 @@ files to work with C libraries. Generated code targets C11 and uses the host ABI
 | Named enums and explicit values | Yes | Selected header enums preserve their native representation |
 | Fixed-size arrays and strings | Yes | Variable-length arrays and flexible array members use native wrappers and pointer/length APIs |
 | Ordinary structs and unions | Source layouts, opaque C tags, and selected complete native records with by-value APIs, fixed arrays, and qualified fields | Anonymous aggregates and flexible array fields use native accessors |
-| Packing, explicit alignment, and bitfields | Native record layout, packed-field borrows, and aligned generic allocation | Bitfields use native accessors |
+| Packing, explicit alignment, and bitfields | Native record layout, packed-field borrows, aligned generic allocation, and native bitfield reads/writes | Bitfields have checked stores and cannot be addressed |
 | External variables, including DLL data | Yes | Source globals use generated symbols and can expose access through exported functions |
 | Source globals and local static storage | Constant initialization and copyable types | Resource-owning static storage requires initialization and shutdown rules |
 | C preprocessor definitions and header preprocessing | Definitions, preprocessing, and selected integer/boolean macro constants | Native wrappers for function, string, and floating macros |

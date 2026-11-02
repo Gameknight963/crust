@@ -1232,6 +1232,33 @@ impl Parser {
                 ));
             }
             let ty = self.array_suffix(ty)?;
+            let bit_width = if self.consume(&Token::Colon) {
+                if !self.native_tags.contains_key(&id) {
+                    return Err(Diagnostic::new(span, "bitfields require a native record"));
+                }
+                let expression = self.expression(1)?;
+                let width = self.integer_constant(&expression, true)?.value;
+                let bits = ty
+                    .integer()
+                    .or_else(|| {
+                        if let Type::Enum(id) = ty {
+                            self.enum_representations.get(&id).copied()
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|kind| kind.bits());
+                let bits = if ty == Type::Bool { Some(1) } else { bits };
+                if !bits.is_some_and(|bits| width > 0 && width <= i128::from(bits)) {
+                    return Err(Diagnostic::new(
+                        expression.span,
+                        "bitfield width must fit its integer or boolean type",
+                    ));
+                }
+                Some(width as u32)
+            } else {
+                None
+            };
             let native_name = if self.native_tags.contains_key(&id) && self.consume(&Token::Equal) {
                 Some(native_tag_name(self.advance(), "field")?)
             } else {
@@ -1243,6 +1270,7 @@ impl Parser {
             };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                bit_width,
                 readonly: qualifiers.readonly,
                 volatile: qualifiers.volatile,
                 native_name,

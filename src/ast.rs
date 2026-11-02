@@ -503,6 +503,7 @@ pub struct StructDefinition {
 
 #[derive(Debug, Clone)]
 pub struct Field {
+    pub bit_width: Option<u32>,
     pub readonly: bool,
     pub volatile: bool,
     pub native_name: Option<String>,

@@ -3,7 +3,7 @@ use super::*;
 pub(super) struct Record {
     pub name: String,
     pub tag: &'static str,
-    pub fields: Vec<(String, String)>,
+    pub fields: Vec<(String, String, Option<u32>)>,
 }
 
 pub(super) fn load(header: &Path, options: &Options) -> Result<(Vec<Record>, Vec<Value>), String> {
@@ -48,14 +48,45 @@ pub(super) fn load(header: &Path, options: &Options) -> Result<(Vec<Record>, Vec
                         "C field '{name}.{field_name}' requires an ASCII name"
                     ));
                 }
-                if field["isBitfield"] == true {
-                    return Err(format!(
-                        "C bitfield '{name}.{field_name}' requires a native accessor"
-                    ));
-                }
+                let bit_width = if field["isBitfield"] == true {
+                    let value = children(field)
+                        .iter()
+                        .find(|node| kind(node) == "ConstantExpr")
+                        .ok_or("Clang omitted a bitfield width")?;
+                    Some(
+                        u32::try_from(enums::constant(value)?)
+                            .map_err(|_| "invalid C bitfield width")?,
+                    )
+                } else {
+                    None
+                };
                 let probe = format!("__crust_import_record_{}_{}", records.len(), fields.len());
-                source.push_str(&format!("#pragma push_macro(\"{field_name}\")\n#undef {field_name}\ntypedef __typeof__((({tag} {name} *)0)->{field_name}) {probe};\n#pragma pop_macro(\"{field_name}\")\n"));
-                fields.push((field_name.to_owned(), probe));
+                let field_type = if bit_width.is_some() {
+                    field["type"]["qualType"]
+                        .as_str()
+                        .ok_or("Clang omitted a bitfield type")?
+                        .to_owned()
+                } else {
+                    format!("__typeof__((({tag} {name} *)0)->{field_name})")
+                };
+                let type_names: Vec<_> = if bit_width.is_some() {
+                    field_type
+                        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                        .filter(|word| {
+                            !word.is_empty() && !word.starts_with(|ch: char| ch.is_ascii_digit())
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                for name in &type_names {
+                    source.push_str(&format!("#pragma push_macro(\"{name}\")\n#undef {name}\n"));
+                }
+                source.push_str(&format!("#pragma push_macro(\"{field_name}\")\n#undef {field_name}\ntypedef {field_type} {probe};\n#pragma pop_macro(\"{field_name}\")\n"));
+                for name in type_names.iter().rev() {
+                    source.push_str(&format!("#pragma pop_macro(\"{name}\")\n"));
+                }
+                fields.push((field_name.to_owned(), probe, bit_width));
             }
             source.push_str(&format!("#pragma pop_macro(\"{name}\")\n"));
             records.push(Record {

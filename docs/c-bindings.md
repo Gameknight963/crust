@@ -207,8 +207,7 @@ extern struct Local = "NativeRecord" { int c_init = "init"; };
 ```
 
 Header macros are preserved around native field access. Source rename adds an
-alias when needed to preserve the C declaration. Bitfields, flexible arrays,
-and named fields with anonymous aggregate types use native accessors.
+alias when needed to preserve the C declaration. Flexible arrays and named fields with anonymous aggregate types use native accessors.
 
 ```c
 extern struct Readings {
@@ -228,6 +227,20 @@ volatile reads, writes, and reference qualifiers, including inside packed arrays
 Const and volatile fields require copyable values. Source initialization of a
 const native array is limited to 4096 elements. Larger const arrays can be supplied
 by a native factory. Flexible and zero-length C array fields use native accessors.
+
+## Native bitfields
+
+Selected records import named integer, boolean, and enum bitfields using C width
+syntax, such as `unsigned int flags : 3;`. The original header supplies layout,
+including unnamed padding fields. Reads, assignments, compound assignments, and
+updates use native member access and preserve volatile qualifiers. Integer fields
+narrow enough to fit `int` undergo integer promotion when read.
+
+Stores check the declared width before writing. An out-of-range dynamic value
+reports a runtime error. Static initializers require fitting integer constants.
+Bitfields have no address, so raw addresses, reference bindings, and `sizeof` on
+a bitfield expression are rejected. Regenerate bindings when header declarations
+change, including their bitfield widths and signedness.
 
 ## Native macro wrappers
 

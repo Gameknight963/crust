@@ -1045,8 +1045,9 @@ impl FunctionChecker<'_> {
                     let right = self.integer(actual, value.span)?.promoted();
                     self.convert(value, actual, Type::Integer(right))?;
                 } else {
+                    let left = self.field_value_type(target, place.ty)?;
                     let common = self
-                        .integer(place.ty, target.span)?
+                        .integer(left, target.span)?
                         .common(self.integer(actual, value.span)?);
                     self.convert(value, actual, Type::Integer(common))?;
                 }
@@ -1581,7 +1582,7 @@ impl FunctionChecker<'_> {
                     }
                 }
                 self.access(&place.root, &place.fields, true, place.via, target.span)?;
-                return Ok(place.ty);
+                return self.field_value_type(target, place.ty);
             }
             ExpressionKind::Conditional {
                 condition,
@@ -1805,6 +1806,7 @@ impl FunctionChecker<'_> {
                 self.unevaluated = true;
                 let result = self.expression(operand);
                 self.unevaluated = previous;
+                self.reject_bitfield_address(operand)?;
                 if result? == Type::Void {
                     return Err(Diagnostic::new(expression.span, "void has no object size"));
                 }
@@ -1969,7 +1971,7 @@ impl FunctionChecker<'_> {
                         "an owning field cannot be copied; moving individual fields is not supported yet",
                     ));
                 }
-                return Ok(place.ty);
+                return self.field_value_type(expression, place.ty);
             }
             ExpressionKind::Integer(_) | ExpressionKind::TypedInteger { .. } => {
                 unreachable!("literal handled above")
@@ -2705,12 +2707,51 @@ impl FunctionChecker<'_> {
         };
     }
 
+    fn field_value_type(&mut self, expression: &Expression, ty: Type) -> Result<Type, Diagnostic> {
+        if let ExpressionKind::Field { base, name, .. } = &expression.kind
+            && let Type::Struct(id) = self.probe_receiver_type(base)?.referent()
+            && let Some(field) = self.types.structs[id]
+                .fields
+                .iter()
+                .find(|field| field.name == *name && field.bit_width.is_some())
+        {
+            return Ok(self.types.bitfield_value_type(field));
+        }
+        return Ok(ty);
+    }
+
+    fn reject_bitfield_address(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
+        let target = if let ExpressionKind::Unary {
+            operator: UnaryOperator::Address | UnaryOperator::Borrow { .. },
+            operand,
+        } = &expression.kind
+        {
+            operand.as_ref()
+        } else {
+            expression
+        };
+        if let ExpressionKind::Field { base, name, .. } = &target.kind
+            && let Type::Struct(id) = self.probe_receiver_type(base)?.referent()
+            && self.types.structs[id]
+                .fields
+                .iter()
+                .any(|field| field.name == *name && field.bit_width.is_some())
+        {
+            return Err(Diagnostic::new(
+                target.span,
+                "a bitfield has no address or standalone object size",
+            ));
+        }
+        return Ok(());
+    }
+
     fn raw_address(
         &mut self,
         expression: &Expression,
         operand: &Expression,
         mutable: Option<bool>,
     ) -> Result<Type, Diagnostic> {
+        self.reject_bitfield_address(operand)?;
         let storage = if let ExpressionKind::Variable { name, name_span } = &operand.kind {
             self.scopes
                 .iter()
@@ -2766,6 +2807,7 @@ impl FunctionChecker<'_> {
         place: Place,
         mutable: bool,
     ) -> Result<Type, Diagnostic> {
+        self.reject_bitfield_address(expression)?;
         if mutable && !place.mutable {
             return Err(Diagnostic::new(
                 operand_span,

@@ -84,6 +84,32 @@ pub(super) fn validate(
             ExpressionKind::StructLiteral { fields, .. } => {
                 for field in fields {
                     visit(&field.value, analysis, constants, types)?;
+                    let Type::Struct(id) = analysis.expression_types[&expression.span] else {
+                        unreachable!()
+                    };
+                    let info = types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|info| info.name == field.name)
+                        .unwrap();
+                    if info.bit_width.is_some() && info.ty != Type::Bool {
+                        let value = constants
+                            .get(&field.value.span)
+                            .or_else(|| analysis.constants.get(&field.value.span))
+                            .copied()
+                            .ok_or_else(|| {
+                                Diagnostic::new(
+                                    field.value.span,
+                                    "static bitfields require integer constants",
+                                )
+                            })?;
+                        if !types.bitfield_fits(info, value) {
+                            return Err(Diagnostic::new(
+                                field.value.span,
+                                "bitfield value out of range",
+                            ));
+                        }
+                    }
                 }
             }
             ExpressionKind::Floating { .. }

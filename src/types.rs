@@ -260,6 +260,34 @@ impl Types {
         return Ok(types);
     }
 
+    pub fn bitfield_fits(&self, field: &Field, value: i128) -> bool {
+        let Some(width) = field.bit_width else {
+            return true;
+        };
+        if field.ty == Type::Bool {
+            return true;
+        }
+        let kind = self.integer_representation(field.ty).unwrap();
+        if kind.signed() {
+            return value >= -(1i128 << (width - 1)) && value < (1i128 << (width - 1));
+        }
+        return value >= 0 && value < (1i128 << width);
+    }
+
+    pub fn bitfield_value_type(&self, field: &Field) -> Type {
+        if let Some(width) = field.bit_width
+            && let Some(kind) = field.ty.integer()
+        {
+            if width < 32 || (width == 32 && kind.signed()) {
+                return Type::Integer(IntType::I32);
+            }
+            if width == 32 {
+                return Type::Integer(IntType::U32);
+            }
+        }
+        return field.ty;
+    }
+
     pub fn assignable(&self, ty: Type) -> bool {
         let mut pending = vec![ty];
         let mut visited = HashSet::new();

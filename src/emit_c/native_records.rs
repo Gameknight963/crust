@@ -15,6 +15,105 @@ pub(super) fn unaligned_name(ty: Type) -> String {
 }
 
 impl Emitter<'_> {
+    pub(super) fn bitfield(&self, expression: &Expression) -> Option<(usize, String, u32)> {
+        let ExpressionKind::Field { base, name, .. } = &expression.kind else {
+            return None;
+        };
+        let Type::Struct(id) = self.place_type(base) else {
+            return None;
+        };
+        let field = self.types.structs[id]
+            .fields
+            .iter()
+            .find(|field| field.name == *name)?;
+        return field.bit_width.map(|width| (id, name.clone(), width));
+    }
+
+    pub(super) fn capture_destination(&mut self, expression: &Expression) -> CapturedPlace {
+        if let Some((id, name, _)) = self.bitfield(expression) {
+            let ExpressionKind::Field { base, .. } = &expression.kind else {
+                unreachable!()
+            };
+            let place = self.place(base);
+            let pointer = self.temporary(self.address_type(base, true), &format!("&({place})"));
+            let access = if self
+                .place_volatile
+                .get(&base.span)
+                .copied()
+                .unwrap_or(false)
+            {
+                "mutv"
+            } else {
+                "mut"
+            };
+            return CapturedPlace::Bitfield {
+                pointer,
+                id,
+                name,
+                access,
+            };
+        }
+        let place = self.place(expression);
+        let address = self.temporary(self.address_type(expression, true), &format!("&({place})"));
+        return CapturedPlace::Address(address);
+    }
+
+    pub(super) fn check_bitfield_value(&mut self, ty: Type, width: u32, value: &str, span: Span) {
+        if ty == Type::Bool {
+            return;
+        }
+        let Some(kind) = self.types.integer_representation(ty) else {
+            return;
+        };
+        if width >= u32::from(kind.bits()) {
+            return;
+        }
+        let condition = if kind.signed() {
+            let min = -(1i128 << (width - 1));
+            let max = (1i128 << (width - 1)) - 1;
+            format!("(int64_t)({value}) < INT64_C({min}) || (int64_t)({value}) > INT64_C({max})")
+        } else {
+            let max = (1u128 << width) - 1;
+            format!("(uint64_t)({value}) > UINT64_C({max})")
+        };
+        let location = self.runtime_location(span);
+        self.line(&format!(
+            "if ({condition}) crust_rt_fail(\"bitfield value out of range\", {location});"
+        ));
+    }
+
+    pub(super) fn store_destination(
+        &mut self,
+        expression: &Expression,
+        destination: &CapturedPlace,
+        value: &str,
+    ) {
+        match destination {
+            CapturedPlace::Address(pointer) => self.line(&format!("*{pointer} = {value};")),
+            CapturedPlace::Bitfield {
+                pointer,
+                id,
+                name,
+                access,
+            } => {
+                let field = self.types.structs[*id]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .unwrap();
+                self.check_bitfield_value(
+                    field.ty,
+                    field.bit_width.unwrap(),
+                    value,
+                    expression.span,
+                );
+                self.line(&format!(
+                    "crust_native_bit_store_{access}_{id}_{name}({pointer}, {value});"
+                ));
+            }
+        }
+    }
+
     pub(super) fn native_array_copy_initializer(&self, ty: Type, value: &str) -> String {
         let Type::Array(id) = ty else {
             return value.to_owned();
@@ -96,11 +195,27 @@ impl Emitter<'_> {
                     if field.readonly { "const " } else { "" },
                     if field.volatile { "volatile " } else { "" }
                 );
+                if field.bit_width.is_some() {
+                    let record = unaligned_name(Type::Struct(id));
+                    let ty = c_type(field.ty);
+                    for (access, qualifiers) in [
+                        ("mut", ""),
+                        ("const", "const "),
+                        ("mutv", "volatile "),
+                        ("constv", "const volatile "),
+                    ] {
+                        self.line(&format!("static inline {ty} crust_native_bit_load_{access}_{id}_{}({record} {qualifiers}*crust_record) {{ return crust_record->{native}; }}",field.name));
+                        if !field.readonly && (access == "mut" || access == "mutv") {
+                            self.line(&format!("static inline void crust_native_bit_store_{access}_{id}_{}({record} {qualifiers}*crust_record, {ty} crust_value) {{ crust_record->{native} = crust_value; }}",field.name));
+                        }
+                    }
+                    continue;
+                }
                 self.line(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__(&((crust_type_{id} *)0)->{}), {}), \"native field type mismatch: {}.{}\");",native,self.native_field_pointer(field.ty,&qualifiers),info.name,field.name));
                 if matches!(field.ty, Type::Array(_)) {
                     self.line(&format!("_Static_assert(sizeof({}) == sizeof(((crust_type_{id} *)0)->{native}), \"native array layout mismatch\");",c_type(field.ty)));
                 }
-                if !info.is_union && index > 0 {
+                if !info.is_union && index > 0 && info.fields[index - 1].bit_width.is_none() {
                     let previous = info.fields[index - 1]
                         .native_name
                         .as_ref()

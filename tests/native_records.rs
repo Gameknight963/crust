@@ -319,7 +319,7 @@ fn selected_records_validate_tags_fields_and_complete_dependencies() {
             ..Default::default()
         },
         crust::bindings::Options {
-            structs: vec!["Bits".to_owned()],
+            structs: vec!["MissingBits".to_owned()],
             ..Default::default()
         },
     ] {
@@ -609,5 +609,119 @@ fn native_array_fields_preserve_typedefs_callbacks_and_const_pointer_objects() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
         "5\n42\n9\n"
+    );
+}
+
+#[test]
+fn native_bitfields_read_write_update_and_preserve_adjacent_members() {
+    let path = header(
+        "#pragma pack(push,1)\nstruct Bits { char tag; unsigned int first:3; signed int second:4; volatile unsigned int ticks:5; _Bool ready:1; int tail; };\n#pragma pack(pop)\n#define first 123\n",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Bits".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(bindings.contains("first : 3"), "{bindings}");
+    let source = format!(
+        r#"{bindings}
+        int calls=0;
+        int index(){{unsafe{{calls++;}}return 0;}}
+        int main(){{
+            Bits values[1]={{{{.tag=9,.first=2,.second=-4,.ticks=3,.ready=true,.tail=42}}}};
+            values[index()].first+=2;values[0].second++;values[0].ticks++;
+            print(values[0].first);print(values[0].second);print(values[0].ticks);
+            print(values[0].ready);print(values[0].tag);print(values[0].tail);
+            unsafe{{print(calls);values[index()].second=calls;print(values[0].second);print(calls);}}return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "4\n-3\n4\n1\n9\n42\n1\n1\n2\n"
+    );
+    for operation in [
+        "int* p=&value.first;",
+        "const unsigned int& p=&value.first;",
+        "print(sizeof(value.first));",
+    ] {
+        let source = format!(
+            "{bindings} int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
+        );
+        assert!(crust::check(&source).is_err(), "{operation}");
+    }
+    for operation in ["value.first=8;", "value.second=-9;", "value.first+=7;"] {
+        let source = format!(
+            "{bindings} int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
+        );
+        let output = common::tracked_run(&source);
+        assert!(!output.status.success(), "{operation}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("bitfield value out of range"),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn native_bitfields_preserve_promotions_static_values_and_full_width_limits() {
+    let path = header(
+        "struct Limits {unsigned int small:3; unsigned long long wide:64; signed long long signed_value:64;};",
+    );
+    let source = format!(
+        r#"{}
+        extern struct Limits{{unsigned int small:3;unsigned long long wide:64;long long signed_value:64;}};
+        const Limits stored={{.small=7,.wide=18446744073709551615ULL,.signed_value=(-9223372036854775807LL-1LL)}};
+        int main(){{Limits value=stored;if(sizeof(-value.small)!=sizeof(int))return 2;print(value.small-8);value.small-=7;print(value.small);print(value.wide);print(value.signed_value);return 0;}}
+    "#,
+        native_header(&path)
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "-1\n0\n18446744073709551615\n-9223372036854775808\n"
+    );
+    let invalid = source.replace(".small=7", ".small=8");
+    assert!(crust::check(&invalid).is_err());
+}
+
+#[test]
+fn native_bitfields_import_enum_typedef_const_and_keyword_members() {
+    let path = header(
+        "enum Mode{Low=0,High=5};typedef unsigned int Flags;struct EnumBits{enum Mode mode:4;Flags init:4;const unsigned int fixed:2;};\n#define Flags 123\n#define Mode 456\n",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["EnumBits".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = format!(
+        "{bindings} int main(){{EnumBits value={{.mode=Mode::High,.c_init=9,.fixed=2}};value.c_init++;print((int)value.mode);print(value.c_init);print(value.fixed);return 0;}}"
+    );
+    let analysis = crust::analyze(&source).unwrap();
+    let edits = analysis
+        .rename(0, source.find("fixed :").unwrap(), "frozen")
+        .unwrap();
+    let mut renamed = source.clone();
+    for edit in edits.iter().rev() {
+        renamed.replace_range(
+            edit.location.span.start..edit.location.span.end,
+            &edit.new_text,
+        );
+    }
+    let output = common::tracked_run(&renamed);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "5\n10\n2\n"
     );
 }
