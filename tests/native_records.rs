@@ -525,7 +525,7 @@ fn native_field_restrictions_report_frontend_errors() {
         assert!(crust::check(source).is_err(), "{source}");
     }
     for declaration in [
-        "struct Native {int count;int values[];};",
+        "struct Native {int values[];};",
         "struct Native {int values[0];};",
     ] {
         let path = header(declaration);
@@ -822,4 +822,115 @@ fn anonymous_native_group_members_preserve_qualifiers() {
     );
     assert!(crust::check(&source.replace("print(value.frozen);", "value.frozen=1;")).is_err());
     assert!(crust::check(&source.replace("print(value.flag);", "value.flag=1;")).is_err());
+}
+
+#[test]
+fn native_flexible_arrays_expose_trailing_storage_as_raw_pointer_views() {
+    let path = header(
+        r#"
+        #include <stdlib.h>
+        #include <stddef.h>
+        struct Packet{size_t length;int values[];};
+        static inline struct Packet* packet_create(size_t count){
+            struct Packet* value=malloc(sizeof(*value)+count*sizeof(int));
+            if(!value)return NULL;
+            value->length=count;for(size_t i=0;i<count;i++)value->values[i]=(int)i+1;
+            return value;
+        }
+        static inline void packet_destroy(struct Packet* value){free(value);}
+        static inline size_t packet_prefix_size(void){return sizeof(struct Packet);}
+    "#,
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Packet".to_owned()],
+            functions: vec![
+                "packet_create".to_owned(),
+                "packet_destroy".to_owned(),
+                "packet_prefix_size".to_owned(),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(bindings.contains("values[]"), "{bindings}");
+    let source = format!(
+        r#"{bindings}
+        int main(){{unsafe{{
+            Packet* packet=packet_create(3);if(packet==0)return 1;
+            {{int[]& values=slice(packet->values,packet->length);values[1]+=40;print(values[1]);}}
+            {{const Packet& view=&const *packet;const int* values=view.values;print(values[0]);}}
+            Packet prefix=*packet;print(prefix.length);print(sizeof(Packet)==packet_prefix_size());
+            packet_destroy(packet);
+        }}return 0;}}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n1\n3\n1\n"
+    );
+    for body in [
+        "void valid(){Packet value={.length=0};const Packet& r=&value;const int* p=value.values;print(r.length);}",
+        "void valid(){Packet value={.length=0};const Packet& r=&value;unsafe{const int* p=(const int*)value.values;}print(r.length);}",
+    ] {
+        crust::check(&format!("{bindings}{body}int main(){{return 0;}}")).unwrap();
+    }
+    for body in [
+        "void invalid(){Packet value={.length=0};const Packet& r=&value;int* p=value.values;print(r.length);}",
+        "int* leak(const Packet& value){return value.values;}",
+        "void invalid(Packet& value){int** address=&value.values;}",
+        "void invalid(Packet& value){const int*& address=&const value.values;}",
+        "void invalid(Packet& value){print(sizeof(value.values));}",
+        "void invalid(Packet& value){value.values=0;}",
+        "struct Invalid{Packet value;};",
+        "void invalid(){Packet values[2];}",
+    ] {
+        assert!(
+            crust::check(&format!("{bindings}{body}int main(){{return 0;}}")).is_err(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn native_flexible_rows_preserve_array_stride_and_qualifiers() {
+    let path = header(
+        r#"
+        #include <stdlib.h>
+        struct Rows{int count;int data[][2];};
+        static inline struct Rows* rows_create(void){
+            struct Rows* value=malloc(sizeof(*value)+2*sizeof(value->data[0]));
+            if(!value)return NULL;value->count=2;
+            value->data[0][0]=10;value->data[0][1]=20;value->data[1][0]=30;value->data[1][1]=40;
+            return value;
+        }
+        static inline void rows_destroy(struct Rows* value){free(value);}
+    "#,
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Rows".to_owned()],
+            functions: vec!["rows_create".to_owned(), "rows_destroy".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = format!(
+        r#"{bindings} int main(){{unsafe{{
+        Rows* rows=rows_create();if(rows==0)return 1;
+        rows->data[1][0]+=12;print(rows->data[1][0]);
+        {{const Rows& view=&const *rows;const int[2]* data=view.data;print(data[1][1]);}}
+        rows_destroy(rows);
+    }}return 0;}}"#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n40\n"
+    );
 }

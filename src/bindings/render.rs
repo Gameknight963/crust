@@ -269,6 +269,18 @@ impl Renderer {
                     .ok_or("Clang omitted a qualified field type")?;
                 continue;
             }
+            if kind(unwrapped) == "IncompleteArrayType" {
+                if !dimensions.is_empty() {
+                    return Err(
+                        "only the outermost native array dimension may be flexible".to_owned()
+                    );
+                }
+                dimensions.push_str("[]");
+                node = type_children(unwrapped)
+                    .next()
+                    .ok_or("Clang omitted a flexible array element type")?;
+                continue;
+            }
             if kind(unwrapped) != "ConstantArrayType" {
                 if matches!(kind(unwrapped), "IncompleteArrayType" | "VariableArrayType") {
                     return Err(

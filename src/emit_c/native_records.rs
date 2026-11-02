@@ -195,6 +195,54 @@ impl Emitter<'_> {
                     if field.readonly { "const " } else { "" },
                     if field.volatile { "volatile " } else { "" }
                 );
+                if field.flexible {
+                    let Type::Pointer(pointer) = field.ty else {
+                        unreachable!()
+                    };
+                    let element = self.types.pointers[pointer].pointee;
+                    let mut leaf = element;
+                    let mut dimensions = String::from("[]");
+                    while let Type::Array(array) = leaf {
+                        dimensions.push_str(&format!("[{}]", self.types.arrays[array].length));
+                        leaf = self.types.arrays[array].element;
+                    }
+                    self.line(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__(&((crust_type_{id} *)0)->{native}), {} {qualifiers}(*){dimensions}), \"native flexible array type mismatch\");",c_type(leaf)));
+                    self.line(&format!("_Static_assert(sizeof({}) == sizeof(((crust_type_{id} *)0)->{native}[0]), \"native flexible element layout mismatch\");",c_type(element)));
+                    let record = unaligned_name(Type::Struct(id));
+                    let ty = c_type(element);
+                    for (access, readonly, volatile) in [
+                        ("mut", false, false),
+                        ("const", true, false),
+                        ("mutv", false, true),
+                        ("constv", true, true),
+                    ] {
+                        let object_qualifiers = format!(
+                            "{}{}",
+                            if readonly { "const " } else { "" },
+                            if volatile { "volatile " } else { "" }
+                        );
+                        let target_qualifiers = format!(
+                            "{}{}",
+                            if readonly || field.readonly {
+                                "const "
+                            } else {
+                                ""
+                            },
+                            if volatile || field.volatile {
+                                "volatile "
+                            } else {
+                                ""
+                            }
+                        );
+                        let cast = if matches!(element, Type::Array(_)) {
+                            format!("({ty} {target_qualifiers}*)")
+                        } else {
+                            String::new()
+                        };
+                        self.line(&format!("static inline {ty} {target_qualifiers}*crust_native_flex_{access}_{id}_{}({record} {object_qualifiers}*crust_record){{return {cast}&crust_record->{native}[0];}}",field.name));
+                    }
+                    continue;
+                }
                 if field.bit_width.is_some() {
                     let record = unaligned_name(Type::Struct(id));
                     let ty = c_type(field.ty);

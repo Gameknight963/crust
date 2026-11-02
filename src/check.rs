@@ -1729,7 +1729,14 @@ impl FunctionChecker<'_> {
                         self.conversions.insert(operand.span, *ty);
                         return Ok(*ty);
                     }
-                    let actual = self.expression(operand)?;
+                    let actual = if self.flexible_field(operand)? {
+                        let Type::Pointer(pointer) = *ty else {
+                            unreachable!()
+                        };
+                        self.flexible_address(operand, Some(self.types.pointers[pointer].mutable))?
+                    } else {
+                        self.expression(operand)?
+                    };
                     if !matches!(actual, Type::Pointer(_) | Type::Borrow { .. })
                         && !matches!(actual, Type::Integer(kind) if kind.bits() as u32 == usize::BITS)
                         && constant_integer(operand) != Some(0)
@@ -1806,7 +1813,7 @@ impl FunctionChecker<'_> {
                 self.unevaluated = true;
                 let result = self.expression(operand);
                 self.unevaluated = previous;
-                self.reject_bitfield_address(operand)?;
+                self.reject_nonaddressable_native_field(operand)?;
                 if result? == Type::Void {
                     return Err(Diagnostic::new(expression.span, "void has no object size"));
                 }
@@ -1952,6 +1959,9 @@ impl FunctionChecker<'_> {
                 return self.array_literal(expression, None);
             }
             ExpressionKind::Field { .. } | ExpressionKind::Index { .. } => {
+                if self.flexible_field(expression)? {
+                    return self.flexible_address(expression, None);
+                }
                 if self.probe_receiver_type(expression)?.is_borrow() {
                     let raw = self.check_place(expression)?;
                     return self.stored_reference(expression, &raw);
@@ -2104,6 +2114,16 @@ impl FunctionChecker<'_> {
                         ));
                     };
                     let pointer = self.types.pointers[id];
+                    if let ExpressionKind::Field { base, name, .. } = &arguments[0].kind
+                        && let Type::Struct(owner) = self.probe_receiver_type(base)?.referent()
+                        && self.types.structs[owner]
+                            .fields
+                            .iter()
+                            .any(|field| field.name == *name && field.flexible)
+                    {
+                        // A flexible member has no pointer slot. This loan covers its trailing elements.
+                        place.mutable = pointer.mutable;
+                    }
                     if pointer.volatile || !self.types.is_sized(pointer.pointee) {
                         return Err(Diagnostic::new(
                             arguments[0].span,
@@ -2598,6 +2618,13 @@ impl FunctionChecker<'_> {
             self.expression_types.insert(expression.span, expected);
             return Ok(());
         }
+        if let Type::Pointer(pointer) = expected
+            && self.flexible_field(expression)?
+        {
+            let actual =
+                self.flexible_address(expression, Some(self.types.pointers[pointer].mutable))?;
+            return self.convert(expression, actual, expected);
+        }
         if let ExpressionKind::Unary {
             operator: UnaryOperator::Address,
             operand,
@@ -2707,6 +2734,38 @@ impl FunctionChecker<'_> {
         };
     }
 
+    fn flexible_field(&mut self, expression: &Expression) -> Result<bool, Diagnostic> {
+        if let ExpressionKind::Field { base, name, .. } = &expression.kind
+            && let Type::Struct(id) = self.probe_receiver_type(base)?.referent()
+        {
+            return Ok(self.types.structs[id]
+                .fields
+                .iter()
+                .any(|field| field.name == *name && field.flexible));
+        }
+        return Ok(false);
+    }
+
+    fn flexible_address(
+        &mut self,
+        expression: &Expression,
+        mutable: Option<bool>,
+    ) -> Result<Type, Diagnostic> {
+        let place = self.checked_place(expression)?;
+        let Type::Pointer(pointer) = place.ty else {
+            unreachable!()
+        };
+        self.access(
+            &place.root,
+            &place.fields,
+            mutable.unwrap_or(self.types.pointers[pointer].mutable),
+            place.via,
+            expression.span,
+        )?;
+        self.expression_types.insert(expression.span, place.ty);
+        return Ok(place.ty);
+    }
+
     fn field_value_type(&mut self, expression: &Expression, ty: Type) -> Result<Type, Diagnostic> {
         if let ExpressionKind::Field { base, name, .. } = &expression.kind
             && let Type::Struct(id) = self.probe_receiver_type(base)?.referent()
@@ -2720,7 +2779,10 @@ impl FunctionChecker<'_> {
         return Ok(ty);
     }
 
-    fn reject_bitfield_address(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
+    fn reject_nonaddressable_native_field(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<(), Diagnostic> {
         let target = if let ExpressionKind::Unary {
             operator: UnaryOperator::Address | UnaryOperator::Borrow { .. },
             operand,
@@ -2735,11 +2797,11 @@ impl FunctionChecker<'_> {
             && self.types.structs[id]
                 .fields
                 .iter()
-                .any(|field| field.name == *name && field.bit_width.is_some())
+                .any(|field| field.name == *name && (field.bit_width.is_some() || field.flexible))
         {
             return Err(Diagnostic::new(
                 target.span,
-                "a bitfield has no address or standalone object size",
+                "this native member has no standalone address or object size",
             ));
         }
         return Ok(());
@@ -2751,7 +2813,7 @@ impl FunctionChecker<'_> {
         operand: &Expression,
         mutable: Option<bool>,
     ) -> Result<Type, Diagnostic> {
-        self.reject_bitfield_address(operand)?;
+        self.reject_nonaddressable_native_field(operand)?;
         let storage = if let ExpressionKind::Variable { name, name_span } = &operand.kind {
             self.scopes
                 .iter()
@@ -2807,7 +2869,7 @@ impl FunctionChecker<'_> {
         place: Place,
         mutable: bool,
     ) -> Result<Type, Diagnostic> {
-        self.reject_bitfield_address(expression)?;
+        self.reject_nonaddressable_native_field(expression)?;
         if mutable && !place.mutable {
             return Err(Diagnostic::new(
                 operand_span,
@@ -3343,7 +3405,24 @@ impl FunctionChecker<'_> {
             }
             ExpressionKind::Field { base, name, .. } => {
                 let ty = self.receiver_type(base)?;
-                return self.declared_field_type(ty, name, expression.span);
+                let declared = self.declared_field_type(ty, name, expression.span)?;
+                if let Type::Struct(id) = ty
+                    && let Some(field) = self.types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|field| field.name == *name && field.flexible)
+                {
+                    let Type::Pointer(pointer) = field.ty else {
+                        unreachable!()
+                    };
+                    let pointer = self.types.pointers[pointer];
+                    let mutable = self.probe_mutability(base)? && pointer.mutable;
+                    let volatile = self.probe_volatile(base)? || pointer.volatile;
+                    return Ok(self
+                        .types
+                        .qualified_pointer_to(pointer.pointee, mutable, volatile));
+                }
+                return Ok(declared);
             }
             ExpressionKind::Index { base, .. } => {
                 return match self.receiver_type(base)? {
@@ -3604,6 +3683,12 @@ impl FunctionChecker<'_> {
         let mut selected_unions = HashMap::new();
         for field in fields {
             if let Some(info) = declared.iter().find(|info| info.name == field.name) {
+                if info.flexible {
+                    return Err(Diagnostic::new(
+                        field.span,
+                        "a flexible array uses separately allocated trailing storage",
+                    ));
+                }
                 for (group, variant) in &info.native_unions {
                     if selected_unions
                         .insert(*group, *variant)
@@ -3667,6 +3752,9 @@ impl FunctionChecker<'_> {
         }
         self.remember_captures(expression.span, captures);
         for field in &declared {
+            if field.flexible {
+                continue;
+            }
             let mut active = true;
             for (group, variant) in &field.native_unions {
                 match selected_unions.get(group) {
@@ -3847,6 +3935,32 @@ impl FunctionChecker<'_> {
                 } else {
                     None
                 };
+                if let Some(field) = field.filter(|field| field.flexible) {
+                    if writing {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "a flexible array has no assignable pointer slot",
+                        ));
+                    }
+                    let Type::Pointer(pointer) = field.ty else {
+                        unreachable!()
+                    };
+                    let pointer = self.types.pointers[pointer];
+                    let ty = self.types.qualified_pointer_to(
+                        pointer.pointee,
+                        place.mutable && pointer.mutable,
+                        place.volatile || pointer.volatile,
+                    );
+                    self.receiver_types.insert(expression.span, ty);
+                    self.expression_types.insert(expression.span, ty);
+                    return Ok(Place {
+                        ty,
+                        mutable: false,
+                        volatile: false,
+                        fields,
+                        ..place
+                    });
+                }
                 return Ok(Place {
                     ty,
                     mutable: place.mutable

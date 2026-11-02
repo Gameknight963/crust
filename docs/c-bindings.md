@@ -207,7 +207,7 @@ extern struct Local = "NativeRecord" { int c_init = "init"; };
 ```
 
 Header macros are preserved around native field access. Source rename adds an
-alias when needed to preserve the C declaration. Flexible arrays and named fields with anonymous aggregate types use native accessors.
+alias when needed to preserve the C declaration. Named fields with anonymous aggregate types use native accessors.
 
 ```c
 extern struct Readings {
@@ -226,7 +226,27 @@ volatile reads, writes, and reference qualifiers, including inside packed arrays
 
 Const and volatile fields require copyable values. Source initialization of a
 const native array is limited to 4096 elements. Larger const arrays can be supplied
-by a native factory. Flexible and zero-length C array fields use native accessors.
+by a native factory. Zero-length C array fields use native accessors.
+
+## Flexible native arrays
+
+A final flexible member such as `int values[]` preserves the record's native
+prefix layout. Reading the member produces a raw element pointer. A const record
+reference produces a const element pointer. Multidimensional tails preserve the
+native row size and stride.
+
+The pointer carries no allocation length. Raw indexing and `slice(pointer, length)`
+require `unsafe` and valid storage for the requested range. Slice construction
+also requires aligned, non-volatile element storage. The caller supplies the
+actual allocated length. A count field is ordinary data and is not validated
+against the allocation by the compiler.
+
+`sizeof(Record)` reports the native prefix size. Copying a record copies its
+prefix, and trailing storage remains managed by the allocation owner. These records
+and unions containing them cannot be array elements or embedded struct members. Record
+initializers initialize prefix members. They cannot initialize the flexible tail.
+The tail has no pointer slot to assign or borrow, and `sizeof(record.values)` is
+rejected. Use the raw member pointer directly to construct a view.
 
 ## Anonymous native groups
 

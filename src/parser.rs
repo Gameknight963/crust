@@ -1275,6 +1275,20 @@ impl Parser {
                 ));
             }
             let ty = self.array_suffix(ty)?;
+            let flexible =
+                native && matches!(ty,Type::Array(array) if self.arrays[array].length==0);
+            let ty = if flexible {
+                let Type::Array(array) = ty else {
+                    unreachable!()
+                };
+                self.qualified_pointer_type(
+                    self.arrays[array].element,
+                    !qualifiers.readonly,
+                    qualifiers.volatile,
+                )
+            } else {
+                ty
+            };
             let bit_width = if self.consume(&Token::Colon) {
                 if !self.native_tags.contains_key(&id) {
                     return Err(Diagnostic::new(span, "bitfields require a native record"));
@@ -1313,6 +1327,7 @@ impl Parser {
             };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                flexible,
                 native_unions: groups
                     .iter()
                     .filter(|(union, _, _)| *union)
@@ -1330,6 +1345,19 @@ impl Parser {
             });
             if let Some((true, _, member)) = groups.last_mut() {
                 *member += 1;
+            }
+        }
+        for (index, field) in fields.iter().enumerate() {
+            if field.flexible
+                && (self.union_tags.contains(&id)
+                    || !field.native_unions.is_empty()
+                    || index + 1 != fields.len()
+                    || index == 0)
+            {
+                return Err(Diagnostic::new(
+                    field.span,
+                    "a flexible array must be the last member of a native struct with a preceding field",
+                ));
             }
         }
         self.advance();

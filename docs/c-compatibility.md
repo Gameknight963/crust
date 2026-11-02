@@ -10,8 +10,8 @@ files to work with C libraries. Generated code targets C11 and uses the host ABI
 | Raw pointers, qualifiers, and pointer arithmetic | Yes | Raw storage access and C calls require `unsafe` |
 | Functions, callbacks, variadic declarations, calling conventions | Yes | Old declarations with unspecified parameter types need explicit prototypes |
 | Named enums and explicit values | Yes | Selected header enums preserve their native representation |
-| Fixed-size arrays and strings | Yes | Variable-length arrays and flexible array members use native wrappers and pointer/length APIs |
-| Ordinary structs and unions | Source layouts, opaque C tags, and selected complete native records with by-value APIs, fixed arrays, qualified fields, and promoted anonymous groups | Named anonymous aggregate types and flexible array fields use native accessors |
+| Fixed-size arrays and strings | Yes | Native flexible members expose raw pointer/length views. Variable-length arrays use native wrappers |
+| Ordinary structs and unions | Source layouts, opaque C tags, and selected complete native records with by-value APIs, fixed arrays, qualified fields, promoted anonymous groups, and flexible tails | Named anonymous aggregate types use native accessors |
 | Packing, explicit alignment, and bitfields | Native record layout, packed-field borrows, aligned generic allocation, and native bitfield reads/writes | Bitfields have checked stores and cannot be addressed |
 | External variables, including DLL data | Yes | Source globals use generated symbols and can expose access through exported functions |
 | Source globals and local static storage | Constant initialization and copyable types | Resource-owning static storage requires initialization and shutdown rules |

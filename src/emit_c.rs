@@ -1829,6 +1829,13 @@ impl Emitter<'_> {
             if self.types.structs[id]
                 .fields
                 .iter()
+                .any(|field| field.name == *name && field.flexible)
+            {
+                return format!("crust_native_flex_{access}_{id}_{name}(&({place}))");
+            }
+            if self.types.structs[id]
+                .fields
+                .iter()
                 .any(|field| field.name == *name && field.bit_width.is_some())
             {
                 return format!("crust_native_bit_load_{access}_{id}_{name}(&({place}))");
@@ -1986,6 +1993,18 @@ impl Emitter<'_> {
                 };
             }
             ExpressionKind::Field { base, name, .. } => {
+                if let Type::Struct(id) = self.place_type(base)
+                    && self.types.structs[id]
+                        .fields
+                        .iter()
+                        .any(|field| field.name == *name && field.flexible)
+                {
+                    return self
+                        .expression_types
+                        .get(&expression.span)
+                        .copied()
+                        .expect("checked flexible array pointer");
+                }
                 return self
                     .types
                     .field(self.place_type(base), name, expression.span)

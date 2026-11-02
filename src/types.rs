@@ -230,7 +230,17 @@ impl Types {
                 program.struct_names[id].1,
             )?;
         }
+        let has_flexible = types
+            .structs
+            .iter()
+            .any(|info| info.fields.iter().any(|field| field.flexible));
         for id in 0..array_states.len() {
+            if has_flexible && types.flexible_prefix(types.arrays[id].element) {
+                return Err(Diagnostic::new(
+                    types.arrays[id].span,
+                    "records with flexible tails cannot be array elements",
+                ));
+            }
             if !types.is_sized(types.arrays[id].element) {
                 return Err(Diagnostic::new(
                     types.arrays[id].span,
@@ -249,6 +259,12 @@ impl Types {
         }
         for info in &types.structs {
             for field in &info.fields {
+                if has_flexible && !info.is_union && types.flexible_prefix(field.ty) {
+                    return Err(Diagnostic::new(
+                        field.span,
+                        "records with flexible tails cannot be embedded in a struct",
+                    ));
+                }
                 if (field.readonly || field.volatile) && types.owns(field.ty) {
                     return Err(Diagnostic::new(
                         field.span,
@@ -258,6 +274,27 @@ impl Types {
             }
         }
         return Ok(types);
+    }
+
+    fn flexible_prefix(&self, ty: Type) -> bool {
+        let mut pending = vec![ty];
+        let mut seen = HashSet::new();
+        while let Some(ty) = pending.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            match ty {
+                Type::Struct(id) => {
+                    if self.structs[id].fields.iter().any(|field| field.flexible) {
+                        return true;
+                    }
+                    pending.extend(self.structs[id].fields.iter().map(|field| field.ty));
+                }
+                Type::Array(id) => pending.push(self.arrays[id].element),
+                _ => {}
+            }
+        }
+        return false;
     }
 
     pub fn bitfield_fits(&self, field: &Field, value: i128) -> bool {
