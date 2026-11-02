@@ -184,6 +184,53 @@ fn shared_references_and_raw_pointers_keep_their_access_restrictions() {
 }
 
 #[test]
+fn raw_address_creation_checks_requested_access_without_retaining_a_loan() {
+    run(
+        "int main(){Box<int> owner=Box<int>::create(42);Box<int>* address=&owner;Box<int>* copy=address;Box<int> next=move(owner);print(next.get());print(copy!=0);return 0;}",
+        "42\n1\n",
+        "drop:42\n",
+    );
+    for source in [
+        "int main(){int x=1;const int& r=&x;const int* p=&x;print(r);return 0;}",
+        "void accept(const int* p){} int main(){int x=1;const int& r=&x;accept(&x);print(r);return 0;}",
+        "int main(){int x=1;const int& r=&x;unsafe{const int* p=(const int*)&x;}print(r);return 0;}",
+        "int main(){int x=1;int& r=&x;int* p=&r;r=2;return 0;}",
+        "const int* expose(int& x){const int& r=&x;return &x;}int main(){return 0;}",
+        "int main(){int x=1;int* p=&x;int* const& r=&p;int* const* q=&p;print(r!=0);return 0;}",
+        "void accept(int* a,int* b){} int main(){int x=1;accept(&x,&x);int* p=&x;int* q=&x;x=2;return 0;}",
+        "struct Pair{int a;int b;};int main(){Pair x={.a=1,.b=2};const int& r=&x.a;int* p=&x.b;print(r);return 0;}",
+    ] {
+        crust::check(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    for operation in [
+        "int* p=&x;",
+        "accept(&x);",
+        "unsafe{int* p=(int*)&x;}",
+        "unsafe{variadic(0,&x);}",
+    ] {
+        let source = format!(
+            "void accept(int* p){{}}extern void variadic(int tag,...);int main(){{int x=1;const int& r=&x;{operation}print(r);return 0;}}"
+        );
+        let error = crust::check(&source).unwrap_err();
+        assert!(
+            error.message.contains("conflicting access"),
+            "{operation}: {error}"
+        );
+    }
+    for declaration in ["int* p=&x;", "const int* p=&x;"] {
+        let source = format!("int main(){{int x=1;int& r=&x;{declaration}print(r);return 0;}}");
+        assert!(crust::check(&source).is_err(), "{declaration}");
+    }
+    let source = "int* expose(int& x){const int& r=&x;return &x;}int main(){return 0;}";
+    assert!(
+        crust::check(source)
+            .unwrap_err()
+            .message
+            .contains("conflicting access")
+    );
+}
+
+#[test]
 fn reference_member_access_uses_dot_and_raw_member_access_uses_arrow() {
     run(
         r#"

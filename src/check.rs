@@ -1716,7 +1716,14 @@ impl FunctionChecker<'_> {
                     } = &operand.kind
                         && !self.function_address(place)
                     {
-                        let actual = self.raw_address(operand, place)?;
+                        let Type::Pointer(id) = *ty else {
+                            unreachable!()
+                        };
+                        let actual = self.raw_address(
+                            operand,
+                            place,
+                            Some(self.types.pointers[id].mutable),
+                        )?;
                         self.expression_types.insert(operand.span, actual);
                         self.conversions.insert(operand.span, *ty);
                         return Ok(*ty);
@@ -2595,7 +2602,11 @@ impl FunctionChecker<'_> {
         } = &expression.kind
         {
             if matches!(expected, Type::Pointer(_)) && !self.function_address(operand) {
-                let actual = self.raw_address(expression, operand)?;
+                let Type::Pointer(id) = expected else {
+                    unreachable!()
+                };
+                let actual =
+                    self.raw_address(expression, operand, Some(self.types.pointers[id].mutable))?;
                 self.expression_types.insert(expression.span, actual);
                 return self.convert(expression, actual, expected);
             }
@@ -2698,6 +2709,7 @@ impl FunctionChecker<'_> {
         &mut self,
         expression: &Expression,
         operand: &Expression,
+        mutable: Option<bool>,
     ) -> Result<Type, Diagnostic> {
         let storage = if let ExpressionKind::Variable { name, name_span } = &operand.kind {
             self.scopes
@@ -2723,10 +2735,12 @@ impl FunctionChecker<'_> {
         } else {
             self.checked_place(operand)?
         };
+        // Check permission at creation without retaining a loan for the raw pointer.
+        // Untyped variadic addresses use the source place's permission.
         self.access(
             &place.root,
             &place.fields,
-            false,
+            mutable.unwrap_or(place.mutable),
             place.via,
             expression.span,
         )?;
@@ -2982,7 +2996,7 @@ impl FunctionChecker<'_> {
             } = &argument.kind
                 && !self.function_address(operand)
             {
-                let ty = self.raw_address(argument, operand)?;
+                let ty = self.raw_address(argument, operand, None)?;
                 self.expression_types.insert(argument.span, ty);
                 ty
             } else {

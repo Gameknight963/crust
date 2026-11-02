@@ -945,6 +945,8 @@ int main() {
 - Integer literal zero converts to a null pointer
 - `&place` creates a raw pointer when a declaration, argument, return, or cast expects a pointer type. Taking an address requires no `unsafe` block
 - In a reference destination, `&place` creates a checked borrow. Without a destination type, it creates a borrow using the place's access permission
+- Creating a mutable raw address requires exclusive access at that point. Creating a const raw address requires shared access. Existing checked borrows can prevent either operation
+- Raw addresses retain no checked loan and do not transfer ownership or change automatic cleanup
 - Changing the surrounding `unsafe` block does not change address-taking behavior
 - Address arguments passed through C varargs produce raw pointers
 - Raw pointer dereferencing, casts, and external C calls require `unsafe`
