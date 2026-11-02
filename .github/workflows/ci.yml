@@ -50,7 +50,8 @@ jobs:
       - run: cargo fetch --locked
       - run: cargo fmt --check
       - run: cargo clippy --locked --offline --all-targets -- -D warnings
-      - run: cargo test --locked --offline --no-fail-fast
+      - name: C compatibility and compiler regression gate
+        run: python tools/check_c_compatibility.py --offline --full
       - run: cargo run --locked --offline --example fuzz_frontend -- 2000 42
       - name: Build and verify compiler archive
         run: python tools/package.py --offline

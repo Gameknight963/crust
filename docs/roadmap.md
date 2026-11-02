@@ -127,7 +127,7 @@ files, a native C library, containers, files, and recoverable errors.
 - [x] Safe strings, byte buffers, and fallible allocation and resource APIs using Result
 - [x] Migrate examples and tests from BoxInt and remove the built-in type
 - [x] Project dependencies, library-supplied native dependencies, and reliable rebuilds
-- [ ] C compatibility checklist and broader declarations, layouts, alignment, packing, bitfields, and macro coverage
+- [x] C compatibility checklist with native layouts, bitfields, anonymous groups, flexible tails, fixed-array typedefs, and tested wrapper routes
 - [ ] Ownership audit, mutation testing, sanitizer runs, and Windows/Linux/macOS CI
 - [x] Compiler, LSP, and editor release packages with native compiler setup
 - [x] VS Code native debugger launch and original source names in debug information

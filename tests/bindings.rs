@@ -441,7 +441,12 @@ fn typedef_imports_reject_layout_changes_unsupported_types_and_invalid_selection
             "Aligned",
             "unsupported C typedef layout",
         ),
-        ("typedef int Values[4];", "Values", "unsupported C type"),
+        ("typedef int Values[];", "Values", "unsupported C type"),
+        (
+            "typedef const int Values[4];",
+            "Values",
+            "qualified C array typedefs",
+        ),
         (
             "typedef double _Complex Real;",
             "Real",
@@ -473,6 +478,60 @@ fn typedef_imports_reject_layout_changes_unsupported_types_and_invalid_selection
         generate(&path, &selected)
             .unwrap_err()
             .contains("selected twice")
+    );
+}
+
+#[test]
+fn fixed_array_typedefs_preserve_dimensions_elements_and_callback_declarators() {
+    let path = header(
+        r#"
+        #include <stddef.h>
+        typedef int Row[3];
+        typedef Row Matrix[2];
+        typedef const int *Pointers[2];
+        typedef int (*Callbacks[2])(int);
+        struct Item { int value; };
+        typedef struct Item Items[2];
+        static int sum(const int values[static 3]) { return values[0]+values[1]+values[2]; }
+        static int apply(int (*const callback)(int), int value) { return callback(value); }
+    "#,
+    );
+    let mut selected = options(&["sum", "apply"]);
+    selected.typedefs = ["Row", "Matrix", "Pointers", "Callbacks", "Items"]
+        .map(str::to_owned)
+        .to_vec();
+    selected.structs.push("Item".to_owned());
+    let bindings = generate(&path, &selected).unwrap();
+    assert_eq!(bindings, generate(&path, &selected).unwrap());
+    let output = common::tracked_run(&format!(
+        r#"
+        {bindings}
+        int next(int value) {{ return value+1; }}
+        int main() {{
+            Row row={{10,20,12}};
+            Matrix matrix={{{{1,2,3}},{{4,5,6}}}};
+            int value=42;
+            Pointers pointers={{&value, &value}};
+            Callbacks callbacks={{next, next}};
+            Items items={{{{.value=40}}, {{.value=2}}}};
+            unsafe {{
+                print(sum(&row[0])); print(matrix[1][2]);
+                print(*pointers[0]); print(apply(callbacks[1],41));
+            }}
+            print(items[0].value+items[1].value);
+            print(sizeof(Matrix)==sizeof(int)*6);
+            return 0;
+        }}
+    "#
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n6\n42\n42\n42\n1\n"
     );
 }
 
@@ -1595,54 +1654,7 @@ fn header_only_example_uses_relative_native_headers_and_drops_its_owner() {
 
 #[test]
 fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
-    let path = header(
-        r#"
-        #include <stdatomic.h>
-        #include <stdint.h>
-        #include <stdlib.h>
-        #define FEATURE_TWICE(value) ((value) + (value))
-        #define FEATURE_TEXT "Crust"
-        #define FEATURE_SCALE 1.5L
-        static _Atomic(int) feature_counter = 4;
-        static _Thread_local int feature_thread_counter;
-        struct NativeBytes { size_t length; unsigned char bytes[]; };
-        static int feature_atomic_add(int value) {
-            return atomic_fetch_add_explicit(&feature_counter, value, memory_order_relaxed);
-        }
-        static int feature_thread_next(void) { return ++feature_thread_counter; }
-        static struct NativeBytes *feature_bytes_create(size_t length) {
-            struct NativeBytes *value = malloc(sizeof(*value) + length);
-            if (!value) abort();
-            value->length = length;
-            for (size_t i=0; i<length; ++i) value->bytes[i] = (unsigned char)(i + 1);
-            return value;
-        }
-        static int feature_bytes_sum(const struct NativeBytes *value) {
-            int result = 0;
-            for (size_t i=0; i<value->length; ++i) result += value->bytes[i];
-            return result;
-        }
-        static void feature_bytes_destroy(struct NativeBytes *value) { free(value); }
-        static int feature_variable_array(int length) {
-            int scratch[length];
-            int result = 0;
-            for (int i=0; i<length; ++i) { scratch[i] = i + 1; result += scratch[i]; }
-            return result;
-        }
-        static double feature_complex_sum(double real, double imaginary) {
-            double _Complex value;
-            __real__ value = real; __imag__ value = imaginary;
-            return __real__ value + __imag__ value;
-        }
-        static uint64_t feature_wide_carry(uint64_t left, uint64_t right) {
-            unsigned __int128 value = (unsigned __int128)left + right;
-            return (uint64_t)(value >> 64);
-        }
-        static int feature_twice(int value) { return FEATURE_TWICE(value); }
-        static unsigned char feature_text_first(void) { return FEATURE_TEXT[0]; }
-        static long double feature_scale(void) { return FEATURE_SCALE; }
-    "#,
-    );
+    let path = header(include_str!("fixtures/c-wrappers.h"));
     let bindings = generate(
         &path,
         &options(&[
@@ -1656,7 +1668,12 @@ fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
             "feature_wide_carry",
             "feature_twice",
             "feature_text_first",
+            "feature_text",
             "feature_scale",
+            "feature_anonymous",
+            "feature_rows",
+            "feature_row",
+            "feature_extension",
         ]),
     )
     .unwrap();
@@ -1672,6 +1689,11 @@ fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
                 print(feature_variable_array(4)); print(feature_complex_sum(2.5, 5.0));
                 print(feature_wide_carry(~(uint64_t)0, 1));
                 print(feature_twice(21)); print(feature_text_first()); print(feature_scale());
+                int elements[6]={{1,2,3,10,11,15}};
+                print(feature_rows(&elements[0],2));
+                const int* row=feature_row(); print(row[0]+row[1]+row[2]);
+                print(feature_anonymous(42)); print(feature_extension(42));
+                const char* text=feature_text(); const char[]& view=slice(text,5); print(view);
             }}
             return 0;
         }}
@@ -1684,7 +1706,33 @@ fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "4\n9\n1\n2\n10\n10\n7.5\n1\n42\n67\n1.5\n"
+        "4\n9\n1\n2\n10\n10\n7.5\n1\n42\n67\n1.5\n42\n42\n42\n42\nCrust\n"
     );
     assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
+}
+
+#[test]
+fn unsupported_array_declarators_report_the_native_wrapper_route() {
+    for source in [
+        "int read_row(const int (*row)[3]);",
+        "int (*read_row(void))[3];",
+        "int read_row(int (*callback)(int (*)[3]));",
+    ] {
+        let path = header(source);
+        let error = generate(&path, &options(&["read_row"])).unwrap_err();
+        assert!(
+            error.contains("C pointers to arrays require a native wrapper"),
+            "{source}: {error}"
+        );
+    }
+    let path = header("struct Anonymous { struct { int value; } member; };");
+    let selected = Options {
+        structs: vec!["Anonymous".to_owned()],
+        ..Default::default()
+    };
+    assert!(
+        generate(&path, &selected)
+            .unwrap_err()
+            .contains("anonymous C aggregates require a native wrapper")
+    );
 }

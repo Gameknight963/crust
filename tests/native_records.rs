@@ -4,6 +4,65 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn native_bitfields_and_anonymous_groups_cross_callback_and_return_abis() {
+    let path = header(
+        r#"
+        #pragma pack(push, 1)
+        struct Message {
+            unsigned int flags : 3;
+            signed int delta : 5;
+            union { int number; struct { short low; short high; }; };
+            int values[2];
+        };
+        #pragma pack(pop)
+        static struct Message message_apply(struct Message (*callback)(struct Message), struct Message value) {
+            value = callback(value);
+            value.flags += 1;
+            return value;
+        }
+    "#,
+    );
+    let selected = crust::bindings::Options {
+        structs: vec!["Message".to_owned()],
+        functions: vec!["message_apply".to_owned()],
+        ..Default::default()
+    };
+    let bindings = crust::bindings::generate(&path, &selected).unwrap();
+    assert_eq!(
+        bindings,
+        crust::bindings::generate(&path, &selected).unwrap()
+    );
+    let output = common::tracked_run(&format!(
+        r#"
+        {bindings}
+        Message transform(Message value) {{
+            value.delta += 2;
+            unsafe {{ value.number += value.values[1]; }}
+            return value;
+        }}
+        int main() {{
+            Message value={{.flags=3,.delta=-4,.number=40,.values={{1,2}}}};
+            unsafe {{
+                Message changed=message_apply(&transform,value);
+                print(changed.flags); print(changed.delta); print(changed.number);
+                print(value.number); print(value.flags);
+            }}
+            return 0;
+        }}
+    "#
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "4\n-2\n42\n40\n3\n"
+    );
+}
 fn header(source: &str) -> PathBuf {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/native-record-tests")

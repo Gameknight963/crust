@@ -491,11 +491,25 @@ pub fn generate(header: &Path, options: &Options) -> Result<String, String> {
             .find(|global| global.name == name)
             .ok_or("missing typedef validation type")?;
         let ty = crate::emit_c::c_type(global.ty);
-        verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p({native}*, {ty}), \"unsupported C ABI for typedef {native}\");\n"));
+        let crate::ast::Type::Pointer(pointer) = global.ty else {
+            unreachable!();
+        };
+        let mut inner_type = checked.types.pointers[pointer].pointee;
+        if matches!(inner_type, crate::ast::Type::Array(_)) {
+            let mut native_element = format!("(*(({native}*)0))");
+            let mut source_element = format!("(*(({ty})0))");
+            while let crate::ast::Type::Array(id) = inner_type {
+                let array = &checked.types.arrays[id];
+                verification.push_str(&format!("_Static_assert(sizeof({native_element}) / sizeof(({native_element})[0]) == {}, \"unsupported C array dimensions for typedef {native}\");\n", array.length));
+                native_element = format!("({native_element})[0]");
+                source_element = format!("({source_element}).crust_elements[0]");
+                inner_type = array.element;
+            }
+            verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p(__typeof__(&({native_element})), __typeof__(&({source_element}))), \"unsupported C array element ABI for typedef {native}\");\n"));
+        } else {
+            verification.push_str(&format!("_Static_assert(__builtin_types_compatible_p({native}*, {ty}), \"unsupported C ABI for typedef {native}\");\n"));
+        }
         if sized {
-            let crate::ast::Type::Pointer(pointer) = global.ty else {
-                unreachable!();
-            };
             let inner = crate::emit_c::c_type(checked.types.pointers[pointer].pointee);
             verification.push_str(&format!("_Static_assert(sizeof({native}) == sizeof({inner}) && _Alignof({native}) == _Alignof({inner}), \"unsupported C typedef layout for {native}\");\n"));
         }

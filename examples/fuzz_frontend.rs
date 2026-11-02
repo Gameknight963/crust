@@ -67,8 +67,13 @@ fn main() {
         heap_views.as_str(),
         "extern struct NativePoint { int x; int y; int sum() const { return this.x + this.y; } }; int main() { NativePoint value={.x=40,.y=2}; print(value.sum()); return 0; }",
         "extern struct NativeFields { const int id; volatile int ticks; int values[2][2]; }; NativeFields create(int id) { return (NativeFields){.id=id,.ticks=0,.values={{1,2},{3,4}}}; } int main() { NativeFields value=true?create(42):create(7); value.ticks++; value.values[1][0]=5; print(value.id); return 0; }",
+        "extern struct NativeBits { unsigned int bits:3; signed int delta:5; union { int number; struct { short low; short high; }; }; }; int main() { NativeBits value={.bits=3,.delta=-2,.number=42}; value.bits++; unsafe { print(value.number); } return 0; }",
+        "extern struct NativeTail { size_t length; int values[]; }; void inspect(const NativeTail& value) { const int* pointer=value.values; unsafe { print(pointer[0]); } } int main() { return 0; }",
         library.as_str(),
     ];
+    for source in &corpus {
+        crust::check(source).expect("mutation corpus seed must pass checking");
+    }
     let fragments: &[&[u8]] = &[
         b"{}",
         b"[]&",

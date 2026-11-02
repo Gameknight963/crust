@@ -45,7 +45,7 @@ command protects its input header from replacement.
 - Opaque struct and union tags
 - Selected complete native records, with scalar, pointer, callback, enum, and selected record fields
 - Named enums with native integer representations and member values
-- Selected scalar, pointer, callback, and opaque aggregate typedefs
+- Selected scalar, pointer, callback, fixed-array, and opaque aggregate typedefs
 - Function pointers, callback returns, and variadic functions
 - Header-defined static functions, including `static inline` and callback APIs
 - Header-local static variables with native initialization
@@ -132,9 +132,16 @@ treatment. Opaque struct and union aliases expose their pointers through the
 native tag.
 
 Generation checks pointer type compatibility and the size and alignment of
-complete scalar and pointer aliases. Typedefs with extra alignment or unsupported
-array layouts produce a diagnostic. For top-level const or volatile aliases,
-import the affected C functions and variables directly.
+complete scalar and pointer aliases. Fixed-array typedefs retain each dimension
+and validate the leaf type, size, and alignment. Arrays of callbacks, pointers,
+and selected complete records are supported. Typedefs with extra alignment,
+incomplete arrays, or qualified array elements produce a diagnostic. For
+top-level const or volatile aliases, import the affected C functions and
+variables directly.
+
+C array parameters adjust to element pointers. Pass the address of the first
+element, such as `&values[0]`. A C pointer to an entire array has a different
+declarator and requires the wrapper route below.
 
 ## Native enums and headers
 
@@ -299,3 +306,43 @@ The native compiler expands the macros inside their wrappers. Crust checks the
 wrapper signatures, and callers use the generated functions inside `unsafe`.
 The same pattern exposes native atomic and thread-local storage through accessor
 functions.
+
+## Other native wrappers
+
+The executable [wrapper fixture](../tests/fixtures/c-wrappers.h) contains the C
+implementations used by `native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros`
+in the [binding tests](../tests/bindings.rs). Each public function has a signature
+the importer can represent.
+
+| C facility | Tested wrapper | Caller contract |
+| --- | --- | --- |
+| Atomic storage | `feature_atomic_add` | The native function chooses relaxed ordering. A real synchronization API must choose ordering for its protocol |
+| Thread-local storage | `feature_thread_next` | Access belongs to the calling thread. Do not retain a TLS address across thread exit |
+| Complex arithmetic | `feature_complex_sum` | Exchange real and imaginary components through scalar parameters |
+| Extended integers | `feature_wide_carry` | Exchange fixed-width limbs or checked conversions. The fixture requires compiler support for `__int128` |
+| Variable-length arrays | `feature_variable_array` | Supply a positive length that fits the native stack budget |
+| Pointer-to-array parameters and returns | `feature_rows`, `feature_row` | Supply contiguous initialized rows with the stated width. Returned static storage is shared and must not be freed |
+| Named fields with anonymous aggregate types | `feature_anonymous` | Keep the anonymous type inside the native function or an opaque owner |
+| Assembly and compiler extensions | `feature_extension` | Compile the wrapper with the toolchain that implements the extension |
+| Function, string, and floating macros | `feature_twice`, `feature_text`, `feature_scale` | Macro expansion happens in C with the selected header configuration. The returned string has static storage |
+
+For example, a pointer-to-array API can expose a flat pointer with an explicit
+row count. Keep the array cast inside C:
+
+```c
+static int feature_rows(const int *elements, size_t rows) {
+    return feature_rows_native((const int (*)[3])elements, rows);
+}
+```
+
+Crust calls this as `feature_rows(&elements[0], 2)` for an initialized six-element
+array. The caller must establish sufficient storage and a valid row count before
+the unsafe call. A const pointer controls writes through that pointer. It does
+not establish ownership, lifetime, or a promise that a C function will not free
+the allocation.
+
+Wrappers around allocation should check size arithmetic and return allocation
+failure through their public API. The fixture's small fixed test inputs use
+abort on allocation failure. Production wrappers should preserve the owning
+value on failure when retry is possible. See the [SQLite example](../examples/sqlite_project)
+for an owning wrapper with explicit close and error paths.

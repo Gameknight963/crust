@@ -97,6 +97,13 @@ impl Renderer {
             ));
         }
         let underlying = Self::unqualified(node)?;
+        if kind(underlying) == "ConstantArrayType" {
+            let (element, dimensions, qualifiers) = self.record_array_type(node)?;
+            if !qualifiers.is_empty() {
+                return Err("qualified C array typedefs require a native accessor".to_owned());
+            }
+            return Ok((format!("{}{dimensions}", self.object_type(element)?), true));
+        }
         let sized = !(matches!(
             kind(underlying),
             "RecordType" | "FunctionProtoType" | "FunctionNoProtoType"
@@ -430,6 +437,12 @@ impl Renderer {
                 let pointee = type_children(node)
                     .next()
                     .ok_or("Clang omitted a pointer target")?;
+                if matches!(
+                    kind(Self::unqualified(pointee)?),
+                    "ConstantArrayType" | "IncompleteArrayType" | "VariableArrayType"
+                ) {
+                    return Err("C pointers to arrays require a native wrapper exposing an element pointer and dimensions".to_owned());
+                }
                 return Ok(format!("{}*", self.ty(pointee, true)?));
             }
             "QualType" => {
