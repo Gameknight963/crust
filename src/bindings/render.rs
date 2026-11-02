@@ -163,10 +163,31 @@ impl Renderer {
             let occupied: HashSet<_> = record
                 .fields
                 .iter()
-                .map(|(name, _, _)| name.clone())
+                .map(|field| field.name.clone())
                 .collect();
             let mut aliases = HashSet::new();
-            for (native, probe, bit_width) in &record.fields {
+            let mut groups: Vec<records::Group> = Vec::new();
+            for binding in &record.fields {
+                let native = &binding.name;
+                let probe = &binding.probe;
+                let bit_width = &binding.bit_width;
+                let common = groups
+                    .iter()
+                    .zip(&binding.groups)
+                    .take_while(|(a, b)| a.id == b.id)
+                    .count();
+                while groups.len() > common {
+                    groups.pop();
+                    declaration.push_str(&format!("{}}};\n", "    ".repeat(groups.len() + 1)));
+                }
+                for group in &binding.groups[common..] {
+                    declaration.push_str(&format!(
+                        "{}{} {{\n",
+                        "    ".repeat(groups.len() + 1),
+                        group.tag
+                    ));
+                    groups.push(group.clone());
+                }
                 let node = probes
                     .iter()
                     .find(|node| node["name"] == *probe)
@@ -203,7 +224,14 @@ impl Renderer {
                 let width = bit_width
                     .map(|width| format!(" : {width}"))
                     .unwrap_or_default();
-                declaration.push_str(&format!("    {ty} {field}{dimensions}{width}{link};\n"));
+                declaration.push_str(&format!(
+                    "{}{ty} {field}{dimensions}{width}{link};\n",
+                    "    ".repeat(groups.len() + 1)
+                ));
+            }
+            while !groups.is_empty() {
+                groups.pop();
+                declaration.push_str(&format!("{}}};\n", "    ".repeat(groups.len() + 1)));
             }
             declaration.push_str("};");
             self.declarations.push((None, declaration));

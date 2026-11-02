@@ -725,3 +725,101 @@ fn native_bitfields_import_enum_typedef_const_and_keyword_members() {
         "5\n10\n2\n"
     );
 }
+
+#[test]
+fn anonymous_native_groups_promote_members_and_preserve_union_aliases() {
+    let path = header(
+        "struct Packet{int tag;union{int number;struct{short low;short high;};};struct{int x;int y;};int tail;};static inline int packet_sum(struct Packet p){return p.low+p.high+p.x+p.y+p.tail;}",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["Packet".to_owned()],
+            functions: vec!["packet_sum".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(bindings.contains("union {"), "{bindings}");
+    let source = format!(
+        r#"{bindings}
+        const Packet stored={{.tag=7,.low=10,.high=20,.x=1,.y=2,.tail=9}};
+        int main(){{Packet value=stored;
+            {{int& first=&value.x;const int& second=&value.y;first+=second;}}
+            unsafe{{print(value.low);print(value.high);print(packet_sum(value));}}
+            Packet other={{.tag=1,.number=42,.x=2,.y=3,.tail=4}};
+            unsafe{{print(other.number);}}return 0;
+        }}
+    "#
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "10\n20\n44\n42\n"
+    );
+    for operation in [
+        "print(value.low);",
+        "unsafe{short& loan=&value.low;value.number=1;print(loan);}",
+        "unsafe{int& loan=number(&value);value.low=1;print(loan);}",
+    ] {
+        let source = format!(
+            "{bindings} int& number(Packet& value){{unsafe{{return &value.number;}}}}int main(){{Packet value={{.tag=7,.low=10,.high=20,.x=1,.y=2,.tail=9}};{operation}return 0;}}"
+        );
+        assert!(crust::check(&source).is_err(), "{operation}");
+    }
+    for values in [
+        ".tag=0,.number=1,.low=2,.high=3,.x=0,.y=0,.tail=0",
+        ".tag=0,.low=2,.x=0,.y=0,.tail=0",
+    ] {
+        let source = format!("{bindings} int main(){{Packet value={{{values}}};return 0;}}");
+        assert!(crust::check(&source).is_err(), "{values}");
+    }
+}
+
+#[test]
+fn native_unions_can_initialize_an_anonymous_struct_variant() {
+    let path = header("union Value{struct{int first;int second;};double other;};");
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            unions: vec!["Value".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let output = common::tracked_run(&format!(
+        "{bindings} int main(){{Value value={{.first=40,.second=2}};unsafe{{print(value.first+value.second);}}return 0;}}"
+    ));
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n"
+    );
+}
+
+#[test]
+fn anonymous_native_group_members_preserve_qualifiers() {
+    let path = header(
+        "struct QualifiedGroup{struct{const int frozen;const unsigned int flag:3;};union{volatile int counter;volatile int other;};};",
+    );
+    let bindings = crust::bindings::generate(
+        &path,
+        &crust::bindings::Options {
+            structs: vec!["QualifiedGroup".to_owned()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = format!(
+        "{bindings} int main(){{QualifiedGroup value={{.frozen=42,.flag=3,.counter=1}};unsafe{{value.counter++;print(value.counter);}}print(value.frozen);print(value.flag);return 0;}}"
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "2\n42\n3\n"
+    );
+    assert!(crust::check(&source.replace("print(value.frozen);", "value.frozen=1;")).is_err());
+    assert!(crust::check(&source.replace("print(value.flag);", "value.flag=1;")).is_err());
+}

@@ -365,7 +365,7 @@ impl Types {
                 self.visit(Type::Array(slice), states, array_states, field.span)?;
             }
             let field_owns = self.visit(field.ty, states, array_states, field.span)?;
-            if self.structs[id].is_union && field_owns {
+            if (self.structs[id].is_union || !field.native_unions.is_empty()) && field_owns {
                 return Err(Diagnostic::new(
                     field.span,
                     "union fields require copyable values or raw pointers",

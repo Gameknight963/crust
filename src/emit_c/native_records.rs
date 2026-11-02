@@ -215,7 +215,16 @@ impl Emitter<'_> {
                 if matches!(field.ty, Type::Array(_)) {
                     self.line(&format!("_Static_assert(sizeof({}) == sizeof(((crust_type_{id} *)0)->{native}), \"native array layout mismatch\");",c_type(field.ty)));
                 }
-                if !info.is_union && index > 0 && info.fields[index - 1].bit_width.is_none() {
+                if !info.is_union
+                    && index > 0
+                    && info.fields[index - 1].bit_width.is_none()
+                    && !field.native_unions.iter().any(|(group, _)| {
+                        info.fields[index - 1]
+                            .native_unions
+                            .iter()
+                            .any(|(other, _)| group == other)
+                    })
+                {
                     let previous = info.fields[index - 1]
                         .native_name
                         .as_ref()

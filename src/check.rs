@@ -3590,7 +3590,10 @@ impl FunctionChecker<'_> {
         }
         let declared = self.types.structs[id].fields.clone();
         let is_union = self.types.structs[id].is_union;
-        if (is_union || self.types.structs[id].tagged) && fields.len() != 1 {
+        if ((is_union && self.types.structs[id].native_name.is_none())
+            || self.types.structs[id].tagged)
+            && fields.len() != 1
+        {
             return Err(Diagnostic::new(
                 expression.span,
                 "a union initializer selects exactly one field",
@@ -3598,7 +3601,21 @@ impl FunctionChecker<'_> {
         }
         let mut seen = std::collections::HashSet::new();
         let mut captures = Vec::new();
+        let mut selected_unions = HashMap::new();
         for field in fields {
+            if let Some(info) = declared.iter().find(|info| info.name == field.name) {
+                for (group, variant) in &info.native_unions {
+                    if selected_unions
+                        .insert(*group, *variant)
+                        .is_some_and(|previous| previous != *variant)
+                    {
+                        return Err(Diagnostic::new(
+                            field.span,
+                            "initializer selects overlapping native union members",
+                        ));
+                    }
+                }
+            }
             if !seen.insert(field.name.as_str()) {
                 return Err(Diagnostic::new(
                     field.span,
@@ -3650,7 +3667,27 @@ impl FunctionChecker<'_> {
         }
         self.remember_captures(expression.span, captures);
         for field in &declared {
-            if !is_union && !self.types.structs[id].tagged && !seen.contains(field.name.as_str()) {
+            let mut active = true;
+            for (group, variant) in &field.native_unions {
+                match selected_unions.get(group) {
+                    Some(selected) if selected != variant => {
+                        active = false;
+                        break;
+                    }
+                    None => {
+                        return Err(Diagnostic::new(
+                            expression.span,
+                            "missing initializer for an anonymous native union",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            if active
+                && ((!is_union && !self.types.structs[id].tagged)
+                    || !field.native_unions.is_empty())
+                && !seen.contains(field.name.as_str())
+            {
                 return Err(Diagnostic::new(
                     expression.span,
                     format!("missing initializer for field '{}'", field.name),
@@ -3789,8 +3826,19 @@ impl FunctionChecker<'_> {
                 } else {
                     name
                 };
+                let projection = if let Type::Struct(id) = place.ty {
+                    self.types.structs[id]
+                        .fields
+                        .iter()
+                        .find(|field| field.name == *name)
+                        .and_then(|field| field.native_unions.first())
+                        .map(|(group, _)| format!("@native_union_{group}"))
+                        .unwrap_or_else(|| projection.to_owned())
+                } else {
+                    projection.to_owned()
+                };
                 let mut fields = place.fields;
-                fields.push(projection.to_owned());
+                fields.push(projection);
                 let field = if let Type::Struct(id) = place.ty {
                     self.types.structs[id]
                         .fields
@@ -3887,7 +3935,8 @@ impl FunctionChecker<'_> {
     }
 
     fn field_type(&self, ty: Type, name: &str, span: Span) -> Result<Type, Diagnostic> {
-        if matches!(ty, Type::Struct(id) if self.types.structs[id].is_union) {
+        if matches!(ty, Type::Struct(id) if self.types.structs[id].is_union || self.types.structs[id].fields.iter().any(|field|field.name==name&&!field.native_unions.is_empty()))
+        {
             self.require_unsafe(span, "reading or borrowing a union field")?;
         }
         return self.declared_field_type(ty, name, span);

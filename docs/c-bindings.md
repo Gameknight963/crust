@@ -228,6 +228,20 @@ Const and volatile fields require copyable values. Source initialization of a
 const native array is limited to 4096 elements. Larger const arrays can be supplied
 by a native factory. Flexible and zero-length C array fields use native accessors.
 
+## Anonymous native groups
+
+Selected records preserve anonymous struct and union groups. Their named members
+are accessible directly on the containing record, as in C. Initializers select
+one variant of each anonymous union and initialize the fields of that variant.
+Nested anonymous struct variants can initialize several members together.
+
+Reading or borrowing a promoted union member requires `unsafe`. A borrow of one
+member protects the entire anonymous union from conflicting access. Promoted
+members of an anonymous struct retain ordinary disjoint-field borrowing rules.
+Native union members require copyable values or raw pointers.
+
+Named fields whose type is an anonymous aggregate still require a native wrapper.
+
 ## Native bitfields
 
 Selected records import named integer, boolean, and enum bitfields using C width

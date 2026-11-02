@@ -1112,7 +1112,50 @@ impl Parser {
         let body_start = self.expect(Token::LeftBrace, "expected '{' after the struct name")?;
         let mut fields = Vec::new();
         let mut has_destructor = false;
-        while !self.at(&Token::RightBrace) {
+        let native = self.native_tags.contains_key(&id);
+        let mut groups: Vec<(bool, usize, usize)> = Vec::new();
+        if native && self.union_tags.contains(&id) {
+            groups.push((true, 0, 0));
+        }
+        let root_depth = groups.len();
+        let mut next_group = root_depth;
+        while !self.at(&Token::RightBrace) || groups.len() > root_depth {
+            if self.at(&Token::RightBrace) && groups.len() > root_depth {
+                groups.pop();
+                self.advance();
+                self.expect(
+                    Token::Semicolon,
+                    "expected ';' after anonymous native group",
+                )?;
+                if let Some((true, _, member)) = groups.last_mut() {
+                    *member += 1;
+                }
+                continue;
+            }
+            if matches!(self.current().kind, Token::Struct | Token::Union)
+                && self
+                    .tokens
+                    .get(self.position + 1)
+                    .is_some_and(|token| token.kind == Token::LeftBrace)
+            {
+                if !native {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "anonymous groups require a native record",
+                    ));
+                }
+                if groups.len() >= 128 {
+                    return Err(Diagnostic::new(
+                        self.current().span,
+                        "anonymous native groups exceed the nesting limit",
+                    ));
+                }
+                let union = self.advance().kind == Token::Union;
+                self.advance();
+                groups.push((union, next_group, 0));
+                next_group += 1;
+                continue;
+            }
             let member_start = self.current().span;
             if self.at(&Token::EndOfFile) {
                 return Err(Diagnostic::new(
@@ -1270,6 +1313,11 @@ impl Parser {
             };
             self.expect(Token::Semicolon, "expected ';' after the field")?;
             fields.push(Field {
+                native_unions: groups
+                    .iter()
+                    .filter(|(union, _, _)| *union)
+                    .map(|(_, id, member)| (*id, *member))
+                    .collect(),
                 bit_width,
                 readonly: qualifiers.readonly,
                 volatile: qualifiers.volatile,
@@ -1280,6 +1328,9 @@ impl Parser {
                 span,
                 private,
             });
+            if let Some((true, _, member)) = groups.last_mut() {
+                *member += 1;
+            }
         }
         self.advance();
         self.current_struct = previous_owner;

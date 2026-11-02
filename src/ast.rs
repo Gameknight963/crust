@@ -504,6 +504,7 @@ pub struct StructDefinition {
 #[derive(Debug, Clone)]
 pub struct Field {
     pub bit_width: Option<u32>,
+    pub native_unions: Vec<(usize, usize)>,
     pub readonly: bool,
     pub volatile: bool,
     pub native_name: Option<String>,

@@ -1,9 +1,58 @@
 use super::*;
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct Group {
+    pub id: usize,
+    pub tag: &'static str,
+}
+
+pub(super) struct RecordField {
+    pub name: String,
+    pub probe: String,
+    pub bit_width: Option<u32>,
+    pub groups: Vec<Group>,
+}
+
 pub(super) struct Record {
     pub name: String,
     pub tag: &'static str,
-    pub fields: Vec<(String, String, Option<u32>)>,
+    pub fields: Vec<RecordField>,
+}
+
+fn exposed_fields<'a>(
+    node: &'a Value,
+    path: &[Group],
+    next: &mut usize,
+    output: &mut Vec<(&'a Value, Vec<Group>)>,
+) -> Result<(), String> {
+    if path.len() >= 128 {
+        return Err("anonymous C groups exceed the nesting limit".to_owned());
+    }
+    let mut anonymous = None;
+    for child in children(node) {
+        if kind(child) == "RecordDecl" && child["name"].as_str().is_none_or(str::is_empty) {
+            anonymous = Some(child);
+        } else if kind(child) == "FieldDecl" {
+            if child["name"].as_str().is_some() {
+                output.push((child, path.to_vec()));
+                anonymous = None;
+            } else if child["isImplicit"] == true {
+                let record = anonymous
+                    .take()
+                    .ok_or("Clang omitted an anonymous record definition")?;
+                let tag = if record["tagUsed"] == "union" {
+                    "union"
+                } else {
+                    "struct"
+                };
+                let mut nested = path.to_vec();
+                nested.push(Group { id: *next, tag });
+                *next += 1;
+                exposed_fields(record, &nested, next, output)?;
+            }
+        }
+    }
+    return Ok(());
 }
 
 pub(super) fn load(header: &Path, options: &Options) -> Result<(Vec<Record>, Vec<Value>), String> {
@@ -36,10 +85,9 @@ pub(super) fn load(header: &Path, options: &Options) -> Result<(Vec<Record>, Vec
                 })?;
             source.push_str(&format!("#pragma push_macro(\"{name}\")\n#undef {name}\n"));
             let mut fields = Vec::new();
-            for field in children(record)
-                .iter()
-                .filter(|node| kind(node) == "FieldDecl")
-            {
+            let mut exposed = Vec::new();
+            exposed_fields(record, &[], &mut 0, &mut exposed)?;
+            for (field, groups) in exposed {
                 let Some(field_name) = field["name"].as_str() else {
                     continue;
                 };
@@ -86,7 +134,12 @@ pub(super) fn load(header: &Path, options: &Options) -> Result<(Vec<Record>, Vec
                 for name in type_names.iter().rev() {
                     source.push_str(&format!("#pragma pop_macro(\"{name}\")\n"));
                 }
-                fields.push((field_name.to_owned(), probe, bit_width));
+                fields.push(RecordField {
+                    name: field_name.to_owned(),
+                    probe,
+                    bit_width,
+                    groups,
+                });
             }
             source.push_str(&format!("#pragma pop_macro(\"{name}\")\n"));
             records.push(Record {
