@@ -42,6 +42,10 @@ Direct C calls follow explicit caller contracts. A C declaration does not
 implicitly require `unsafe`. Raw pointer operations, external storage access,
 and indirect calls still require `unsafe`. Native bodies follow C rules.
 
+Crust function declarations take precedence over automatic function discovery.
+An explicit `unsafe extern` declaration can give a native function an unsafe
+caller contract.
+
 C array parameters adjust to pointers. Their minimum lengths, aliasing rules,
 and allocation contracts remain the API author's responsibility. Unsupported
 declaration types require a C wrapper with a representable signature.
@@ -69,6 +73,11 @@ expressions when their expansion is valid Crust syntax. Macro names also expand
 in field names and type names. Use `#undef` when the header's macro conflicts
 with the spelling needed in subsequent source. Stateful macros such as
 `__COUNTER__` retain their values through checking and final compilation.
+
+Compiler-specific macro expansions must also be valid Crust. For example, Darwin's
+fortified `memcpy` macro uses compiler intrinsics. `(memcpy)(destination, source,
+length)` selects the ordinary C function, following C macro rules. A wrapper in
+a C region can use the fortified macro and expose a typed function to Crust.
 
 ## Linking and exports
 

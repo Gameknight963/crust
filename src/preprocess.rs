@@ -136,6 +136,62 @@ pub(crate) struct Prepared {
     pub replay: Replay,
 }
 
+// Native declarations are fallbacks for names supplied by the Crust program.
+// Inspect declaration headers before native types are available to the parser.
+fn source_function_names(tokens: &[SpannedToken]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut braces = 0usize;
+    let mut parentheses = 0usize;
+    let mut start = 0;
+    let mut excluded = false;
+    for (index, token) in tokens.iter().enumerate() {
+        if braces == 0 && parentheses == 0 {
+            match token.kind {
+                Token::Static | Token::Typedef | Token::Equal => excluded = true,
+                Token::LeftParen if !excluded => {
+                    let mut name_index = index;
+                    let mut angles = 0usize;
+                    while name_index > start {
+                        name_index -= 1;
+                        match tokens[name_index].kind {
+                            Token::Greater => angles += 1,
+                            Token::GreaterGreater => angles += 2,
+                            Token::Less if angles > 0 => angles -= 1,
+                            _ if angles == 0 => break,
+                            _ => {}
+                        }
+                    }
+                    if name_index > start
+                        && angles == 0
+                        && let Token::Identifier(name) = &tokens[name_index].kind
+                    {
+                        names.insert(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        match token.kind {
+            Token::LeftBrace => braces += 1,
+            Token::RightBrace => {
+                braces = braces.saturating_sub(1);
+                if braces == 0 {
+                    start = index + 1;
+                    excluded = false;
+                }
+            }
+            Token::LeftParen => parentheses += 1,
+            Token::RightParen => parentheses = parentheses.saturating_sub(1),
+            Token::Semicolon | Token::EndOfFile if braces == 0 && parentheses == 0 => {
+                start = index + 1;
+                excluded = false;
+            }
+            _ => {}
+        }
+    }
+    return names;
+}
+
 impl Prepared {
     pub fn locate(&self, span: Span) -> Option<(&Path, Span)> {
         let first = self
@@ -689,11 +745,14 @@ pub(crate) fn prepare(
             .ok()
             .filter(|r| r.status.success())
             .map(|r| String::from_utf8_lossy(&r.stdout).trim().to_owned());
-        let declarations =
-            crate::bindings::native_declarations(&native_expanded, target.as_deref(), &names)
-                .map_err(|message| {
-                    compiler_error(&origin, &result.inputs[&origin], read, message)
-                })?;
+        let source_functions = source_function_names(&result.tokens);
+        let declarations = crate::bindings::native_declarations(
+            &native_expanded,
+            target.as_deref(),
+            &names,
+            &source_functions,
+        )
+        .map_err(|message| compiler_error(&origin, &result.inputs[&origin], read, message))?;
         let base = result.text.len();
         result.text.push_str(&declarations.text);
         let span = Span {

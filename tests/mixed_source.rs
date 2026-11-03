@@ -420,3 +420,36 @@ fn conditional_imports_use_shared_macros_and_ignore_inactive_syntax() {
     let error = crust::source::SourceSet::load(&entry).err().unwrap();
     assert!(error.diagnostic.message.contains("top-level"), "{error}");
 }
+
+#[test]
+fn source_functions_take_precedence_over_incidental_header_declarations() {
+    let output = common::tracked_run(
+        r#"
+#pragma crust begin_c
+char* index(const char*,int);
+int identity(int);
+struct SameName {int value;};
+#pragma crust end_c
+int index(){return 42;}
+T identity<T>(T value){return value;}
+int SameName(){return 7;}
+int main(){SameName value={.value=identity<int>(index())};print(value.value);print(SameName());return 0;}
+"#,
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n7\n"
+    );
+}
+
+#[test]
+fn explicitly_unsafe_header_declarations_keep_their_caller_contract() {
+    let source = "#pragma crust begin_c\nstatic int native_value(int n){return n;}\n#pragma crust end_c\nunsafe extern int native_value(int n);\nint main(){return native_value(42);}\n";
+    assert!(crust::check(source).unwrap_err().message.contains("unsafe"));
+    let output = common::tracked_run(&source.replace(
+        "return native_value(42);",
+        "unsafe{return native_value(42);}",
+    ));
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+}

@@ -42,6 +42,13 @@ macro_rules! api {
         struct Api { $($name: unsafe extern "C" fn($($arg),*) -> $result,)+ _library: Library, _dependencies:Vec<Library> }
         #[allow(non_snake_case)]
         impl Api {
+            fn shared() -> Result<&'static Self, String> {
+                // LLVM 20/21 on Windows can leave TLS destructors pointing into
+                // an unloaded DLL (llvm-project#154361). Keep the runtime loaded
+                // for the process, while disposing each index and unit normally.
+                static API: std::sync::OnceLock<Result<Api, String>> = std::sync::OnceLock::new();
+                return API.get_or_init(Self::load).as_ref().map_err(Clone::clone);
+            }
             fn load() -> Result<Self, String> {
                 let mut candidates=Vec::new();
                 let explicit=std::env::var_os("CRUST_LIBCLANG");
@@ -143,7 +150,7 @@ api! {
 }
 
 struct Unit {
-    api: Api,
+    api: &'static Api,
     index: *mut c_void,
     unit: *mut c_void,
 }
@@ -180,7 +187,7 @@ impl Unit {
         );
     }
     fn parse(source: &str, target: Option<&str>) -> Result<Self, String> {
-        let api = Api::load()?;
+        let api = Api::shared()?;
         let name = CString::new("crust-native.c").unwrap();
         let source = CString::new(source).map_err(|_| "native source contains a null byte")?;
         let mut arguments = vec![
@@ -361,6 +368,7 @@ pub(crate) fn declarations(
     source: &str,
     target: Option<&str>,
     names: &std::collections::HashSet<String>,
+    source_functions: &std::collections::HashSet<String>,
 ) -> Result<Declarations, String> {
     let unit = Unit::parse(source, target)?;
     let cursors = unit.children(unsafe { (unit.api.clang_getTranslationUnitCursor)(unit.unit) });
@@ -390,6 +398,9 @@ pub(crate) fn declarations(
         let previous = wanted.len();
         for cursor in &cursors {
             let name = unit.name(*cursor);
+            if cursor.kind == 8 && source_functions.contains(&name) {
+                continue;
+            }
             if cursor.kind == 5
                 && unit
                     .children(*cursor)
@@ -425,7 +436,10 @@ pub(crate) fn declarations(
     let mut dll_imports = std::collections::HashSet::new();
     for cursor in &cursors {
         let name = unit.name(*cursor);
-        if name.is_empty() || !wanted.contains(&name) {
+        if name.is_empty()
+            || !wanted.contains(&name)
+            || (cursor.kind == 8 && source_functions.contains(&name))
+        {
             continue;
         }
         if cursor.kind == 9 && unsafe { (unit.api.clang_getCursorTLSKind)(*cursor) } != 0 {

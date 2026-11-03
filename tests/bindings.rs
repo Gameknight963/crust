@@ -804,7 +804,11 @@ fn adjusted_array_parameters_preserve_pointee_const_and_accept_restrict_callback
 
 #[test]
 fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_callbacks() {
-    let path = header("#include <stdlib.h>\n#include <string.h>\n");
+    // Darwin fortifies this API with compiler intrinsics. Parentheses select
+    // the ordinary C function. Keep the macro active to verify that distinction.
+    let path = header(
+        "#include <stdlib.h>\n#include <string.h>\n#undef memcpy\n#define memcpy(to,from,n) __builtin___memcpy_chk(to,from,n,__builtin_object_size(to,0))\n",
+    );
     let bindings = common::native_header(&path);
     let source = format!(
         r#"
@@ -820,7 +824,7 @@ fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_ca
             int key = 7;
             unsafe {{
                 qsort(&values[0], 6, sizeof(int), compare);
-                memcpy(&copy[0], &values[0], sizeof(values));
+                (memcpy)(&copy[0], &values[0], sizeof(values));
                 void* found = bsearch(&key, &copy[0], 6, sizeof(int), compare);
                 print(found != 0); print(*(int*)found);
             }}
