@@ -1,0 +1,11 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <ProjectGuid>{$guid1$}</ProjectGuid>
+    <CrustSdkPath Condition="'$(CrustSdkPath)' == ''">$(CRUST_SDK_PATH)</CrustSdkPath>
+  </PropertyGroup>
+  <Import Project="$(CrustSdkPath)/Crust.props" />
+  <PropertyGroup>
+    <CrustTarget>app</CrustTarget>
+  </PropertyGroup>
+  <Import Project="$(CrustSdkPath)/Crust.targets" />
+</Project>

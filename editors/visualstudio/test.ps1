@@ -28,7 +28,13 @@ if (-not $crustRegistration.Contains('"CodeBase"="$PackageFolder$\Crust.VisualSt
 }
 $crustProjectRegistration = Get-Content -LiteralPath (Join-Path $crustTestRoot 'crust.pkgdef') -Raw
 if (-not $crustProjectRegistration.Contains('Projects\{419D914F-6B6D-4C61-8E53-AAB562A9C7D0}') -or
-    -not $crustProjectRegistration.Contains('"DefaultProjectExtension"="crproj"')) { throw 'VSIX is missing the Crust project type.' }
+    -not $crustProjectRegistration.Contains('"DefaultProjectExtension"="crproj"') -or
+    -not $crustProjectRegistration.Contains('"Language(VsTemplate)"="Crust"') -or
+    -not $crustProjectRegistration.Contains('"TemplatesDir"="$PackageFolder$\ProjectTemplates"')) { throw 'VSIX is missing the Crust project type or template registration.' }
+$crustManifest = [xml](Get-Content -LiteralPath (Join-Path $crustTestRoot 'extension.vsixmanifest') -Raw)
+if (-not ($crustManifest.PackageManifest.Assets.Asset | Where-Object { $_.Type -eq 'Microsoft.VisualStudio.ProjectTemplate' -and $_.Path -eq 'ProjectTemplates' })) {
+    throw 'VSIX is missing its project-template asset.'
+}
 $crustSources = @{
     'Grammars/crust.tmLanguage.json' = 'editors/vscode/syntaxes/crust.tmLanguage.json'
     'language-configuration.json' = 'editors/vscode/language-configuration.json'
@@ -59,3 +65,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Client probe compilation failed' }
 & $crustProbe $crustTestRoot $VisualStudioRoot
 if ($LASTEXITCODE -ne 0) { throw 'Visual Studio client checks failed' }
 & (Join-Path $PSScriptRoot '../msbuild/test.ps1') -SdkRoot (Join-Path $crustTestRoot 'Sdk') -CompilerPath (Join-Path $crustTestRoot 'Server/crust.exe') -MSBuild (Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/MSBuild.exe')
+& python (Join-Path $PSScriptRoot 'tests/project_templates.py') $crustTestRoot $VisualStudioRoot
+if ($LASTEXITCODE -ne 0) { throw 'Packaged project template checks failed' }

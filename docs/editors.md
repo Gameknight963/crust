@@ -105,6 +105,11 @@ Install `target/crust-visualstudio.vsix`, restart Visual Studio, and open a fold
 containing `crust.toml` and `.cr` files. The extension targets versions 17.14
 through 18.x on Windows x64.
 
+Use **File > New > Project** and search for **Crust** to create a console
+application, static library, or shared library. Templates include `.crproj`,
+`crust.toml`, and starter source with native debug information enabled.
+Use the console template to try **F5** debugging and **Ctrl+F5** console execution.
+
 Open a source file or `crust.toml`, then use **Tools > Crust** to build, check,
 or run its project. Commands save open documents, write compiler output to the
 **Crust** Output pane, and put source errors in the Error List. Run selects an

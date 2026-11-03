@@ -1,0 +1,10 @@
+[project]
+name = "$safeprojectname$"
+
+[[targets]]
+name = "library"
+kind = "shared-library"
+entry = "src/library.cr"
+
+[targets.native]
+debug = true

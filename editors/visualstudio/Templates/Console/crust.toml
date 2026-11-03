@@ -1,0 +1,10 @@
+[project]
+name = "$safeprojectname$"
+
+[[targets]]
+name = "app"
+kind = "executable"
+entry = "src/main.cr"
+
+[targets.native]
+debug = true

@@ -92,8 +92,12 @@
     <Content Include="../../target/msbuild/tasks/net8.0/Crust.Build.Tasks.dll">
       <Link>Sdk/tasks/net8.0/Crust.Build.Tasks.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../target/visualstudio-templates/*.zip">
+      <Link>ProjectTemplates/Crust/1033/%(Filename)%(Extension)</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <Target Name="RequireLanguageServer" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('../../target/visualstudio-templates/Console.zip') Or !Exists('../../target/visualstudio-templates/StaticLibrary.zip') Or !Exists('../../target/visualstudio-templates/SharedLibrary.zip')" Text="Run editors/visualstudio/build.ps1 to package the project templates." />
     <Error Condition="!Exists('$(LibClangRuntime)')" Text="Run editors/visualstudio/build.ps1 to stage the bundled libclang runtime." />
     <Error Condition="!Exists('$(ServerExecutable)')" Text="Build the bundled server with cargo build --release --bin crust-lsp, or pass /p:ServerExecutable with its full path." />
     <Error Condition="!Exists('$(CompilerExecutable)') Or !Exists('$(ConsoleExecutable)')" Text="Run editors/visualstudio/build.ps1 to build the bundled compiler and console launcher." />

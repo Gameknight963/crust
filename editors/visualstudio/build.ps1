@@ -35,6 +35,14 @@ $crustConsoleDirectory = Join-Path $crustRepoRoot 'target/visualstudio-console'
 $crustCsc = Join-Path (Split-Path -Parent $MSBuild) 'Roslyn/csc.exe'
 & $crustCsc /nologo /warnaserror /langversion:latest /target:exe "/out:$crustConsoleDirectory/Crust.Console.exe" (Join-Path $PSScriptRoot 'ConsoleRunner.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Console launcher build failed' }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$crustTemplateOutput = Join-Path $crustRepoRoot 'target/visualstudio-templates'
+[IO.Directory]::CreateDirectory($crustTemplateOutput) | Out-Null
+foreach ($crustTemplate in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'Templates') -Directory) {
+    $crustTemplateZip = Join-Path $crustTemplateOutput ($crustTemplate.Name + '.zip')
+    if (Test-Path -LiteralPath $crustTemplateZip) { Remove-Item -LiteralPath $crustTemplateZip }
+    [IO.Compression.ZipFile]::CreateFromDirectory($crustTemplate.FullName, $crustTemplateZip)
+}
 & $MSBuild @crustBuildArgs
 if ($LASTEXITCODE -ne 0) { throw 'Visual Studio extension build failed' }
 $crustArtifact = Join-Path $PSScriptRoot "bin/$Configuration/net472/Crust.VisualStudio.vsix"

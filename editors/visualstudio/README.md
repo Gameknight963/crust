@@ -9,6 +9,7 @@ Language support through the bundled `crust-lsp` server:
 - Project build and check commands with Error List navigation
 - Executable target selection and console execution
 - MSBuild `.crproj` projects with source files and build properties
+- Console application, static library, and shared library project templates
 - Native debugger launch through F5 and console execution through Ctrl+F5
 
 ## Build and install
@@ -19,9 +20,27 @@ Build on Windows x64 with Rust, the .NET 8 SDK or newer, and Visual Studio MSBui
 ./editors/visualstudio/build.ps1
 ```
 
-Install `target/crust-visualstudio.vsix`, restart Visual Studio, and open a
-folder containing `crust.toml` and `.cr` files. The extension targets Visual
-Studio versions 17.14 through 18.x.
+Install `target/crust-visualstudio.vsix` and restart Visual Studio. The extension
+targets Visual Studio versions 17.14 through 18.x.
+
+## Create a project
+
+Choose **File > New > Project** and search for **Crust**:
+
+- **Crust Console Application** creates an executable with a greeting
+- **Crust Static Library** creates a native archive with an exported `crust_add` function
+- **Crust Shared Library** creates a DLL with the same exported function
+
+Each template creates a `.crproj`, `crust.toml`, and source file under `src/`.
+Native debug information is enabled. Build the console project, set a breakpoint
+in `src/main.cr`, and press **F5** to test source debugging. **Ctrl+F5** runs it
+without debugging. Library projects build through the solution and can be linked
+by another project's manifest.
+
+Install a C11 compiler and development libraries for native builds, as described
+in the project README. Templates use the compiler and SDK bundled with the VSIX.
+
+You can also open a folder containing an existing `crust.toml` and `.cr` files.
 
 Open a `.crproj` as a project or add it to an existing solution for Solution
 Explorer and solution builds. See [MSBuild projects](../msbuild/) for the project
@@ -94,3 +113,6 @@ It also tests the packaged MSBuild SDK with both MSBuild hosts, shared libraries
 target selection, relative paths, and source diagnostics.
 Launch checks verify target selection, the native debug engine, F5 and Ctrl+F5
 flags, arguments, and working-directory settings.
+Template checks read the packaged Visual Studio catalog, create each project in
+a path containing spaces and Unicode, build with both MSBuild hosts, run the
+console program, and link and run consumers of both library templates.

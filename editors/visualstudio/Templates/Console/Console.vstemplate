@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" Type="Project" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005">
+  <TemplateData>
+    <Name>Crust Console Application</Name>
+    <Description>A Crust console program with native debug information.</Description>
+    <ProjectType>Crust</ProjectType>
+    <TemplateID>Crust.Console</TemplateID>
+    <DefaultName>CrustConsole</DefaultName>
+    <CreateNewFolder>true</CreateNewFolder>
+    <ProvideDefaultName>true</ProvideDefaultName>
+    <SortOrder>100</SortOrder>
+    <LanguageTag>Crust</LanguageTag>
+    <PlatformTag>windows</PlatformTag>
+    <ProjectTypeTag>console</ProjectTypeTag>
+  </TemplateData>
+  <TemplateContent>
+    <Project File="Project.crproj" TargetFileName="$projectname$.crproj" ReplaceParameters="true">
+      <ProjectItem ReplaceParameters="true">crust.toml</ProjectItem>
+      <Folder Name="src" TargetFolderName="src">
+        <ProjectItem OpenInEditor="true">main.cr</ProjectItem>
+      </Folder>
+    </Project>
+  </TemplateContent>
+</VSTemplate>

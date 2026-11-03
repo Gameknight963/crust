@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" Type="Project" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005">
+  <TemplateData>
+    <Name>Crust Static Library</Name>
+    <Description>A Crust static library with an exported C function.</Description>
+    <ProjectType>Crust</ProjectType>
+    <TemplateID>Crust.StaticLibrary</TemplateID>
+    <DefaultName>CrustStaticLibrary</DefaultName>
+    <CreateNewFolder>true</CreateNewFolder>
+    <ProvideDefaultName>true</ProvideDefaultName>
+    <SortOrder>110</SortOrder>
+    <LanguageTag>Crust</LanguageTag>
+    <PlatformTag>windows</PlatformTag>
+    <ProjectTypeTag>library</ProjectTypeTag>
+  </TemplateData>
+  <TemplateContent>
+    <Project File="Project.crproj" TargetFileName="$projectname$.crproj" ReplaceParameters="true">
+      <ProjectItem ReplaceParameters="true">crust.toml</ProjectItem>
+      <Folder Name="src" TargetFolderName="src">
+        <ProjectItem OpenInEditor="true">library.cr</ProjectItem>
+      </Folder>
+    </Project>
+  </TemplateContent>
+</VSTemplate>

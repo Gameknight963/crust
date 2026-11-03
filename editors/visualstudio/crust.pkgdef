@@ -15,9 +15,16 @@
 "DisplayProjectFileExtensions"="Crust Projects (*.crproj);*.crproj"
 "DefaultProjectExtension"="crproj"
 "PossibleProjectExtensions"="crproj"
+"Language(VsTemplate)"="Crust"
+"ProjectTemplatesDir"="$PackageFolder$\ProjectTemplates"
 "Capabilities"="Crust;HandlesOwnReload;OpenProjectFile;UseFileGlobs"
 "DisableAsynchronousSolutionLoad"=dword:00000000
 "PrefetchFactory"="{3998970A-AEE1-4216-A54F-0A99D20A1FAB}"
+
+[$RootKey$\NewProjectTemplates\TemplateDirs\{f9801e0c-892b-4886-8045-29fe53df7965}\/1]
+@="Crust"
+"SortPriority"=dword:00000064
+"TemplatesDir"="$PackageFolder$\ProjectTemplates"
 
 [$RootKey$\Editors\{FA3CD31E-987B-443A-9B81-186104E8DAC1}\Extensions]
 "crproj"=dword:00000020
