@@ -47,8 +47,20 @@ pub(crate) fn generate(checked: &CheckedProgram) -> String {
 }
 
 pub(crate) fn generate_with_sources(checked: &CheckedProgram, sources: &[Source]) -> String {
+    return generate_inner(checked, sources, true);
+}
+
+pub(crate) fn generate_replayed(checked: &CheckedProgram, sources: &[Source]) -> String {
+    return generate_inner(checked, sources, false);
+}
+
+fn generate_inner(checked: &CheckedProgram, sources: &[Source], native: bool) -> String {
     let program = &checked.program;
-    let mut native_headers = program.native_code.clone();
+    let mut native_headers = if native {
+        program.native_code.clone()
+    } else {
+        String::new()
+    };
     native_headers.push_str(
         &program
             .native_headers

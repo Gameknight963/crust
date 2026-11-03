@@ -14,10 +14,17 @@ fn enabled() -> bool {
 }
 
 fn declarations() -> String {
-    let header = root().join("examples/sqlite_project/native.h");
+    let header = root().join(if enabled() {
+        "examples/sqlite_project/native.h"
+    } else {
+        "tests/native/sqlite_api.h"
+    });
     return format!(
         "{}\n{}\n{}",
-        include_str!("../examples/sqlite_project/bindings.cr"),
+        include_str!("../examples/sqlite_project/bindings.cr").replace(
+            "\"native.h\"",
+            &serde_json::to_string(&header.to_string_lossy().replace('\\', "/")).unwrap()
+        ),
         include_str!("../lib/result.cr"),
         include_str!("../examples/sqlite_project/database.cr")
             .replace("import \"bindings.cr\";", "")
@@ -72,19 +79,24 @@ fn sqlite_archive() -> &'static Path {
 }
 
 fn run(source: &str) -> Output {
-    let generated = crust::compile(&format!("{}\n{source}", declarations()))
-        .unwrap()
-        .replace("int main(void)", "int crust_sqlite_test_main(void)")
-        .replace("sqlite3_open(", "tracked_sqlite_open(")
-        .replace("sqlite3_close(", "tracked_sqlite_close(")
-        .replace("sqlite3_prepare_v2(", "tracked_sqlite_prepare(")
-        .replace("sqlite3_finalize(", "tracked_sqlite_finalize(");
     let header = root().join("examples/sqlite_project/native.h");
-    let generated = format!(
-        "#include {}\n#include <stdlib.h>\n{generated}\n{}",
+    let tracker = include_str!("native/sqlite_tracker.c");
+    let source = format!(
+        "#pragma crust begin_c\n#include {}\n#include <stdlib.h>\n{tracker}\n#pragma crust end_c\n#define sqlite3_open tracked_sqlite_open\n#define sqlite3_close tracked_sqlite_close\n#define sqlite3_prepare_v2 tracked_sqlite_prepare\n#define sqlite3_finalize tracked_sqlite_finalize\n#define main crust_sqlite_test_main\n{}\n{source}\n#undef main\nint main(){{sqlite_test_initialize();int result=crust_sqlite_test_main();return sqlite_test_finish(result);}}\n",
         serde_json::to_string(&header.to_string_lossy().replace('\\', "/")).unwrap(),
-        include_str!("native/sqlite_tracker.c")
+        declarations()
     );
+    let options = native_options();
+    let entry = root().join("__crust_sqlite_test__.cr");
+    let sources = crust::source::SourceSet::load_with_options(&entry, &options, |path| {
+        if path == entry {
+            Ok(source.clone())
+        } else {
+            std::fs::read_to_string(path)
+        }
+    })
+    .unwrap();
+    let generated = sources.compile().unwrap();
     let directory = root().join(format!("target/sqlite-tests/{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join(format!("case_{}.c", NEXT.fetch_add(1, Ordering::Relaxed)));
@@ -146,43 +158,8 @@ fn sqlite_bindings_match_the_pinned_header() {
     if !enabled() {
         return;
     }
-    let functions = [
-        "sqlite3_open",
-        "sqlite3_close",
-        "sqlite3_prepare_v2",
-        "sqlite3_finalize",
-        "sqlite3_step",
-        "sqlite3_reset",
-        "sqlite3_bind_int64",
-        "sqlite3_column_count",
-        "sqlite3_column_type",
-        "sqlite3_column_int64",
-    ];
-    let macros = [
-        "SQLITE_OK",
-        "SQLITE_ERROR",
-        "SQLITE_MISUSE",
-        "SQLITE_RANGE",
-        "SQLITE_MISMATCH",
-        "SQLITE_INTEGER",
-        "SQLITE_ROW",
-        "SQLITE_DONE",
-        "SQLITE_CONSTRAINT",
-        "SQLITE_CANTOPEN",
-    ];
-    let bindings = crust::bindings::generate(
-        &root().join("examples/sqlite_project/native.h"),
-        &crust::bindings::Options {
-            functions: functions.into_iter().map(str::to_owned).collect(),
-            macros: macros.into_iter().map(str::to_owned).collect(),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        bindings.replace('\r', ""),
-        include_str!("../examples/sqlite_project/bindings.cr").replace('\r', "")
-    );
+    let source = format!("{}\nint main() {{return 0;}}", declarations());
+    crust::check(&source).unwrap();
 }
 
 #[test]

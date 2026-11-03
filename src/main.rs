@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use crust::project::{Project, TargetKind};
-mod cli_bindings;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -42,12 +41,6 @@ fn run() -> Result<ExitCode, String> {
     // args_os preserves source and project paths that aren't valid UTF-8.
     let arguments: Vec<_> = env::args_os().skip(1).collect();
     if arguments
-        .first()
-        .is_some_and(|argument| argument == "import-c")
-    {
-        return cli_bindings::run(arguments.into_iter().skip(1).collect());
-    }
-    if arguments
         .iter()
         .take_while(|argument| *argument != "--")
         .any(|argument| argument == "--help" || argument == "-h")
@@ -56,9 +49,6 @@ fn run() -> Result<ExitCode, String> {
             "Usage: crust [run|build|emit-c|emit-header|check|tokens|metadata] [file.cr|crust.toml|directory]"
         );
         println!("       crust [command] [--project <path>] [--target <name>]");
-        println!(
-            "       crust import-c <header.h> [--function <name>] [--variable <name>] [--enum <tag>] [--struct <tag>] [--union <tag>] [--typedef <name>] [--macro <name>]"
-        );
         println!("Project commands discover crust.toml in the current directory or its parents.");
         println!("A source filename compiles and runs that file.");
         println!("build/run use CC, or clang on Windows and cc elsewhere.");
@@ -235,9 +225,10 @@ fn run_project(mut project: Project, options: &Options) -> Result<ExitCode, Stri
         .collect();
     if matches!(options.mode, Mode::Build | Mode::Run) {
         for target in &project.targets {
-            let sources = crust::source::SourceSet::load_with_options(
+            let sources = crust::source::SourceSet::load_for_target(
                 &target.entry,
                 &target.native,
+                target.kind,
                 |path| fs::read_to_string(path),
             )
             .map_err(|error| error.to_string())?;
@@ -290,7 +281,7 @@ fn process_source(
     }
     match mode {
         Mode::Tokens => {
-            let sources = crust::source::SourceSet::load_with_options(path, native, |path| {
+            let sources = crust::source::SourceSet::load_for_target(path, native, kind, |path| {
                 fs::read_to_string(path)
             })
             .map_err(|error| error.to_string())?;
@@ -306,7 +297,7 @@ fn process_source(
             return Ok(ExitCode::SUCCESS);
         }
         Mode::Check => {
-            let sources = crust::source::SourceSet::load_with_options(path, native, |path| {
+            let sources = crust::source::SourceSet::load_for_target(path, native, kind, |path| {
                 fs::read_to_string(path)
             })
             .map_err(|error| error.to_string())?;
@@ -318,9 +309,10 @@ fn process_source(
         }
         _ => {}
     }
-    let sources =
-        crust::source::SourceSet::load_with_options(path, native, |path| fs::read_to_string(path))
-            .map_err(|error| error.to_string())?;
+    let sources = crust::source::SourceSet::load_for_target(path, native, kind, |path| {
+        fs::read_to_string(path)
+    })
+    .map_err(|error| error.to_string())?;
     if mode == Mode::EmitHeader {
         let header = sources
             .emit_header(kind.program_kind())
@@ -430,7 +422,9 @@ fn build(
                 )
         };
         for input in protected {
-            let input = input.canonicalize().map_err(|error| error.to_string())?;
+            let input = input
+                .canonicalize()
+                .map_err(|error| format!("could not resolve input {}: {error}", input.display()))?;
             if resolved == input
                 || (debug_bundle.as_ref() == Some(destination) && input.starts_with(&resolved))
             {

@@ -103,6 +103,7 @@ fn library_names() -> &'static [&'static str] {
 api! {
     clang_createIndex(c_int,c_int) -> *mut c_void;
     clang_Cursor_isAnonymousRecordDecl(Cursor) -> c_uint;
+    clang_getCursorTLSKind(Cursor) -> c_uint;
     clang_disposeIndex(*mut c_void) -> ();
     clang_parseTranslationUnit2(*mut c_void,*const c_char,*const *const c_char,c_int,*mut Unsaved,c_uint,c_uint,*mut *mut c_void) -> c_int;
     clang_disposeTranslationUnit(*mut c_void) -> ();
@@ -183,7 +184,8 @@ impl Unit {
         let name = CString::new("crust-native.c").unwrap();
         let source = CString::new(source).map_err(|_| "native source contains a null byte")?;
         let mut arguments = vec![
-            CString::new("-xc").unwrap(),
+            CString::new("-x").unwrap(),
+            CString::new("cpp-output").unwrap(),
             CString::new("-std=c11").unwrap(),
         ];
         if let Some(target) = target {
@@ -300,7 +302,7 @@ impl Unit {
                 }
                 105 | 106 => {
                     let cursor = (self.api.clang_getTypeDeclaration)(ty);
-                    json!({"kind":if ty.kind==105{"RecordType"}else{"EnumType"},"decl":{"name":self.name(cursor)},"type":{"qualType":spelling}})
+                    json!({"kind":if ty.kind==105{"RecordType"}else{"EnumType"},"decl":{"name":self.name(cursor)},"type":{"qualType":if ty.kind==105{format!("{} {}",if cursor.kind==3{"union"}else{"struct"},self.name(cursor))}else{spelling}}})
                 }
                 110 | 111 => {
                     let mut inner = vec![self.ty((self.api.clang_getResultType)(ty), depth + 1)?];
@@ -369,6 +371,13 @@ pub(crate) fn declarations(
     let mut variables = Vec::new();
     let mut aliases = Vec::new();
     let mut wanted = names.clone();
+    for cursor in &cursors {
+        let name = unit.name(*cursor);
+        if names.contains(&format!("c_{name}")) {
+            wanted.insert(name);
+        }
+    }
+
     fn dependencies(node: &Value, wanted: &mut std::collections::HashSet<String>) {
         if let Some(name) = node["decl"]["name"].as_str() {
             wanted.insert(name.to_owned());
@@ -413,10 +422,24 @@ pub(crate) fn declarations(
         }
     }
     let mut locations = std::collections::HashMap::new();
+    let mut dll_imports = std::collections::HashSet::new();
     for cursor in &cursors {
         let name = unit.name(*cursor);
         if name.is_empty() || !wanted.contains(&name) {
             continue;
+        }
+        if cursor.kind == 9 && unsafe { (unit.api.clang_getCursorTLSKind)(*cursor) } != 0 {
+            return Err(format!(
+                "C variable '{name}' requires a native thread-local wrapper"
+            ));
+        }
+        if unit.children(*cursor).iter().any(|child| child.kind == 418) {
+            return Err(format!(
+                "C declaration '{name}' is declared for DLL export. Use the header's consumer configuration"
+            ));
+        }
+        if unit.children(*cursor).iter().any(|child| child.kind == 419) {
+            dll_imports.insert(name.clone());
         }
         locations
             .entry(name.clone())
@@ -531,8 +554,16 @@ pub(crate) fn declarations(
             format!(" = \"{name}\"")
         };
         output.push_str(&format!(
-            "extern {} {}{}({}){alias};\n",
-            signature.result, signature.convention, binding, signature.parameters
+            "extern {}{} {}{}({}){alias};\n",
+            if dll_imports.contains(&name) {
+                "__declspec(dllimport) "
+            } else {
+                ""
+            },
+            signature.result,
+            signature.convention,
+            binding,
+            signature.parameters
         ));
     }
     for (name, ty) in variables {
@@ -546,7 +577,12 @@ pub(crate) fn declarations(
             format!(" = \"{name}\"")
         };
         output.push_str(&format!(
-            "extern {} {binding}{alias};\n",
+            "extern {}{} {binding}{alias};\n",
+            if dll_imports.contains(&name) {
+                "__declspec(dllimport) "
+            } else {
+                ""
+            },
             renderer.object_type(&ty)?
         ));
     }

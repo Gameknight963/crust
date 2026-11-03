@@ -21,8 +21,7 @@ Expected output:
 Preparation downloads the [official SQLite amalgamation](https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip),
 checks its SHA-256 digest, and extracts its source and header under `target/sqlite`.
 `prepare.py --offline` reuses the cached archive. SQLite is in the
-[public domain](https://www.sqlite.org/copyright.html). The generated bindings
-are committed in [bindings.cr](bindings.cr).
+[public domain](https://www.sqlite.org/copyright.html). [bindings.cr](bindings.cr) includes the prepared header in a C region.
 
 `Database` owns a connection. `Statement` owns a prepared statement and retains
 a shared reference to its database. Moving either owner transfers its resource.

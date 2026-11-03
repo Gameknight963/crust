@@ -46,13 +46,15 @@ int tracked_sqlite_finalize(sqlite3_stmt *statement) {
     return code;
 }
 
-int main(void) {
+static void sqlite_test_initialize(void) {
     if (sqlite3_config(SQLITE_CONFIG_GETMALLOC, &sqlite_allocator) != SQLITE_OK) abort();
     sqlite3_mem_methods allocator = sqlite_allocator;
     allocator.xMalloc = sqlite_test_malloc;
     allocator.xRealloc = sqlite_test_realloc;
     if (sqlite3_config(SQLITE_CONFIG_MALLOC, &allocator) != SQLITE_OK) abort();
-    int result = crust_sqlite_test_main();
+}
+
+static int sqlite_test_finish(int result) {
     if (sqlite_live_databases != 0 || sqlite_live_statements != 0) abort();
     if (sqlite3_shutdown() != SQLITE_OK || sqlite3_memory_used() != 0) abort();
     return result;

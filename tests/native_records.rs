@@ -24,16 +24,9 @@ fn native_bitfields_and_anonymous_groups_cross_callback_and_return_abis() {
         }
     "#,
     );
-    let selected = crust::bindings::Options {
-        structs: vec!["Message".to_owned()],
-        functions: vec!["message_apply".to_owned()],
-        ..Default::default()
-    };
-    let bindings = crust::bindings::generate(&path, &selected).unwrap();
-    assert_eq!(
-        bindings,
-        crust::bindings::generate(&path, &selected).unwrap()
-    );
+
+    let bindings = common::native_header(&path);
+
     let output = common::tracked_run(&format!(
         r#"
         {bindings}
@@ -243,20 +236,8 @@ fn imports_complete_records_by_value_and_renames_keyword_tags_and_fields() {
     let path = header(
         "struct unsafe {int init;int c_init;};static inline struct unsafe create_record(int value){return (struct unsafe){value,7};}",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["unsafe".to_owned()],
-            functions: vec!["create_record".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(
-        bindings.contains("extern struct c_unsafe = \"unsafe\""),
-        "{bindings}"
-    );
-    assert!(bindings.contains("c_init_ = \"init\""), "{bindings}");
+    let bindings = common::native_header(&path);
+
     let output = common::tracked_run(&format!(
         "{bindings} int main(){{unsafe{{c_unsafe value=create_record(42);print(value.c_init_);print(value.c_init);}}return 0;}}"
     ));
@@ -303,7 +284,7 @@ fn native_record_and_field_rename_preserves_c_names() {
 }
 
 #[test]
-fn cli_record_imports_preserve_callbacks_and_variadic_aggregate_arguments() {
+fn header_regions_preserve_callbacks_and_variadic_aggregate_arguments() {
     let path = header(
         r#"
         #include <stdarg.h>
@@ -313,29 +294,7 @@ fn cli_record_imports_preserve_callbacks_and_variadic_aggregate_arguments() {
         static inline int variadic_sum(int count,...){va_list args;va_start(args,count);int result=0;for(int i=0;i<count;i++){struct Point value=va_arg(args,struct Point);result+=value.x+value.y;}va_end(args);return result;}
     "#,
     );
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args([
-            "--struct",
-            "Point",
-            "--union",
-            "Number",
-            "--function",
-            "apply",
-            "--function",
-            "variadic_sum",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let bindings = String::from_utf8(output.stdout).unwrap();
-    assert!(bindings.contains("extern struct Point"));
-    assert!(bindings.contains("extern union Number"));
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} Point shift(Point value){{value.x++;return value;}} int main(){{Point value={{.x=41,.y=7}};unsafe{{Point changed=apply(&shift,value);print(changed.x);print(variadic_sum(2,value,changed));}}return 0;}}"
     );
@@ -352,57 +311,17 @@ fn cli_record_imports_preserve_callbacks_and_variadic_aggregate_arguments() {
 }
 
 #[test]
-fn selected_records_validate_tags_fields_and_complete_dependencies() {
+fn native_header_discovery_follows_complete_record_dependencies() {
     let path = header(
-        "struct Inner{int value;};struct Outer{struct Inner inner;};union Choice{int value;double number;};struct Qualified{const int value;};struct Bits{unsigned int value:3;};",
+        "struct Inner{int value;};struct Outer{struct Inner inner;};static int read_outer(struct Outer value){return value.inner.value;}",
     );
-    for options in [
-        crust::bindings::Options {
-            structs: vec!["Missing".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
-            structs: vec!["Choice".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
-            structs: vec!["Inner".to_owned(), "Inner".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
-            structs: vec!["bad-name".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
-            structs: vec!["Outer".to_owned()],
-            ..Default::default()
-        },
-        crust::bindings::Options {
-            structs: vec!["MissingBits".to_owned()],
-            ..Default::default()
-        },
-    ] {
-        assert!(
-            crust::bindings::generate(&path, &options).is_err(),
-            "{options:?}"
-        );
-    }
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Outer".to_owned(), "Inner".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let output = common::tracked_run(&format!(
-        "{bindings} int main(){{Outer value={{.inner={{.value=42}}}};print(value.inner.value);return 0;}}"
-    ));
+    let source = format!(
+        "{} int main() {{Outer value={{.inner={{.value=42}}}};print(read_outer(value));return 0;}}",
+        common::native_header(&path)
+    );
+    let output = common::tracked_run(&source);
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "42\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
 }
 
 #[test]
@@ -483,16 +402,8 @@ fn native_arrays_preserve_layout_copies_borrows_and_static_initializers() {
     let path = header(
         "struct Item { int n; };\n#pragma pack(push,1)\nstruct Packet { char tag; int values[3]; int matrix[2][2]; char text[4]; struct Item items[2]; };\n#pragma pack(pop)\nstatic inline int read_packet(struct Packet p) { return p.values[1]+p.values[2]; }\n",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Packet".to_owned(), "Item".to_owned()],
-            functions: vec!["read_packet".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(bindings.contains("matrix[2][2]"), "{bindings}");
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"{bindings}
         const Packet template = {{.tag=1,.values={{1,2,3}},.matrix={{{{4,5}},{{6,7}}}},.text="abc",.items={{{{.n=8}},{{.n=9}}}}}};
@@ -525,14 +436,7 @@ fn native_qualified_fields_preserve_const_permissions_and_volatile_borrows() {
     let path = header(
         "#pragma pack(push,1)\nstruct Sample { const int id; volatile int ticks; const int frozen[2]; volatile int samples[2]; int *const pointer; };\n#pragma pack(pop)\n",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Sample".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         r#"{bindings}
         void increment(volatile int& value) {{ value++; }}
@@ -588,17 +492,11 @@ fn native_field_restrictions_report_frontend_errors() {
         "struct Native {int values[0];};",
     ] {
         let path = header(declaration);
-        assert!(
-            crust::bindings::generate(
-                &path,
-                &crust::bindings::Options {
-                    structs: vec!["Native".to_owned()],
-                    ..Default::default()
-                },
-            )
-            .is_err(),
-            "{declaration}"
+        let source = format!(
+            "{} int main(){{Native value={{}};return 0;}}",
+            common::native_header(&path)
         );
+        assert!(crust::check(&source).is_err(), "{declaration}");
     }
 }
 
@@ -643,14 +541,7 @@ fn native_array_fields_preserve_typedefs_callbacks_and_const_pointer_objects() {
     let path = header(
         "typedef int Row[2];struct Table { Row init[2]; int (*callbacks[1])(int); int *const targets[1]; const int *shared[1]; };\n",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Table".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         r#"{bindings}
         int increment(int value) {{return value+1;}}
@@ -676,17 +567,12 @@ fn native_bitfields_read_write_update_and_preserve_adjacent_members() {
     let path = header(
         "#pragma pack(push,1)\nstruct Bits { char tag; unsigned int first:3; signed int second:4; volatile unsigned int ticks:5; _Bool ready:1; int tail; };\n#pragma pack(pop)\n#define first 123\n",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Bits".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(bindings.contains("first : 3"), "{bindings}");
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"{bindings}
+#undef first
+
         int calls=0;
         int index(){{unsafe{{calls++;}}return 0;}}
         int main(){{
@@ -710,13 +596,13 @@ fn native_bitfields_read_write_update_and_preserve_adjacent_members() {
         "print(sizeof(value.first));",
     ] {
         let source = format!(
-            "{bindings} int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
+            "{bindings}\n#undef first\n int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
         );
         assert!(crust::check(&source).is_err(), "{operation}");
     }
     for operation in ["value.first=8;", "value.second=-9;", "value.first+=7;"] {
         let source = format!(
-            "{bindings} int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
+            "{bindings}\n#undef first\n int main(){{Bits value={{.tag=0,.first=1,.second=0,.ticks=0,.ready=false,.tail=0}};{operation}return 0;}}"
         );
         let output = common::tracked_run(&source);
         assert!(!output.status.success(), "{operation}");
@@ -755,29 +641,17 @@ fn native_bitfields_import_enum_typedef_const_and_keyword_members() {
     let path = header(
         "enum Mode{Low=0,High=5};typedef unsigned int Flags;struct EnumBits{enum Mode mode:4;Flags init:4;const unsigned int fixed:2;};\n#define Flags 123\n#define Mode 456\n",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["EnumBits".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
-        "{bindings} int main(){{EnumBits value={{.mode=Mode::High,.c_init=9,.fixed=2}};value.c_init++;print((int)value.mode);print(value.c_init);print(value.fixed);return 0;}}"
+        "{bindings}\n#undef Mode\n#undef Flags\nint main(){{EnumBits value={{.mode=Mode::High,.c_init=9,.fixed=2}};value.c_init++;print((int)value.mode);print(value.c_init);print(value.fixed);return 0;}}"
     );
     let analysis = crust::analyze(&source).unwrap();
-    let edits = analysis
-        .rename(0, source.find("fixed :").unwrap(), "frozen")
-        .unwrap();
-    let mut renamed = source.clone();
-    for edit in edits.iter().rev() {
-        renamed.replace_range(
-            edit.location.span.start..edit.location.span.end,
-            &edit.new_text,
-        );
-    }
-    let output = common::tracked_run(&renamed);
+    assert!(
+        analysis
+            .rename(0, source.find(".fixed=").unwrap() + 1, "frozen")
+            .is_err()
+    );
+    let output = common::tracked_run(&source);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
@@ -790,16 +664,8 @@ fn anonymous_native_groups_promote_members_and_preserve_union_aliases() {
     let path = header(
         "struct Packet{int tag;union{int number;struct{short low;short high;};};struct{int x;int y;};int tail;};static inline int packet_sum(struct Packet p){return p.low+p.high+p.x+p.y+p.tail;}",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Packet".to_owned()],
-            functions: vec!["packet_sum".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(bindings.contains("union {"), "{bindings}");
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"{bindings}
         const Packet stored={{.tag=7,.low=10,.high=20,.x=1,.y=2,.tail=9}};
@@ -839,14 +705,7 @@ fn anonymous_native_groups_promote_members_and_preserve_union_aliases() {
 #[test]
 fn native_unions_can_initialize_an_anonymous_struct_variant() {
     let path = header("union Value{struct{int first;int second;};double other;};");
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            unions: vec!["Value".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let output = common::tracked_run(&format!(
         "{bindings} int main(){{Value value={{.first=40,.second=2}};unsafe{{print(value.first+value.second);}}return 0;}}"
     ));
@@ -862,14 +721,7 @@ fn anonymous_native_group_members_preserve_qualifiers() {
     let path = header(
         "struct QualifiedGroup{struct{const int frozen;const unsigned int flag:3;};union{volatile int counter;volatile int other;};};",
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["QualifiedGroup".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} int main(){{QualifiedGroup value={{.frozen=42,.flag=3,.counter=1}};unsafe{{value.counter++;print(value.counter);}}print(value.frozen);print(value.flag);return 0;}}"
     );
@@ -900,20 +752,8 @@ fn native_flexible_arrays_expose_trailing_storage_as_raw_pointer_views() {
         static inline size_t packet_prefix_size(void){return sizeof(struct Packet);}
     "#,
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Packet".to_owned()],
-            functions: vec![
-                "packet_create".to_owned(),
-                "packet_destroy".to_owned(),
-                "packet_prefix_size".to_owned(),
-            ],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(bindings.contains("values[]"), "{bindings}");
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"{bindings}
         int main(){{unsafe{{
@@ -969,15 +809,7 @@ fn native_flexible_rows_preserve_array_stride_and_qualifiers() {
         static inline void rows_destroy(struct Rows* value){free(value);}
     "#,
     );
-    let bindings = crust::bindings::generate(
-        &path,
-        &crust::bindings::Options {
-            structs: vec!["Rows".to_owned()],
-            functions: vec!["rows_create".to_owned(), "rows_destroy".to_owned()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         r#"{bindings} int main(){{unsafe{{
         Rows* rows=rows_create();if(rows==0)return 1;

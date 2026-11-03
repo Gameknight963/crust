@@ -137,6 +137,55 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     return tokenize_raw(&crate::preprocess::editor_text(source));
 }
 
+// Import discovery runs before conditional preprocessing. Invalid tokens in an
+// inactive branch must not prevent finding literal source dependencies.
+pub(crate) fn discovery_tokens(source: &str) -> Vec<SpannedToken> {
+    let masked = crate::preprocess::editor_text(source);
+    let mut lexer = Lexer {
+        source: &masked,
+        offset: 0,
+        line: 1,
+        column: 1,
+    };
+    let mut tokens = Vec::new();
+    while let Some(current) = lexer.peek() {
+        if current.is_ascii_whitespace() {
+            lexer.advance();
+            continue;
+        }
+        let start = lexer.location();
+        if current == '/' && lexer.peek_next() == Some('/') {
+            lexer.skip_line_comment();
+            continue;
+        }
+        if current == '/' && lexer.peek_next() == Some('*') {
+            let _ = lexer.skip_block_comment(start);
+            continue;
+        }
+        let kind = if current.is_ascii_alphabetic() || current == '_' {
+            Ok(lexer.identifier(start))
+        } else if current.is_ascii_digit() {
+            lexer.number(start)
+        } else if current == '\'' {
+            lexer.character(start)
+        } else if current == '"' {
+            lexer.string(start)
+        } else {
+            lexer.operator_or_punctuation(start)
+        };
+        if let Ok(kind) = kind {
+            tokens.push(SpannedToken {
+                kind,
+                span: lexer.finish_span(start),
+            });
+        }
+        if lexer.offset == start.start {
+            lexer.advance();
+        }
+    }
+    return tokens;
+}
+
 pub(crate) fn tokenize_raw(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     let mut lexer = Lexer {
         source,

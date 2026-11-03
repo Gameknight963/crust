@@ -41,21 +41,30 @@ follow C rules and are checked by the C compiler.
 `#define` works at file scope outside native regions too. Definitions, token
 pasting, stringification, conditional compilation, and includes are handled by
 the C preprocessor. An include inside a C region supplies C declarations and
-native definitions. The compiler preserves native source and directives for
-final C compilation. It uses the preprocessed C regions for declaration analysis.
+native definitions. Crust discovers native types from the expanded C regions.
 
 Crust macros can expand to `Box<int>`, `move(value)`, or other Crust syntax.
 The ownership checker sees the expansion. For example, `TAKE(owner)` moves
 `owner`, and later use produces the ordinary moved-value diagnostic.
 
-Project include directories, macro definitions, and debug/release selection
-apply during preprocessing as well as native compilation. Macros have the
-scope of one preprocessed source file. Crust `import` loads another source file
-with its own preprocessing environment.
+Project include directories, macro definitions, optimization profiles, sanitizer
+settings, and target-kind flags apply during preprocessing. Crust imports are
+included once in a shared preprocessing environment. Definitions in an imported
+file affect subsequent source in the importer, following translation-unit order.
 
-Native regions are preprocessed for declaration analysis and again during final
-C compilation. Stateful extensions such as `__COUNTER__` can produce different
-counts across those passes. Avoid depending on their counts across language regions.
+The compiler snapshots project source and header inputs. It first expands the
+mixed translation unit for declaration discovery and Crust checking. It then
+replays that same input with generated C appended, verifying that the original
+expansion is identical. This restores header guards and macro state before the
+generated runtime is processed. The final artifact contains frozen native C
+and generated C, compiled as preprocessed input. Native C is never expanded a
+third time, so `__COUNTER__` and other stateful macros keep the checked values.
+External system headers are validated for changes between passes.
+
+`emit-c` output from a preprocessed source begins with an explanatory marker.
+To compile it directly, use `CC -x cpp-output output.c -o program`. Additional
+native source files use ordinary C compilation. The Crust driver selects these
+input modes automatically.
 
 Native regions currently require file scope. To call an exported Crust function
 from C, declare its ordinary C prototype in a native region and define it with
@@ -72,11 +81,11 @@ imported native declarations. Renaming text produced by a macro expansion is
 rejected because changing that occurrence could change its macro definition or
 other expansions. Edit the macro definition explicitly.
 
-Included C headers must be saved before analysis. The server reports an unsaved
-header instead of analyzing its stale disk contents. C bodies do not yet have
-C-specific completion, diagnostics while typing, or refactoring through Crust's
+Clients that forward C document changes to `crust-lsp` use unsaved included-header
+snapshots. Header changes refresh the dependent Crust diagnostics.
+C bodies do not yet have C-specific completion, diagnostics while typing,
+or refactoring through Crust's
 language server. The native compiler diagnoses C bodies when building.
 
 Files without directives or project definitions retain the existing frontend
 path and can be checked without invoking a native compiler or loading libclang.
-The optional `import-c` binding-file generator still uses the Clang executable.

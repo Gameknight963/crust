@@ -71,7 +71,7 @@ impl Sanitizer {
     }
 }
 
-fn instrumentation(command: &mut Command, options: &Options) {
+pub(crate) fn instrumentation(command: &mut Command, options: &Options) {
     for sanitizer in &options.sanitizers {
         command.arg(format!("-fsanitize={}", sanitizer.name()));
     }
@@ -178,6 +178,19 @@ fn validate_debug_symbols(path: &Path) -> Result<(), String> {
     return Ok(());
 }
 
+fn input_language(path: &Path) -> &'static str {
+    use std::io::Read;
+    let mut prefix = [0; crate::preprocess::PREPROCESSED.len()];
+    if std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut prefix))
+        .is_ok()
+        && prefix == crate::preprocess::PREPROCESSED.as_bytes()
+    {
+        return "cpp-output";
+    }
+    return "c";
+}
+
 fn invoke_compiler(
     c_path: &Path,
     executable: &Path,
@@ -242,8 +255,9 @@ fn invoke_compiler(
         command.arg("-I").arg(paths.input(directory));
     }
     command
-        .args(["-x", "c"])
+        .args(["-x", input_language(c_path)])
         .arg(paths.input(c_path))
+        .args(["-x", "c"])
         .args(options.sources.iter().map(|source| paths.input(source)))
         .args(["-x", "none"]);
     command.args(options.link_inputs.iter().map(|input| paths.input(input)));

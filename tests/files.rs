@@ -162,30 +162,18 @@ fn result_file_operations_distinguish_eof_and_recover_from_native_failures() {
 #[test]
 fn file_bindings_match_the_native_header() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
-    let options = crust::bindings::Options {
-        binding_dir: Some(root.join("native")),
-        functions: [
-            "crust_file_temporary",
-            "crust_file_open",
-            "crust_file_close",
-            "crust_file_read_byte",
-            "crust_file_write_byte",
-            "crust_file_flush",
-            "crust_file_rewind",
-            "crust_file_sync_position",
-            "crust_file_eof",
-            "crust_file_error",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect(),
-        ..Default::default()
-    };
-    let generated = crust::bindings::generate(&root.join("native/file.h"), &options).unwrap();
-    assert_eq!(
-        generated.replace("\r\n", "\n"),
-        include_str!("../lib/native/file_bindings.cr").replace("\r\n", "\n")
+    let source = format!(
+        "#pragma crust begin_c\n#include {}\n#pragma crust end_c\n{}\nint main() {{return 0;}}",
+        serde_json::to_string(
+            &root
+                .join("native/file.h")
+                .to_string_lossy()
+                .replace('\\', "/")
+        )
+        .unwrap(),
+        include_str!("../lib/native/file_bindings.cr")
     );
+    crust::check(&source).unwrap();
     let sources =
         crust::source::SourceSet::load(&root.join("../examples/file_project/src/main.cr")).unwrap();
     sources.check().unwrap();

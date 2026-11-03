@@ -43,7 +43,7 @@ pub fn compile_static_library(
         let paths = tool_paths::ToolPaths::for_output(&object)?;
         let mut command = paths.command(&compiler);
         configure_windows_toolchain(&mut command);
-        command.args(["-std=c11", "-c", "-x", "c"]);
+        command.args(["-std=c11", "-c", "-x", super::input_language(source)]);
         command.arg(options.profile.compiler_flag());
         super::instrumentation(&mut command, options);
         if options.debug {

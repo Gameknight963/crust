@@ -31,6 +31,7 @@ struct OpenDocument {
 
 #[derive(Clone)]
 struct Document {
+    native: bool,
     version: i32,
     text: String,
 }
@@ -233,10 +234,11 @@ fn document_notification(
         "textDocument/didOpen" => {
             let params: OpenParams = serde_json::from_value(notification.params)?;
             let item = params.text_document;
-            if item.language_id != "crust" {
+            if !matches!(item.language_id.as_str(), "crust" | "c") {
                 return Ok(());
             }
             let document = Document {
+                native: item.language_id == "c",
                 version: item.version,
                 text: item.text,
             };
@@ -340,7 +342,10 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
     let mut graphs = Vec::new();
     let mut errors = Vec::new();
     let mut targets = HashMap::new();
-    for uri in documents.keys() {
+    for (uri, document) in documents {
+        if document.native {
+            continue;
+        }
         if let Some(path) = uri_path(uri) {
             match crate::source::SourceSet::load_with(&path, read) {
                 Ok(sources) => graphs.push(sources),
@@ -386,7 +391,12 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
             targets.insert(target.entry.clone(), target.kind.program_kind());
             graphs.retain(|sources| sources.files()[0].path != target.entry);
             errors.retain(|error| error.path != target.entry);
-            match crate::source::SourceSet::load_with_options(&target.entry, &target.native, read) {
+            match crate::source::SourceSet::load_for_target(
+                &target.entry,
+                &target.native,
+                target.kind,
+                read,
+            ) {
                 Ok(sources)
                     if sources
                         .files()
@@ -437,7 +447,8 @@ fn publish_all(
         .map(|uri| (uri.clone(), Vec::new()))
         .collect();
     for (uri, document) in documents {
-        if uri_path(uri).is_none()
+        if !document.native
+            && uri_path(uri).is_none()
             && let Err(error) = crate::check(&document.text)
         {
             diagnostics

@@ -1,7 +1,6 @@
 mod common;
 use common::compiler as crust;
 
-use crust::bindings::{Options, generate};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -18,190 +17,19 @@ fn header(source: &str) -> PathBuf {
     return header;
 }
 
-fn options(functions: &[&str]) -> Options {
-    return Options {
-        functions: functions.iter().map(|name| (*name).to_owned()).collect(),
-        ..Options::default()
-    };
-}
-
-#[test]
-fn canonical_header_paths_resolve_nested_relative_includes() {
-    let path = header("#include \"nested/declarations.h\"\n");
-    let directory = path.parent().unwrap().join("nested");
-    std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(
-        directory.join("declarations.h"),
-        "int nested_function(int value);\n",
-    )
-    .unwrap();
-    let bindings = generate(
-        &path.canonicalize().unwrap(),
-        &options(&["nested_function"]),
-    )
-    .unwrap();
-    assert!(
-        bindings.contains("extern int nested_function(int);"),
-        "{bindings}"
-    );
-}
-
-#[test]
-fn cli_imports_macro_constants_using_the_selected_header_configuration() {
-    let path = header("#define FEATURE_VALUE (FEATURE + 1u)\n");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--macro", "FEATURE_VALUE", "--define", "FEATURE=41u"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let bindings = String::from_utf8(output.stdout).unwrap();
-    let output = common::tracked_run(&format!(
-        "{bindings} int main() {{ print(FEATURE_VALUE); return 0; }}"
-    ));
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "42\n"
-    );
-    assert!(
-        crust::compile(&format!(
-            "{bindings} int main() {{ unsafe {{ FEATURE_VALUE=1; }} return 0; }}"
-        ))
-        .is_err()
-    );
-}
-
-#[test]
-fn imports_integer_and_boolean_macros_with_native_types_and_exact_values() {
-    let path = header(
-        r#"
-        #include <stdint.h>
-        #define COUNT (2 + 3 * 4)
-        #define NEGATIVE ((short)-7)
-        #define MAXIMUM UINT64_C(18446744073709551615)
-        #define MINIMUM (-9223372036854775807LL - 1LL)
-        #define FLAG ((_Bool)1)
-        #define unsafe 42u
-        #define NATIVE_LONG ((unsigned long)123)
-    "#,
-    );
-    let options = Options {
-        macros: [
-            "COUNT",
-            "NEGATIVE",
-            "MAXIMUM",
-            "MINIMUM",
-            "FLAG",
-            "unsafe",
-            "NATIVE_LONG",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect(),
-        ..Options::default()
-    };
-    let bindings = generate(&path, &options).unwrap();
-    let native_long =
-        if std::mem::size_of::<std::ffi::c_long>() == 8 && !cfg!(target_vendor = "apple") {
-            "uint64_t"
-        } else {
-            "unsigned long"
-        };
-    assert!(bindings.contains(&format!("const {native_long} NATIVE_LONG")));
-    let output = common::tracked_run(&format!(
-        "{bindings} int main() {{ print(COUNT); print(NEGATIVE); print(MAXIMUM); print(MINIMUM); print(FLAG); print(c_unsafe); print(NATIVE_LONG); return 0; }}"
-    ));
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "14\n-7\n18446744073709551615\n-9223372036854775808\n1\n42\n123\n"
-    );
-}
-
-#[test]
-fn macro_bindings_reserve_selected_names_and_resolve_enum_member_collisions() {
-    let path = header(
-        r#"
-        enum Values { SAME=3 };
-        #define SAME 5
-        #define unsafe 7
-        #define c_unsafe 9
-    "#,
-    );
-    let options = Options {
-        enums: vec!["Values".to_owned()],
-        macros: ["SAME", "unsafe", "c_unsafe"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        ..Options::default()
-    };
-    let bindings = generate(&path, &options).unwrap();
-    let output = common::tracked_run(&format!(
-        "{bindings} int main() {{ print((int)Values::SAME); print(c_SAME); print(c_unsafe_); print(c_unsafe); return 0; }}"
-    ));
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "3\n5\n7\n9\n"
-    );
-}
-
-#[test]
-fn macro_imports_reject_missing_nonconstant_and_noninteger_definitions() {
-    let path = header(
-        "#define FLOATING 1.5\n#define TEXT \"text\"\n#define APPLY(x) ((x)+1)\nint runtime();\n#define RUNTIME runtime()\n#define VALID 1\n",
-    );
-    for name in [
-        "MISSING", "FLOATING", "TEXT", "APPLY", "RUNTIME", "bad-name",
-    ] {
-        let options = Options {
-            macros: vec![name.to_owned()],
-            ..Options::default()
-        };
-        assert!(generate(&path, &options).is_err(), "accepted {name}");
-    }
-    let options = Options {
-        macros: vec!["VALID".to_owned(), "VALID".to_owned()],
-        ..Options::default()
-    };
-    assert!(
-        generate(&path, &options)
-            .unwrap_err()
-            .contains("selected twice")
-    );
-}
-
 #[test]
 fn imports_floating_functions_and_callbacks_with_native_abi_types() {
     let path = header(
         "float native_scale(float value); double native_apply(double (*callback)(double), double value); long double native_widen(long double value);",
     );
-    let bindings = generate(
-        &path,
-        &options(&["native_scale", "native_apply", "native_widen"]),
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} double twice(double value) {{ return value * 2; }} int main() {{ unsafe {{ print(native_scale(3.5f)); print(native_apply(&twice, 2.0)); print(native_widen(2.5L)); }} return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("float native_scale(float value) { return value * 2; } double native_apply(double (*callback)(double), double value) { return callback(value); } long double native_widen(long double value) { return value + 1; }");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "float native_scale(float value) { return value * 2; } double native_apply(double (*callback)(double), double value) { return callback(value); } long double native_widen(long double value) { return value + 1; }",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -229,20 +57,9 @@ fn keyword_named_c_tags_import_as_opaque_aliases_and_keep_owner_cleanup() {
         void release_storage(union move*);
     "#,
     );
-    let mut selected = options(&[
-        "make_handle",
-        "handle_value",
-        "release_handle",
-        "make_storage",
-        "storage_value",
-        "release_storage",
-    ]);
-    selected.typedefs = ["NativeHandle", "NativeStorage"]
-        .map(str::to_owned)
-        .to_vec();
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("struct c_init = \"init\";"));
-    assert!(bindings.contains("union c_move = \"move\";"));
+
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"
         {bindings}
@@ -259,20 +76,17 @@ fn keyword_named_c_tags_import_as_opaque_aliases_and_keep_owner_cleanup() {
         }}
     "#
     );
-    let generated = format!(
-        r#"{}
-        struct init {{ int value; }};
-        union move {{ int value; unsigned char bytes[4]; }};
-        struct init* make_handle(int value) {{ struct init* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }}
-        int handle_value(const struct init* value) {{ return value->value; }}
-        void release_handle(struct init* value) {{ free(value); }}
-        union move* make_storage(int value) {{ union move* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }}
-        int storage_value(const union move* value) {{ return value->value; }}
-        void release_storage(union move* value) {{ free(value); }}
-    "#,
-        crust::compile(&source).unwrap()
-    );
-    let output = common::tracked_generated_c(&generated, false);
+    let native = r#"
+        struct init { int value; };
+        union move { int value; unsigned char bytes[4]; };
+        struct init* make_handle(int value) { struct init* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }
+        int handle_value(const struct init* value) { return value->value; }
+        void release_handle(struct init* value) { free(value); }
+        union move* make_storage(int value) { union move* result = malloc(sizeof(*result)); if (!result) abort(); result->value = value; return result; }
+        int storage_value(const union move* value) { return value->value; }
+        void release_storage(union move* value) { free(value); }
+    "#;
+    let output = common::tracked_with_native(&source, native);
     assert!(
         output.status.success(),
         "{}",
@@ -338,23 +152,9 @@ fn selected_typedefs_preserve_native_scalars_pointer_qualifiers_and_callback_typ
         int use_callback(NativeCallback, NativeCount);
     "#,
     );
-    let mut selected = options(&["use_callback"]);
-    selected.typedefs = [
-        "Native",
-        "NativeCount",
-        "NativeText",
-        "NativeSlot",
-        "NativeRegister",
-        "NativeCallback",
-        "NativeFunction",
-    ]
-    .map(str::to_owned)
-    .to_vec();
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("typedef unsigned long NativeCount;"));
-    assert!(bindings.contains("typedef const char* NativeText;"));
-    assert!(bindings.contains("typedef int* const* NativeSlot;"));
-    assert!(bindings.contains("typedef volatile int* NativeRegister;"));
+
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"
         {bindings}
@@ -383,12 +183,10 @@ fn selected_typedefs_preserve_native_scalars_pointer_qualifiers_and_callback_typ
         }}
     "#
     );
-    let generated = format!(
-        "{}\n{}\nint use_callback(NativeCallback callback, NativeCount value) {{ return callback(value); }}",
-        std::fs::read_to_string(&path).unwrap(),
-        crust::compile(&source).unwrap()
+    let output = common::tracked_with_native(
+        &source,
+        "int use_callback(NativeCallback callback, NativeCount value) {return callback(value);}",
     );
-    let output = common::tracked_generated_c(&generated, false);
     assert!(
         output.status.success(),
         "{}",
@@ -409,17 +207,11 @@ fn typedef_only_imports_include_native_enums_and_avoid_alias_tag_name_cycles() {
     let path = header(
         "#include <stddef.h>\ntypedef enum Mode { Off = 0, On = 42 } Mode; typedef enum PointerTag { Value = 7 } *PointerTag; typedef void Empty;",
     );
-    let mut selected = options(&[]);
-    selected.typedefs = ["Mode", "PointerTag", "size_t", "Empty"]
-        .map(str::to_owned)
-        .to_vec();
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("extern enum Mode"));
-    assert!(bindings.contains("typedef Mode c_Mode;"));
-    assert!(bindings.contains("typedef PointerTag* c_PointerTag;"));
-    assert!(bindings.contains(" c_size_t;"));
+
+    let bindings = common::native_header(&path);
+
     let source = format!(
-        "{bindings} int main() {{ c_Mode mode = Mode::On; c_size_t count = 7; c_PointerTag pointer = 0; Empty* empty = 0; print((int)mode); print(count); unsafe {{ print(pointer == 0); print(empty == 0); }} return 0; }}"
+        "{bindings} int main() {{ c_Mode mode = Mode::On; size_t count = 7; c_PointerTag pointer = 0; Empty* empty = 0; print((int)mode); print(count); unsafe {{ print(pointer == 0); print(empty == 0); }} return 0; }}"
     );
     let output = common::tracked_run(&source);
     assert!(
@@ -430,54 +222,6 @@ fn typedef_only_imports_include_native_enums_and_avoid_alias_tag_name_cycles() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "42\n7\n1\n1\n"
-    );
-}
-
-#[test]
-fn typedef_imports_reject_layout_changes_unsupported_types_and_invalid_selections() {
-    for (source, name, expected) in [
-        (
-            "typedef int Aligned __attribute__((aligned(32)));",
-            "Aligned",
-            "unsupported C typedef layout",
-        ),
-        ("typedef int Values[];", "Values", "unsupported C type"),
-        (
-            "typedef const int Values[4];",
-            "Values",
-            "qualified C array typedefs",
-        ),
-        (
-            "typedef double _Complex Real;",
-            "Real",
-            "unsupported C type",
-        ),
-        (
-            "typedef const int Readonly;",
-            "Readonly",
-            "top-level typedef qualifiers",
-        ),
-        (
-            "typedef int* const Slot;",
-            "Slot",
-            "top-level typedef qualifiers",
-        ),
-        ("int function(void);", "function", "no typedef declaration"),
-        ("typedef int Present;", "Missing", "no typedef declaration"),
-    ] {
-        let path = header(source);
-        let mut selected = options(&[]);
-        selected.typedefs.push(name.to_owned());
-        let error = generate(&path, &selected).unwrap_err();
-        assert!(error.contains(expected), "{source}: {error}");
-    }
-    let path = header("typedef int Count;");
-    let mut selected = options(&[]);
-    selected.typedefs = vec!["Count".to_owned(), "Count".to_owned()];
-    assert!(
-        generate(&path, &selected)
-            .unwrap_err()
-            .contains("selected twice")
     );
 }
 
@@ -496,13 +240,9 @@ fn fixed_array_typedefs_preserve_dimensions_elements_and_callback_declarators() 
         static int apply(int (*const callback)(int), int value) { return callback(value); }
     "#,
     );
-    let mut selected = options(&["sum", "apply"]);
-    selected.typedefs = ["Row", "Matrix", "Pointers", "Callbacks", "Items"]
-        .map(str::to_owned)
-        .to_vec();
-    selected.structs.push("Item".to_owned());
-    let bindings = generate(&path, &selected).unwrap();
-    assert_eq!(bindings, generate(&path, &selected).unwrap());
+
+    let bindings = common::native_header(&path);
+
     let output = common::tracked_run(&format!(
         r#"
         {bindings}
@@ -536,51 +276,6 @@ fn fixed_array_typedefs_preserve_dimensions_elements_and_callback_declarators() 
 }
 
 #[test]
-fn cli_imports_typedefs_with_relative_enum_headers_and_late_c_macros() {
-    let path = header(
-        "typedef enum Mode { Active = 42 } Mode; typedef int init; typedef long other_alias;\n#define init other_alias\n",
-    );
-    let binding = path.parent().unwrap().join("types.cr");
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--typedef", "Mode", "--typedef", "init", "--output"])
-        .arg(&binding)
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    let text = std::fs::read_to_string(&binding).unwrap();
-    assert!(text.contains("extern header \"native ü.h\";"));
-    assert!(text.contains("typedef int c_init;"));
-    assert!(!text.starts_with('\u{feff}'));
-    let source = path.parent().unwrap().join("main.cr");
-    std::fs::write(&source, "import \"types.cr\"; int main() { c_Mode mode = Active; c_init value = 7; print((int)mode); print(value); return 0; }").unwrap();
-    let sources = crust::source::SourceSet::load(&source).unwrap();
-    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "42\n7\n"
-    );
-    let missing = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .arg("--typedef")
-        .output()
-        .unwrap();
-    assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("--typedef needs a name"));
-}
-
-#[test]
 fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types() {
     let path = header(
         r#"
@@ -595,11 +290,8 @@ fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types()
         int inspect_saved(volatile ReadonlyPtr*);
         "#,
     );
-    let mut selected = options(&["sample", "update", "read_saved", "inspect_saved"]);
-    selected.variables = ["counter", "limit", "slot", "saved"]
-        .map(str::to_owned)
-        .to_vec();
-    let bindings = generate(&path, &selected).unwrap();
+
+    let bindings = common::native_header(&path);
     let source = format!(
         r#"
         {bindings}
@@ -632,8 +324,7 @@ fn generated_volatile_globals_pointer_targets_and_borrows_match_native_c_types()
         int read_saved(volatile ReadonlyPtr pointer) { return *pointer; }
         int inspect_saved(volatile ReadonlyPtr* pointer) { return **pointer; }
     "#;
-    let generated = format!("{}\n{native}", crust::compile(&source).unwrap());
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(&source, native);
     assert!(
         output.status.success(),
         "{}",
@@ -657,10 +348,8 @@ fn generates_and_executes_selected_opaque_handle_and_callback_bindings() {
         void destroy(Handle *);
     "#,
     );
-    let bindings = generate(&path, &options(&["create", "apply", "destroy"])).unwrap();
-    assert!(bindings.contains("struct Handle;"));
-    assert!(bindings.contains("c_destroy"));
-    assert!(bindings.contains("= \"destroy\""));
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"
         {bindings}
@@ -668,14 +357,15 @@ fn generates_and_executes_selected_opaque_handle_and_callback_bindings() {
         int main() {{ unsafe {{ Handle* handle = create(21); print(apply(handle, twice)); c_destroy(handle); }} return 0; }}
     "#
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str(r#"
+    let output = common::tracked_with_native(
+        &source,
+        r#"
         struct Handle { int value; };
         struct Handle *create(int value) { struct Handle *handle = malloc(sizeof(*handle)); handle->value = value; return handle; }
         int apply(struct Handle *handle, int (*callback)(int)) { return callback(handle->value); }
         void destroy(struct Handle *handle) { free(handle); }
-    "#);
-    let output = common::tracked_generated_c(&generated, false);
+    "#,
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -698,207 +388,99 @@ fn preserves_native_integer_types_const_pointer_levels_variadics_and_callback_re
         long inspect(int *const *, const int *, _Bool, int, ...);
     "#,
     );
-    let bindings = generate(&path, &options(&["factory", "inspect"])).unwrap();
-    assert!(bindings.contains("long long"));
-    assert!(bindings.contains("unsigned long"));
-    assert!(bindings.contains("int* const*"));
-    assert!(bindings.contains("const int*"));
-    assert!(bindings.contains("bool"));
-    assert!(bindings.contains("..."));
-    crust::check(&format!("{bindings} int main() {{ return 0; }}")).unwrap();
+    let bindings = common::native_header(&path);
+
+    crust::check(&format!("{bindings} int main() {{ Callback callback=factory(); int value=1; int* pointer=&value; unsafe{{inspect(&pointer,&value,true,1);callback(0,0);}} return 0; }}")).unwrap();
 }
 
 #[cfg(all(windows, any(target_arch = "x86", target_arch = "x86_64")))]
 #[test]
 fn preserves_vectorcall_in_native_and_nested_callback_signatures() {
-    let path =
-        header("typedef int (__vectorcall *Callback)(int); int __vectorcall apply(Callback, int);");
-    let bindings = generate(&path, &options(&["apply"])).unwrap();
-    assert!(bindings.matches("__vectorcall").count() >= 2);
-}
-
-#[test]
-fn rejects_internal_linkage_missing_exports_and_unsupported_types() {
-    for (source, name, expected) in [
-        ("static int hidden(int n);", "hidden", "internal linkage"),
-        ("int present(void);", "missing", "no function declaration"),
-        (
-            "double _Complex floating(double _Complex);",
-            "floating",
-            "unsupported C type",
-        ),
-        (
-            "struct Item { int value; }; struct Item value(void);",
-            "value",
-            "by value",
-        ),
-        (
-            "int inspect(_Atomic(int)*);",
-            "inspect",
-            "unsupported C type",
-        ),
-        ("int old();", "old", "complete C function prototype"),
-    ] {
-        let path = header(source);
-        let error = generate(&path, &options(&[name])).unwrap_err();
-        assert!(error.contains(expected), "{name}: {error}");
-    }
-}
-
-#[test]
-fn rejects_invalid_selections_and_reports_clang_failures() {
-    let path = header("int native(void);");
-    for functions in [
-        vec![],
-        vec!["native", "native"],
-        vec!["native();"],
-        vec!["main"],
-    ] {
-        assert!(generate(&path, &options(&functions)).is_err());
-    }
-    let mut missing = options(&["native"]);
-    for defines in [vec!["=1"], vec!["VALUE=1", "VALUE=2"]] {
-        missing.defines = defines.into_iter().map(str::to_owned).collect();
-        assert!(generate(&path, &missing).is_err());
-    }
-    missing.defines.clear();
-    missing.clang = Some(PathBuf::from("missing-crust-test-clang"));
-    assert!(
-        generate(&path, &missing)
-            .unwrap_err()
-            .contains("could not start Clang")
+    let path = header(
+        "typedef int (__vectorcall *Callback)(int); static int __vectorcall apply(Callback callback,int value){return callback(value);}",
     );
-    let broken = header("int native(;");
-    assert!(
-        generate(&broken, &options(&["native"]))
-            .unwrap_err()
-            .contains("C header analysis failed")
+    let source = format!(
+        "{} int __vectorcall twice(int value){{return value*2;}} int main(){{print(apply(&twice,21));return 0;}}",
+        common::native_header(&path)
     );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
 }
 
 #[test]
 fn imports_standard_library_prototypes_and_preserves_header_preprocessing() {
     let path = header("#include <stdio.h>\n#include <stdlib.h>\n");
-    let bindings = generate(
-        &path,
-        &options(&["puts", "fopen", "fclose", "snprintf", "malloc", "free"]),
-    )
-    .unwrap();
-    assert!(bindings.contains("extern"));
-    crust::check(&format!("{bindings} int main() {{ return 0; }}")).unwrap();
-    let path = header("#include <native_types.h>\nNativeSize selected(NativeSize);\n");
+    crust::check(&format!("{} int main(){{unsafe{{void* pointer=malloc(4);free(pointer);}}char text[1]={{0}};unsafe{{return puts(&text[0]);}}}}",common::native_header(&path))).unwrap();
+    let path = header(
+        "#include <native_types.h>\nstatic NativeSize selected(NativeSize value){return value;}\n",
+    );
     let include = path.parent().unwrap().join("include");
     std::fs::create_dir_all(&include).unwrap();
-    std::fs::write(include.join("native_types.h"), "#ifdef WIDE_API\ntypedef unsigned long long NativeSize;\n#else\ntypedef int NativeSize;\n#endif\n").unwrap();
-    let mut selected = options(&["selected"]);
-    selected.include_dirs.push(include);
-    selected.defines.push("WIDE_API=1".to_owned());
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("unsigned long long"));
-}
-
-#[test]
-fn generated_names_avoid_collisions_with_selected_native_names() {
-    let path = header("int destroy(int); int c_destroy(int); int print(int); int move(int);");
-    let bindings = generate(&path, &options(&["destroy", "c_destroy", "print", "move"])).unwrap();
-    assert!(bindings.contains("c_destroy_(int) = \"destroy\""));
-    assert!(bindings.contains("c_print(int) = \"print\""));
-    assert!(bindings.contains("c_move(int) = \"move\""));
-}
-
-#[test]
-fn filtered_declarations_keep_exact_function_matches_and_reachable_type_names() {
-    let path = header(
-        r#"
-        int selected_extra(char*);
-        int selected(int);
-        struct CrustCFunction0;
-        typedef int (*Callback)(int);
-        int other(struct CrustCFunction0*, Callback);
-    "#,
-    );
-    let bindings = generate(&path, &options(&["selected", "other"])).unwrap();
-    assert!(bindings.contains("extern int selected(int);"));
-    assert!(!bindings.contains("selected_extra"));
-    assert!(bindings.contains("struct CrustCFunction0;"));
-    assert!(!bindings.contains("typedef int CrustCFunction0("));
-}
-
-#[test]
-fn function_macros_do_not_redirect_the_selected_native_symbol_or_its_type() {
-    let path = header("int original(int); int alternate(char*);\n#define original alternate\n");
-    let bindings = generate(&path, &options(&["original"])).unwrap();
-    assert!(bindings.contains("extern int original(int);"));
-    assert!(!bindings.contains("char*"));
-}
-
-#[test]
-fn cli_writes_utf8_bindings_and_protects_existing_outputs_and_headers() {
-    let path = header("int increment(int);");
-    let output = path.with_file_name("bindings.cr");
-    let command = || {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_crust"));
-        command
-            .arg("import-c")
-            .arg(&path)
-            .args(["--function", "increment", "--output"])
-            .arg(&output);
-        return command;
+    std::fs::write(include.join("native_types.h"),"#ifdef WIDE_API\ntypedef unsigned long long NativeSize;\n#else\ntypedef int NativeSize;\n#endif\n").unwrap();
+    let entry = path.with_extension("cr");
+    std::fs::write(
+        &entry,
+        format!(
+            "{} int main(){{print(selected(4294967296ULL));return 0;}}",
+            common::native_header(&path)
+        ),
+    )
+    .unwrap();
+    let options = ::crust::native::Options {
+        include_dirs: vec![include],
+        defines: vec!["WIDE_API=1".to_owned()],
+        ..Default::default()
     };
-    let imported = command().output().unwrap();
-    assert!(
-        imported.status.success(),
-        "{}",
-        String::from_utf8_lossy(&imported.stderr)
-    );
-    let text = std::fs::read_to_string(&output).unwrap();
-    assert!(text.contains("extern int increment(int);"));
-    assert!(!command().output().unwrap().status.success());
-    assert!(command().arg("--force").output().unwrap().status.success());
-    let protected = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--function", "increment", "--output"])
-        .arg(&path)
-        .arg("--force")
-        .output()
-        .unwrap();
-    assert!(!protected.status.success());
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        "int increment(int);"
-    );
-    let unknown = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .args(["import-c", "--unknown"])
-        .output()
-        .unwrap();
-    assert!(!unknown.status.success());
+    let sources = ::crust::source::SourceSet::load_with_options(&entry, &options, |path| {
+        std::fs::read_to_string(path)
+    })
+    .unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4294967296");
 }
 
 #[test]
-fn header_example_uses_reproducible_bindings_and_destroys_its_moved_c_resource() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/header_project");
-    let mut selected = options(&[
-        "native_create",
-        "native_value",
-        "native_status",
-        "native_add",
-        "native_destroy",
-    ]);
-    selected.variables.push("native_limit".to_owned());
-    selected.binding_dir = Some(root.clone());
-    let generated = generate(&root.join("native.h"), &selected).unwrap();
+fn native_names_avoid_collisions_with_crust_builtins() {
+    let path = header(
+        "static int destroy(int n){return n;} static int c_destroy(int n){return n+1;} static int print(int n){return n+2;} static int move(int n){return n+3;}",
+    );
+    let source = format!(
+        "{} int main(){{print(c_destroy_(39));print(c_destroy(39));print(c_print(39));print(c_move(39));return 0;}}",
+        common::native_header(&path)
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        generated.replace("\r\n", "\n"),
-        include_str!("../examples/header_project/bindings.cr").replace("\r\n", "\n")
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "39\n40\n41\n42\n"
     );
-    let sources = crust::source::SourceSet::load(&root.join("main.cr")).unwrap();
-    let mut c = sources.compile().unwrap();
-    c.push_str(include_str!("../examples/header_project/native.h"));
-    c.push_str(
-        &include_str!("../examples/header_project/native.c").replace("#include \"native.h\"", ""),
+}
+
+#[test]
+fn function_macros_redirect_calls_before_native_type_discovery() {
+    let path = header(
+        "static int original(int n){return n;} static int alternate(char* text){return text[0];}\n#define original alternate\n",
     );
-    let output = common::tracked_generated_c(&c, false);
+    let source = format!(
+        "{} int main(){{char text[2]=\"*\";unsafe{{print(original(&text[0]));}}return 0;}}",
+        common::native_header(&path)
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+}
+
+#[test]
+fn header_example_includes_its_api_and_destroys_its_moved_c_resource() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/header_project");
+
+    let output = common::tracked_file(
+        &root.join("main.cr"),
+        include_str!("../examples/header_project/native.c"),
+        false,
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -926,20 +508,16 @@ fn generates_native_mutable_const_pointer_and_callback_variables() {
         extern Callback callback;
     "#,
     );
-    let mut options = options(&[]);
-    options.variables = ["counter", "limit", "pointer", "fixed", "callback"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let bindings = generate(&path, &options).unwrap();
-    assert!(bindings.contains("extern const int limit;"));
-    assert!(bindings.contains("extern int* const fixed;"));
+
+    let bindings = common::native_header(&path);
+
     let source = format!(
         "{bindings} int main() {{ unsafe {{ counter = 40; *fixed += 2; print(callback(*pointer)); print(limit); }} return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("int counter = 1; const int limit = 100; int* pointer = &counter; int* const fixed = &counter; static int increment(int n) { return n + 1; } int (*callback)(int) = increment;");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "int counter = 1; const int limit = 100; int* pointer = &counter; int* const fixed = &counter; static int increment(int n) { return n + 1; } int (*callback)(int) = increment;",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -952,45 +530,10 @@ fn generates_native_mutable_const_pointer_and_callback_variables() {
 }
 
 #[test]
-fn cli_can_select_functions_and_variables_from_one_header() {
-    let path = header("extern int init; int read_value(void);");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--variable", "init", "--function", "read_value"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let bindings = String::from_utf8(output.stdout).unwrap();
-    assert!(bindings.contains("extern int c_init = \"init\";"));
-    assert!(bindings.contains("extern int read_value();"));
-}
-
-#[test]
-fn rejects_variable_storage_requiring_native_wrappers_and_checks_all_redeclarations() {
-    for source in [
-        "extern _Thread_local int value;",
-        "extern _Atomic(int) value;",
-        "extern int value[4];",
-        "struct Item { int n; }; extern struct Item value;",
-        "int value(void);",
-    ] {
-        let path = header(source);
-        let mut selected = options(&[]);
-        selected.variables.push("value".to_owned());
-        assert!(generate(&path, &selected).is_err(), "{source}");
-    }
-}
-
-#[test]
 fn assembler_labels_retain_native_headers_and_link_to_the_declared_symbol() {
     let path = header("int selected(void); int selected(void) __asm__(\"actual_symbol\");");
-    let bindings = generate(&path, &options(&["selected"])).unwrap();
-    assert!(bindings.contains("extern header"));
+    let bindings = common::native_header(&path);
+
     let generated = crust::compile(&format!(
         "{bindings} int main() {{ unsafe {{ print(selected()); }} return 0; }}"
     ))
@@ -1012,13 +555,12 @@ fn assembler_labels_retain_native_headers_and_link_to_the_declared_symbol() {
 #[test]
 fn dll_import_variable_attributes_on_later_declarations_are_preserved() {
     let path = header("extern int value; __declspec(dllimport) extern int value;");
-    let mut selected = options(&[]);
-    selected.variables.push("value".to_owned());
-    assert!(
-        generate(&path, &selected)
-            .unwrap()
-            .contains("extern __declspec(dllimport) int value;")
+    let sources = format!(
+        "{} int main(){{unsafe{{print(value);}}return 0;}}",
+        common::native_header(&path)
     );
+    let generated = crust::compile(&sources).unwrap();
+    assert!(generated.contains("dllimport"));
 }
 
 #[test]
@@ -1031,12 +573,9 @@ fn imports_enum_representations_values_callbacks_and_const_objects() {
         extern const enum Status native_status;
     "#;
     let path = header(native);
-    let mut selected = options(&["status_echo", "status_apply"]);
-    selected.variables.push("native_status".to_owned());
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("Ready = 16"));
-    assert!(bindings.contains("Failed = -3"));
-    assert!(bindings.contains("Again = 17"));
+
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"
         {bindings}
@@ -1051,9 +590,10 @@ fn imports_enum_representations_values_callbacks_and_const_objects() {
         }}
     "#
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("enum Status status_echo(enum Status value) { return value; } enum Status status_apply(Callback callback, enum Status value) { return callback(value); } const enum Status native_status = Failed;");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "enum Status status_echo(enum Status value) { return value; } enum Status status_apply(Callback callback, enum Status value) { return callback(value); } const enum Status native_status = Failed;",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1069,13 +609,14 @@ fn imports_enum_representations_values_callbacks_and_const_objects() {
 fn enum_probes_preserve_native_conversion_of_large_unsigned_enumerators() {
     let native = "enum Flags { High = 0xffffffff }; enum Flags flag_echo(enum Flags); long long flag_value(void); unsigned long long flag_size(void);";
     let path = header(native);
-    let bindings = generate(&path, &options(&["flag_echo", "flag_value", "flag_size"])).unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} int main() {{ unsafe {{ print((int64_t)Flags::High == flag_value()); print(flag_echo(Flags::High) == Flags::High); print(sizeof(Flags) == flag_size()); }} return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("enum Flags flag_echo(enum Flags value) { return value; } long long flag_value(void) { return (long long)(enum Flags)High; } unsigned long long flag_size(void) { return sizeof(enum Flags); }");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "enum Flags flag_echo(enum Flags value) { return value; } long long flag_value(void) { return (long long)(enum Flags)High; } unsigned long long flag_size(void) { return sizeof(enum Flags); }",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1088,11 +629,18 @@ fn enum_probes_preserve_native_conversion_of_large_unsigned_enumerators() {
 }
 
 #[test]
-fn enum_member_renaming_reserves_native_names_before_allocating_escaped_names() {
-    let path = header("enum E { init = 1, c_init = 2 }; enum E echo(enum E);");
-    let bindings = generate(&path, &options(&["echo"])).unwrap();
-    assert!(bindings.contains("c_init_ = 1"));
-    assert!(bindings.contains("c_init = 2"));
+fn enum_member_names_avoid_collisions_with_escaped_names() {
+    let path = header("enum E { init=1,c_init=2 }; static enum E echo(enum E n){return n;}");
+    let source = format!(
+        "{} int main(){{print((int)echo(E::c_init_));print((int)echo(E::c_init));return 0;}}",
+        common::native_header(&path)
+    );
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "1\n2\n"
+    );
 }
 
 #[test]
@@ -1100,13 +648,14 @@ fn native_enum_identity_preserves_const_pointer_parameters() {
     let path = header(
         "enum Status { Ready = 16, Failed = -3 }; int status_read(const enum Status*); void status_set(enum Status*, enum Status);",
     );
-    let bindings = generate(&path, &options(&["status_read", "status_set"])).unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} int main() {{ Status value = Status::Ready; unsafe {{ print(status_read(&value)); status_set(&value, Status::Failed); }} print((int)value); return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("int status_read(const enum Status* value) { return (int)*value; } void status_set(enum Status* target, enum Status value) { *target = value; }");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "int status_read(const enum Status* value) { return (int)*value; } void status_set(enum Status* target, enum Status value) { *target = value; }",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1121,14 +670,13 @@ fn native_enum_identity_preserves_const_pointer_parameters() {
 #[test]
 fn native_enum_tags_reserved_by_crust_are_renamed_without_changing_c_identity() {
     let path = header("enum init { One = 1, Two = 2 }; enum init echo(enum init);");
-    let bindings = generate(&path, &options(&["echo"])).unwrap();
-    assert!(bindings.contains("extern enum c_init = \"init\""));
+    let bindings = common::native_header(&path);
+
     let source = format!(
         "{bindings} int main() {{ unsafe {{ print(echo(c_init::Two) == c_init::Two); }} return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("enum init echo(enum init value) { return value; }");
-    let output = common::tracked_generated_c(&generated, false);
+    let output =
+        common::tracked_with_native(&source, "enum init echo(enum init value) { return value; }");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
 }
@@ -1143,13 +691,14 @@ fn enum_probes_cover_narrow_and_full_width_native_integer_representations() {
         enum Wide wide_echo(enum Wide);
     "#,
     );
-    let bindings = generate(&path, &options(&["byte_echo", "wide_echo"])).unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         "{bindings} int main() {{ unsafe {{ print((int)byte_echo(Byte::ByteMax)); print((uint64_t)wide_echo(Wide::WideMax)); }} return 0; }}"
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("enum Byte byte_echo(enum Byte value) { return value; } enum Wide wide_echo(enum Wide value) { return value; }");
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "enum Byte byte_echo(enum Byte value) { return value; } enum Wide wide_echo(enum Wide value) { return value; }",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1164,79 +713,17 @@ fn enum_probes_cover_narrow_and_full_width_native_integer_representations() {
 #[test]
 fn native_enum_tags_can_share_spelling_with_c_macros_and_crust_builtin_types() {
     let path = header(
-        "enum bool { Yes = 1 }; enum size_t { Count = 2 }; enum bool boolean_echo(enum bool); enum size_t count_echo(enum size_t);\n#define bool unrelated_name\n",
+        "enum bool { Yes=1 }; enum size_t { Count=2 }; static enum bool boolean_echo(enum bool n){return n;} static enum size_t count_echo(enum size_t n){return n;}\n#define bool unrelated_name\n",
     );
-    let bindings = generate(&path, &options(&["boolean_echo", "count_echo"])).unwrap();
-    assert!(bindings.contains("extern enum c_bool = \"bool\""));
-    assert!(bindings.contains("extern enum c_size_t = \"size_t\""));
-}
-
-#[test]
-fn cli_emits_native_header_paths_relative_to_the_binding_file() {
-    let path = header("enum Status { Ready = 1, Failed = -1 }; enum Status echo(enum Status);");
-    let directory = path.parent().unwrap().join("generated");
-    std::fs::create_dir_all(&directory).unwrap();
-    let binding = directory.join("bindings.cr");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--function", "echo", "--output"])
-        .arg(&binding)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    let source = format!(
+        "{}\n#undef bool\nint main(){{print((int)boolean_echo(c_bool::Yes));print((int)count_echo(c_size_t::Count));return 0;}}",
+        common::native_header(&path)
     );
-    let text = std::fs::read_to_string(&binding).unwrap();
-    assert!(text.contains("extern header \"../native ü.h\";"), "{text}");
-    std::fs::write(
-        directory.join("main.cr"),
-        "import \"bindings.cr\"; int main() { return 0; }",
-    )
-    .unwrap();
-    crust::source::SourceSet::load(&directory.join("main.cr"))
-        .unwrap()
-        .check()
-        .unwrap();
-}
-
-#[test]
-fn unsupported_enum_shapes_fail_with_diagnostics() {
-    assert!(
-        crust::check("enum E = \"NativeE\" : int { A = 1 }; int main() { return 0; }")
-            .unwrap_err()
-            .message
-            .contains("requires extern")
-    );
-    for (source, expected) in [
-        (
-            "typedef enum { A = 1 } Anonymous; Anonymous echo(Anonymous);",
-            "anonymous C enums",
-        ),
-        (
-            "enum café { Ready = 1 }; enum café echo(enum café);",
-            "ASCII identifiers",
-        ),
-        (
-            "enum E { café = 1 }; enum E echo(enum E);",
-            "ASCII identifiers",
-        ),
-        (
-            "enum __attribute__((aligned(32))) E { A = 1, B = -1 }; enum E echo(enum E);",
-            "native enum layout",
-        ),
-    ] {
-        let path = header(source);
-        let error = generate(&path, &options(&["echo"])).unwrap_err();
-        assert!(error.contains(expected), "{error}");
-    }
-    assert!(
-        crust::check("extern enum E : int { A = 1 }; int main() { return 0; }")
-            .unwrap_err()
-            .message
-            .contains("extern header")
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "1\n2\n"
     );
 }
 
@@ -1245,15 +732,11 @@ fn explicit_enum_selection_imports_constant_headers_without_function_or_variable
     let path = header(
         "enum Mode { Idle = 0, Active = 42 }; enum Unselected { Other = 3 };\n#define Mode unrelated\n",
     );
-    let selected = Options {
-        enums: vec!["Mode".to_owned()],
-        ..Options::default()
-    };
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("extern enum Mode"));
-    assert!(!bindings.contains("Unselected"));
+
+    let bindings = common::native_header(&path);
+
     let c = crust::compile(&format!(
-        "{bindings} int main() {{ print((int)Mode::Active); return 0; }}"
+        "{bindings}\n#undef Mode\nint main() {{ print((int)Mode::Active); return 0; }}"
     ))
     .unwrap();
     let output = common::tracked_generated_c(&c, false);
@@ -1266,71 +749,20 @@ fn explicit_enum_selection_imports_constant_headers_without_function_or_variable
 }
 
 #[test]
-fn explicit_enum_selection_deduplicates_reachable_enums_and_reserves_native_tag_names() {
+fn native_enum_discovery_reserves_existing_tag_names() {
     let path = header(
-        "enum init { First = 1 }; enum c_init { Second = 2 }; enum __crust_import_fn_0 { Third = 3 }; enum init echo(enum init); int callback(int (*)(int));",
+        "enum init{First=1};enum c_init{Second=2};static enum init echo(enum init n){return n;}",
     );
-    let mut selected = options(&["echo", "callback"]);
-    selected.enums = vec![
-        "init".to_owned(),
-        "c_init".to_owned(),
-        "__crust_import_fn_0".to_owned(),
-    ];
-    let bindings = generate(&path, &selected).unwrap();
-    assert_eq!(bindings.matches("= \"init\"").count(), 1);
-    assert!(bindings.contains("extern enum c_init_ = \"init\""));
-    assert!(bindings.contains("extern enum c_init :"));
-    assert!(bindings.contains("extern enum __crust_import_fn_0 :"));
-    crust::check(&format!("{bindings} int main() {{ return 0; }}")).unwrap();
-}
-
-#[test]
-fn explicit_enum_selection_checks_tag_names_and_requires_complete_global_definitions() {
-    let path = header("enum Present { First = 1 }; enum Forward;");
-    for (enums, expected) in [
-        (vec!["Present", "Present"], "selected twice"),
-        (vec!["Present;"], "invalid C enum selection"),
-        (vec!["Missing"], "complete global definition"),
-        (vec!["Forward"], "complete global definition"),
-    ] {
-        let selected = Options {
-            enums: enums.into_iter().map(str::to_owned).collect(),
-            ..Options::default()
-        };
-        let error = generate(&path, &selected).unwrap_err();
-        assert!(error.contains(expected), "{error}");
-    }
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .arg("--enum")
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--enum needs a tag name"));
-}
-
-#[test]
-fn cli_selects_named_enums_and_writes_relative_native_header_references() {
-    let path = header("enum Status { Ready = 1, Failed = -1 }; enum Kind { Small, Large };");
-    let output_path = path.parent().unwrap().join("constants.cr");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
-        .arg("import-c")
-        .arg(&path)
-        .args(["--enum", "Status", "--enum", "Kind", "--output"])
-        .arg(&output_path)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    let source = format!(
+        "{} int main(){{print((int)echo(c_init_::First));print((int)c_init::Second);return 0;}}",
+        common::native_header(&path)
     );
-    let text = std::fs::read_to_string(&output_path).unwrap();
-    assert!(text.contains("extern header \"native ü.h\";"));
-    assert!(text.contains("extern enum Status"));
-    assert!(text.contains("extern enum Kind"));
-    crust::check(&format!("{text} int main() {{ return 0; }}")).unwrap();
+    let output = common::tracked_run(&source);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "1\n2\n"
+    );
 }
 
 #[test]
@@ -1338,8 +770,8 @@ fn adjusted_array_parameters_preserve_pointee_const_and_accept_restrict_callback
     let path = header(
         "typedef void CopyFour(int destination[restrict static 4], const int source[static const 4]); int inspect(int destination[restrict static 4], const int source[static const 4], CopyFour* copy);",
     );
-    let bindings = generate(&path, &options(&["inspect"])).unwrap();
-    assert!(bindings.contains("const int*"));
+    let bindings = common::native_header(&path);
+
     let source = format!(
         r#"
         {bindings}
@@ -1355,10 +787,10 @@ fn adjusted_array_parameters_preserve_pointee_const_and_accept_restrict_callback
         }}
     "#
     );
-    let mut generated = crust::compile(&source).unwrap();
-    generated.push_str("int inspect(int destination[restrict static 4], const int source[static const 4], CopyFour* copy) { copy(destination, source); return destination[3]; }");
-    let generated = format!("{}\n{generated}", std::fs::read_to_string(&path).unwrap());
-    let output = common::tracked_generated_c(&generated, false);
+    let output = common::tracked_with_native(
+        &source,
+        "int inspect(int destination[restrict static 4], const int source[static const 4], CopyFour* copy) { copy(destination, source); return destination[3]; }",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1373,7 +805,7 @@ fn adjusted_array_parameters_preserve_pointee_const_and_accept_restrict_callback
 #[test]
 fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_callbacks() {
     let path = header("#include <stdlib.h>\n#include <string.h>\n");
-    let bindings = generate(&path, &options(&["qsort", "bsearch", "memcpy"])).unwrap();
+    let bindings = common::native_header(&path);
     let source = format!(
         r#"
         {bindings}
@@ -1412,7 +844,7 @@ fn imported_standard_algorithms_sort_search_and_copy_crust_arrays_with_native_ca
 #[test]
 fn native_sorting_preserves_vector_owners_and_destroys_each_resource_once() {
     let path = header("#include <stdlib.h>\n");
-    let bindings = generate(&path, &options(&["qsort"])).unwrap();
+    let bindings = common::native_header(&path);
     let vector = include_str!("../lib/vector.cr")
         .replace("import \"memory.cr\";", include_str!("../lib/memory.cr"))
         .replace("import \"allocation.cr\";", &common::allocation_source());
@@ -1483,9 +915,8 @@ fn imports_static_inline_definitions_and_callbacks_without_native_bridge() {
         }
     "#,
     );
-    let bindings = generate(&path, &options(&["native_add", "unsafe", "native_apply"])).unwrap();
-    assert!(bindings.contains("extern header"));
-    assert!(bindings.contains("c_unsafe"));
+    let bindings = common::native_header(&path);
+
     let output = common::tracked_run(&format!(
         "{bindings} int twice(int value) {{ return value * 2; }} int main() {{ unsafe {{ print(native_add(40)); print(c_unsafe(41)); print(native_apply(&twice, 21)); }} return 0; }}"
     ));
@@ -1503,8 +934,15 @@ fn imports_static_inline_definitions_and_callbacks_without_native_bridge() {
 #[test]
 fn static_inline_import_requires_a_header_definition() {
     let path = header("static inline int missing(int value);");
-    let error = generate(&path, &options(&["missing"])).unwrap_err();
-    assert!(error.contains("internal linkage"), "{error}");
+    let generated = crust::compile(&format!(
+        "{} int main(){{return missing(1);}}",
+        common::native_header(&path)
+    ))
+    .unwrap();
+    let input = path.with_extension("c");
+    std::fs::write(&input, generated).unwrap();
+    let error = crust::native::compile_file(&input, &path.with_extension("out")).unwrap_err();
+    assert!(error.contains("missing"), "{error}");
 }
 
 #[test]
@@ -1532,17 +970,7 @@ fn inline_opaque_api_preserves_packing_bitfields_alignment_and_owner_cleanup() {
         static inline void sample_destroy(struct PackedSample *sample) { free(sample); }
     "#,
     );
-    let bindings = generate(
-        &path,
-        &options(&[
-            "sample_create",
-            "sample_value",
-            "sample_offset",
-            "sample_alignment",
-            "sample_destroy",
-        ]),
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let output = common::tracked_run(&format!(
         r#"
         {bindings}
@@ -1585,11 +1013,8 @@ fn imports_header_local_functions_and_storage_with_shared_native_identity() {
         static int read_volatile(void) { return unsafe; }
     "#,
     );
-    let mut selected = options(&["next", "read_volatile"]);
-    selected.variables = ["counter", "limit", "saved", "unsafe"]
-        .map(str::to_owned)
-        .to_vec();
-    let bindings = generate(&path, &selected).unwrap();
+
+    let bindings = common::native_header(&path);
     let output = common::tracked_run(&format!(
         r#"
         {bindings}
@@ -1628,10 +1053,9 @@ fn imports_header_local_functions_and_storage_with_shared_native_identity() {
 #[test]
 fn imports_zero_initialized_header_storage_without_selecting_functions() {
     let path = header("static int value;");
-    let mut selected = options(&[]);
-    selected.variables.push("value".to_owned());
-    let bindings = generate(&path, &selected).unwrap();
-    assert!(bindings.contains("extern header"));
+
+    let bindings = common::native_header(&path);
+
     let output = common::tracked_run(&format!(
         "{bindings} int main() {{ unsafe {{ print(value); value=42; print(value); }} return 0; }}"
     ));
@@ -1644,39 +1068,24 @@ fn imports_zero_initialized_header_storage_without_selecting_functions() {
 
 #[test]
 fn header_only_example_uses_relative_native_headers_and_drops_its_owner() {
-    common::assert_example(
-        "examples/header_only_project/main.cr",
-        "42\n1\n",
-        "drop:bytes:6\n",
-        true,
+    let root =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/header_only_project/main.cr");
+    let output = common::tracked_file(&root, "", true);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n1\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace('\r', ""),
+        "drop:bytes:6\n"
     );
 }
 
 #[test]
 fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
     let path = header(include_str!("fixtures/c-wrappers.h"));
-    let bindings = generate(
-        &path,
-        &options(&[
-            "feature_atomic_add",
-            "feature_thread_next",
-            "feature_bytes_create",
-            "feature_bytes_sum",
-            "feature_bytes_destroy",
-            "feature_variable_array",
-            "feature_complex_sum",
-            "feature_wide_carry",
-            "feature_twice",
-            "feature_text_first",
-            "feature_text",
-            "feature_scale",
-            "feature_anonymous",
-            "feature_rows",
-            "feature_row",
-            "feature_extension",
-        ]),
-    )
-    .unwrap();
+    let bindings = common::native_header(&path);
     let output = common::tracked_run(&format!(
         r#"
         {bindings}
@@ -1709,30 +1118,4 @@ fn native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros() {
         "4\n9\n1\n2\n10\n10\n7.5\n1\n42\n67\n1.5\n42\n42\n42\n42\nCrust\n"
     );
     assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
-}
-
-#[test]
-fn unsupported_array_declarators_report_the_native_wrapper_route() {
-    for source in [
-        "int read_row(const int (*row)[3]);",
-        "int (*read_row(void))[3];",
-        "int read_row(int (*callback)(int (*)[3]));",
-    ] {
-        let path = header(source);
-        let error = generate(&path, &options(&["read_row"])).unwrap_err();
-        assert!(
-            error.contains("C pointers to arrays require a native wrapper"),
-            "{source}: {error}"
-        );
-    }
-    let path = header("struct Anonymous { struct { int value; } member; };");
-    let selected = Options {
-        structs: vec!["Anonymous".to_owned()],
-        ..Default::default()
-    };
-    assert!(
-        generate(&path, &selected)
-            .unwrap_err()
-            .contains("anonymous C aggregates require a native wrapper")
-    );
 }

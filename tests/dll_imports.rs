@@ -1,4 +1,5 @@
 #![cfg(windows)]
+mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -117,19 +118,8 @@ fn header_generated_dll_imports_preserve_data_storage_and_const_permissions() {
     "#,
     )
     .unwrap();
-    let bindings = crust::bindings::generate(
-        &header,
-        &crust::bindings::Options {
-            functions: vec!["native_bump".to_owned()],
-            variables: ["native_count", "native_limit", "native_callback"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(bindings.matches("__declspec(dllimport)").count(), 4);
+    let bindings = common::native_header(&header);
+
     let source = format!(
         "{bindings} int main() {{ unsafe {{ print(native_bump()); print(native_limit); print(native_callback(21)); }} return 0; }}"
     );
@@ -156,13 +146,10 @@ fn dllimport_requires_extern_and_supported_attribute_syntax() {
     let root = fixture();
     let header = root.join("exported.h");
     std::fs::write(&header, "__declspec(dllexport) extern int value;").unwrap();
-    let error = crust::bindings::generate(
-        &header,
-        &crust::bindings::Options {
-            variables: vec!["value".to_owned()],
-            ..Default::default()
-        },
-    )
+    let error = crust::check(&format!(
+        "{} int main(){{unsafe{{print(value);}}return 0;}}",
+        common::native_header(&header)
+    ))
     .unwrap_err();
-    assert!(error.contains("consumer configuration"));
+    assert!(error.message.contains("consumer configuration"), "{error}");
 }

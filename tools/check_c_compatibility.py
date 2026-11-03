@@ -20,8 +20,8 @@ def main():
     parser.add_argument("--full", action="store_true", help="Include the full compiler regression suite")
     arguments = parser.parse_args()
     # These probes prevent a missing compiler from silently skipping native tests.
-    for compiler in dict.fromkeys((os.environ.get("CC", "clang"), "clang")):
-        subprocess.run([compiler, "--version"], cwd=ROOT, check=True)
+    compiler = os.environ.get("CC", "clang" if os.name == "nt" else "cc")
+    subprocess.run([compiler, "--version"], cwd=ROOT, check=True)
     command = ["cargo", "test", "--locked", "--no-fail-fast"]
     if arguments.offline:
         command.append("--offline")

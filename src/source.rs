@@ -107,8 +107,72 @@ impl SourceSet {
     pub fn load_with_options(
         entry: &Path,
         native: &crate::native::Options,
+        read: impl FnMut(&Path) -> io::Result<String>,
+    ) -> Result<Self, SourceError> {
+        return Self::load_for_target(entry, native, crate::project::TargetKind::Executable, read);
+    }
+
+    pub fn load_for_target(
+        entry: &Path,
+        native: &crate::native::Options,
+        kind: crate::project::TargetKind,
         mut read: impl FnMut(&Path) -> io::Result<String>,
     ) -> Result<Self, SourceError> {
+        let mut contents =
+            std::collections::HashMap::<PathBuf, Result<String, (io::ErrorKind, String)>>::new();
+        let mut cached = |path: &Path| -> io::Result<String> {
+            if let Some(value) = contents.get(path) {
+                return value
+                    .clone()
+                    .map_err(|(kind, message)| io::Error::new(kind, message));
+            }
+            let result = read(path);
+            contents.insert(
+                path.to_owned(),
+                result
+                    .as_ref()
+                    .map(Clone::clone)
+                    .map_err(|e| (e.kind(), e.to_string())),
+            );
+            return result;
+        };
+        let entry = identity(entry).map_err(|e| SourceError {
+            path: entry.to_owned(),
+            diagnostic: Diagnostic::new(
+                Span {
+                    start: 0,
+                    end: 0,
+                    line: 1,
+                    column: 1,
+                },
+                e.to_string(),
+            ),
+        })?;
+        let prepared =
+            if !native.defines.is_empty() || crate::preprocess::required(&entry, &mut cached) {
+                let text = cached(&entry).map_err(|e| SourceError {
+                    path: entry.clone(),
+                    diagnostic: Diagnostic::new(
+                        Span {
+                            start: 0,
+                            end: 0,
+                            line: 1,
+                            column: 1,
+                        },
+                        e.to_string(),
+                    ),
+                })?;
+                Some(crate::preprocess::prepare(
+                    &entry,
+                    &text,
+                    native,
+                    kind == crate::project::TargetKind::SharedLibrary,
+                    kind != crate::project::TargetKind::Executable,
+                    &mut cached,
+                )?)
+            } else {
+                None
+            };
         let mut sources = Self {
             native: native.clone(),
             native_headers: Vec::new(),
@@ -117,7 +181,7 @@ impl SourceSet {
             loaded: HashSet::new(),
             next_offset: 0,
         };
-        sources.load_file(entry, None, 0, &mut read)?;
+        sources.load_file(&entry, None, 0, prepared, &mut cached)?;
         return Ok(sources);
     }
 
@@ -218,7 +282,29 @@ impl SourceSet {
                 )];
             })
             .collect::<Vec<_>>();
-        return Ok(crate::emit_c::generate_with_sources(&checked, &sources));
+        let generated = if self.files[0].prepared.is_some() {
+            crate::emit_c::generate_replayed(&checked, &sources)
+        } else {
+            crate::emit_c::generate_with_sources(&checked, &sources)
+        };
+        if let Some(prepared) = &self.files[0].prepared {
+            return prepared
+                .replay
+                .finish(&generated)
+                .map_err(|message| SourceError {
+                    path: self.files[0].path.clone(),
+                    diagnostic: Diagnostic::new(
+                        Span {
+                            start: 0,
+                            end: 0,
+                            line: 1,
+                            column: 1,
+                        },
+                        message,
+                    ),
+                });
+        }
+        return Ok(generated);
     }
 
     pub fn analyze(&self) -> Result<crate::analysis::Analysis, SourceError> {
@@ -335,6 +421,7 @@ impl SourceSet {
         path: &Path,
         origin: Option<Span>,
         import_depth: usize,
+        prepared: Option<crate::preprocess::Prepared>,
         read: &mut impl FnMut(&Path) -> io::Result<String>,
     ) -> Result<(), SourceError> {
         let fallback = Span {
@@ -356,7 +443,12 @@ impl SourceSet {
                 "source import limit exceeded",
             )));
         }
-        let text = read(&path).map_err(|error| {
+        let text = if let Some(prepared) = &prepared {
+            Ok(prepared.inputs[&path].clone())
+        } else {
+            read(&path)
+        }
+        .map_err(|error| {
             let diagnostic = Diagnostic::new(
                 origin.unwrap_or(fallback),
                 format!("could not read {}: {error}", path.display()),
@@ -370,16 +462,7 @@ impl SourceSet {
                 }
             };
         })?;
-        let mut prepared = if crate::preprocess::needed(&text) || !self.native.defines.is_empty() {
-            Some(crate::preprocess::prepare(
-                &path,
-                &text,
-                &self.native,
-                read,
-            )?)
-        } else {
-            None
-        };
+        let mut prepared = prepared;
         let mut tokens = if let Some(prepared) = &mut prepared {
             std::mem::take(&mut prepared.tokens)
         } else {
@@ -452,7 +535,9 @@ impl SourceSet {
                         "expected ';' after native header reference",
                     )));
                 }
-                let header = path
+                let location = self.location(token.span);
+                let header = self.files[location.file]
+                    .path
                     .parent()
                     .unwrap()
                     .join(name)
@@ -542,7 +627,7 @@ impl SourceSet {
         }
         self.tokens.push(end);
         for (imported, span) in imports {
-            self.load_file(&imported, Some(span), import_depth + 1, read)?;
+            self.load_file(&imported, Some(span), import_depth + 1, None, read)?;
         }
         return Ok(());
     }

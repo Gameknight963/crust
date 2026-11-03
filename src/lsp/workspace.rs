@@ -85,7 +85,8 @@ pub(super) fn symbols(
         }
     }
     for (uri, document) in documents {
-        if uri_path(uri).is_none()
+        if !document.native
+            && uri_path(uri).is_none()
             && let Ok(analysis) = crate::analyze(&document.text)
         {
             contexts.push(Context {
@@ -176,9 +177,10 @@ pub(super) fn source_graphs(
             if !entries.insert(target.entry.clone()) {
                 continue;
             }
-            match crate::source::SourceSet::load_with_options(
+            match crate::source::SourceSet::load_for_target(
                 &target.entry,
                 &target.native,
+                target.kind,
                 |path| source_text(path, &sources.paths, documents),
             ) {
                 Ok(graph) => sources.graphs.push(graph),

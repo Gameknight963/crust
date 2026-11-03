@@ -57,7 +57,7 @@ use UTF-8 byte arrays.
 
 ### C integration
 
-- [Headers](examples/header_project/): generated bindings and an opaque handle wrapper
+- [Headers](examples/header_project/): direct header inclusion and an opaque handle wrapper
 - [Header-only C](examples/header_only_project/): static functions, packed records, and bitfields
 - [Native records](examples/records_project/): complete C types, packed-field borrows, and by-value calls
 - [SQLite](examples/sqlite_project/): native database owners, prepared statements, and recoverable SQL errors

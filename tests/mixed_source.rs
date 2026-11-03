@@ -125,7 +125,7 @@ fn preprocessed_diagnostics_and_analysis_use_original_source_positions() {
 }
 
 #[test]
-fn preprocessing_preserves_standard_boolean_macros_and_reports_unsaved_headers() {
+fn preprocessing_preserves_standard_boolean_macros_and_snapshots_unsaved_headers() {
     let output = common::tracked_run(
         r#"
 #pragma crust begin_c
@@ -154,11 +154,10 @@ int main(){bool value=true;print(value && native_true());return 0;}
         }
         return std::fs::read_to_string(path);
     });
-    let error = result.err().expect("unsaved header must be diagnosed");
-    assert!(
-        error.to_string().contains("save this included C header"),
-        "{error}"
-    );
+    let sources = result.unwrap();
+    std::fs::write(&header, "static int value(void){return 99;}\n").unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert_eq!(output.status.code(), Some(43));
 }
 
 #[test]
@@ -274,4 +273,150 @@ fn quoted_search_path_headers_preserve_include_next() {
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
         "42\n"
     );
+}
+
+#[test]
+fn replay_preserves_counters_and_header_state_across_imports() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/replay-import-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("native.h"),"#pragma once\n#include <stdint.h>\nstruct Shared {int value;};\nstatic int header_number(void){return __COUNTER__;}\n").unwrap();
+    std::fs::write(root.join("dependency.cr"),"#pragma crust begin_c\n#include \"native.h\"\nstatic int dependency_number(void){return __COUNTER__;}\n#pragma crust end_c\nconst int dependency_counter=__COUNTER__;\nstatic int local(){return 40;}\nint dependency(){return local()+dependency_number()+dependency_counter;}\n").unwrap();
+    std::fs::write(root.join("main.cr"),"import \"dependency.cr\";\nimport \"dependency.cr\";\nconst int root_counter=__COUNTER__;\n#pragma crust begin_c\n#include \"native.h\"\nstatic int root_number(void){return __COUNTER__;}\n#pragma crust end_c\nstatic int local(){return 2;}\nint main(){print(dependency());print(root_counter);print(root_number());print(header_number());print(local());return 0;}\n").unwrap();
+    let sources = crust::source::SourceSet::load(&root.join("main.cr")).unwrap();
+    assert!(
+        sources
+            .files()
+            .iter()
+            .all(|file| !file.path.to_string_lossy().contains("crust-source-"))
+    );
+    assert!(
+        sources
+            .files()
+            .iter()
+            .any(|file| file.path == root.join("dependency.cr").canonicalize().unwrap())
+    );
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "43\n3\n4\n0\n2\n"
+    );
+}
+
+#[test]
+fn replay_preserves_first_expansion_with_generated_runtime_macros() {
+    let source = "const int crust_number=__COUNTER__;\n#pragma crust begin_c\n#include <stdio.h>\nstatic int native_number(void){return __COUNTER__;}\n#pragma crust end_c\nint main(){print(crust_number);print(native_number());return 0;}\n";
+    let output = common::tracked_run(source);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "0\n1\n"
+    );
+}
+
+#[test]
+fn replay_snapshots_macro_only_headers_and_keeps_original_paths() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/replay-macro-snapshot")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = root.join("main.cr");
+    let header = root.join("macros.h");
+    std::fs::write(&header, "#pragma once\n#define ANSWER 1\n").unwrap();
+    std::fs::write(&entry,"#pragma crust begin_c\n#include \"macros.h\"\n#pragma crust end_c\nint main(){return ANSWER;}\n").unwrap();
+    let sources = crust::source::SourceSet::load_with(&entry, |path| {
+        if path.ends_with("macros.h") {
+            Ok("#pragma once\n#define ANSWER 42\n".to_owned())
+        } else {
+            std::fs::read_to_string(path)
+        }
+    })
+    .unwrap();
+    assert!(
+        sources
+            .files()
+            .iter()
+            .all(|file| !file.path.to_string_lossy().contains("crust-source-"))
+    );
+    std::fs::write(&header, "#pragma once\n#define ANSWER 99\n").unwrap();
+    let generated = sources.compile().unwrap();
+    assert!(!generated.lines().any(|line| line.starts_with("#line ")));
+    drop(sources);
+    assert_eq!(
+        common::tracked_generated_c(&generated, false).status.code(),
+        Some(42)
+    );
+}
+
+#[test]
+fn replay_uses_the_target_kind_and_optimization_profile_for_both_languages() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/replay-profile-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = root.join("main.cr");
+    std::fs::write(&entry,"#ifdef __OPTIMIZE__\n#define LEVEL 1\n#else\n#define LEVEL 0\n#endif\n#ifdef CRUST_BUILD_SHARED\n#define SHARED 2\n#else\n#define SHARED 0\n#endif\n#pragma crust begin_c\nstatic int native_flags(void){return LEVEL+SHARED;}\n#pragma crust end_c\nint main(){return native_flags()+LEVEL+SHARED;}\n").unwrap();
+    for (kind, profile, expected) in [
+        (
+            crust::project::TargetKind::Executable,
+            crust::native::Profile::Debug,
+            0,
+        ),
+        (
+            crust::project::TargetKind::Executable,
+            crust::native::Profile::Release,
+            2,
+        ),
+        (
+            crust::project::TargetKind::SharedLibrary,
+            crust::native::Profile::Release,
+            6,
+        ),
+    ] {
+        let options = crust::native::Options {
+            profile,
+            ..Default::default()
+        };
+        let sources = crust::source::SourceSet::load_for_target(&entry, &options, kind, |path| {
+            std::fs::read_to_string(path)
+        })
+        .unwrap();
+        let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+        assert_eq!(output.status.code(), Some(expected), "{output:?}");
+    }
+}
+
+#[test]
+fn conditional_imports_use_shared_macros_and_ignore_inactive_syntax() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/replay-conditional-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = root.join("main.cr");
+    std::fs::write(
+        root.join("dependency.cr"),
+        "#define AFTER_IMPORT 2\nint dependency(){return BEFORE_IMPORT;}\n",
+    )
+    .unwrap();
+    std::fs::write(&entry,"#define BEFORE_IMPORT 40\n#define MODULE \"dependency.cr\"\n#if 0\ninvalid @ { syntax\nimport \"/does-not-exist.cr\";\n#endif\nimport MODULE;\nint main(){return dependency()+AFTER_IMPORT;}\n").unwrap();
+    let sources = crust::source::SourceSet::load(&entry).unwrap();
+    assert_eq!(
+        common::tracked_generated_c(&sources.compile().unwrap(), false)
+            .status
+            .code(),
+        Some(42)
+    );
+    std::fs::write(
+        &entry,
+        "#define VALUE 1\nint main(){import \"dependency.cr\";return VALUE;}\n",
+    )
+    .unwrap();
+    let error = crust::source::SourceSet::load(&entry).err().unwrap();
+    assert!(error.diagnostic.message.contains("top-level"), "{error}");
 }

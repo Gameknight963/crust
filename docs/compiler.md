@@ -18,10 +18,12 @@ ownership checking, C generation, and native compilation.
 | `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
 | `src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
 | `src/analysis/signatures.rs` | Resolved call signatures, argument boundaries, and parameter label ranges |
-| `src/bindings.rs` | Clang header analysis and generated binding validation |
-| `src/bindings/enums.rs` | Native enum discovery, integer representation, and constant probes |
+| `src/bindings.rs` | Native declaration discovery and type rendering |
+| `src/bindings/libclang.rs` | C declarations, enum representations, and record fields |
+| `src/bindings/enums.rs` | Native enum metadata |
+| `src/bindings/records.rs` | Native record metadata |
 | `src/bindings/render.rs` | C type trees to Crust declarations |
-| `src/cli_bindings.rs` | Header binding command and output handling |
+| `src/preprocess/snapshot.rs` | Source/header snapshots and import preprocessing |
 | `src/ast.rs` | Syntax tree and type representation |
 | `src/parser.rs` | Declarations, statements, expressions |
 | `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
@@ -257,19 +259,12 @@ responses clear on frontend errors. Clients advertising refresh support receive
 
 ## C header bindings
 
-`bindings::generate` asks Clang for native declarations and structured types,
-renders selected functions, variables, enums, and typedefs, and checks the resulting Crust declarations.
-Declaration queries filter to selected names, and type queries carry the
-reachable typedef and pointer information needed by those functions.
-Independent Clang type-compatibility assertions verify generated function and
-object types against the original header. Binding tests require Clang on `PATH`.
-Selected typedefs have synthetic pointer declarations for compatibility checks.
-Complete scalar and pointer aliases also have native size and alignment checks.
-Reachable native enums retain their C tags through emitted header references.
-Clang constant probes determine their compatible integer types and member values.
-
-The CLI writes the generated UTF-8 file after validation. See
-[C header bindings](c-bindings.md) for commands and supported declarations.
+`bindings::native_declarations` reads the frozen C regions through libclang's
+stable C API. Referenced names and their reachable type dependencies are rendered
+as internal Crust declarations before parsing and semantic checking. Enum values,
+qualifiers, calling conventions, and record fields come from this declaration
+analysis. The final native compilation checks generated ABI assertions against
+the original C declarations. See [C headers](c-bindings.md).
 
 ## Native compilation
 
@@ -298,7 +293,7 @@ The CLI writes the generated UTF-8 file after validation. See
 - Single-file build output goes to `target/crust/`, using the source file's basename
 - Project build output goes to `<project>/target/crust/<target>/`
 - Target native options add C11 source files, include paths, explicit link inputs, and library search and name arguments
-- Target macro definitions pass directly to the C preprocessor, with shared validation for native builds and header binding generation
+- Target macro definitions pass directly to the C preprocessor, with shared validation for preprocessing and native builds
 - Native paths are resolved relative to the manifest, and compiler arguments are passed directly to the process
 - On Windows, the driver locates the MSVC tools through `cl.exe` on `PATH` when Clang needs help selecting the installation
 - Windows output paths containing `%` use the output directory as the native tool's working directory and pass a relative output filename, preserving the caller's input paths
@@ -455,7 +450,11 @@ source-library APIs.
 `src/preprocess.rs` runs the selected C compiler's preprocessor before parsing
 Crust. It keeps native C regions opaque, resolves included headers through the
 preprocessor's include trace, and maps expanded tokens to original source
-locations. The original native text and directives are retained for emission.
+locations. `src/preprocess/snapshot.rs` stages source and project headers,
+including unsaved editor text. Imports become guarded includes so macro state
+and header identity are shared across the target. `SourceSet::load_for_target`
+selects the preprocessing flags for executables, static libraries, and shared
+libraries. CLI and project-aware LSP paths use this entry point.
 
 `src/bindings/libclang.rs` loads the stable libclang C API and analyzes only the
 preprocessed C regions. Referenced C declarations enter the existing native type
@@ -466,4 +465,12 @@ with both packages.
 
 Source mapping aligns unchanged tokens within each expanded line and maps
 new tokens to their macro invocation. Macro-generated edits are rejected by
-rename. Included C headers currently require saved disk contents.
+rename.
+
+Emission replays the exact staged input with generated C appended. It verifies
+the first expansion, including macro definitions, against the checked pass. The
+replayed header guards and macros then preprocess the generated runtime. Frozen
+user C and the resulting generated tail are combined. The driver detects the
+preprocessed marker and uses `-x cpp-output` for this artifact, switching back to
+ordinary C for additional native source files. System headers outside the staged
+trees are checked for content changes before and after replay.

@@ -122,9 +122,10 @@ files, a native C library, containers, files, and recoverable errors.
 
 - [x] Whole-file C preprocessing, file-scope native regions, and bundled libclang declaration discovery
 - [x] Native debug/release optimization profiles
-- [ ] Preserve stateful preprocessor extensions across mixed-source analysis and native emission
-- [ ] Unsaved included-header overlays and C-region editor analysis
-- [ ] Share declaration analysis with the legacy binding generator
+- [x] Replay preprocessing with shared import state and frozen native emission
+- [x] Unsaved source and included-header snapshots
+- [ ] C-region editor analysis
+- [x] Replace the legacy binding generator with direct header includes
 - [x] Floating-point types, literals, arithmetic, conversions, and C calls
 - [x] Integer and enum switch statements
 - [x] Global definitions and static variables

@@ -225,10 +225,6 @@ struct LoopContext {
     continues: Vec<(Scopes, Span)>,
 }
 
-pub(crate) fn check(program: Program) -> Result<CheckedProgram, Diagnostic> {
-    return check_with_kind(program, crate::ProgramKind::Executable);
-}
-
 pub(crate) fn check_with_kind(
     program: Program,
     kind: crate::ProgramKind,

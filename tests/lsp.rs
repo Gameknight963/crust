@@ -2726,3 +2726,79 @@ fn mixed_source_uses_unsaved_macros_and_native_declarations() {
     );
     server.stop();
 }
+
+#[test]
+fn mixed_source_rechecks_unsaved_included_headers() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-mixed-header")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("crust.toml"),
+        "[project]\nname='headers'\n[[targets]]\nname='app'\nentry='main.cr'\n",
+    )
+    .unwrap();
+    let source = "#pragma crust begin_c\n#include \"native.h\"\n#pragma crust end_c\nint main(){return native_value(42);}\n";
+    let header = "int native_value(int value);\n";
+    std::fs::write(root.join("main.cr"), source).unwrap();
+    std::fs::write(root.join("native.h"), header).unwrap();
+    let compiler = std::env::var_os("CC").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "clang".into()
+        } else {
+            "cc".into()
+        }
+    });
+    let mut server = Server::start_with_compiler(json!({"capabilities":{}}), &compiler);
+    let uri = file_uri(&root.join("main.cr"));
+    let header_uri = file_uri(&root.join("native.h"));
+    assert_eq!(server.open(&uri, 1, source)["diagnostics"], json!([]));
+    server.notify("textDocument/didOpen",json!({"textDocument":{"uri":header_uri,"languageId":"c","version":1,"text":"int native_value(int first,int second);\n"}}));
+    loop {
+        let diagnostics = server.diagnostics();
+        if diagnostics["uri"] == uri {
+            assert!(
+                !diagnostics["diagnostics"].as_array().unwrap().is_empty(),
+                "{diagnostics}"
+            );
+            break;
+        }
+    }
+    // Consume any remaining publication before a request establishes a barrier.
+    let id = server.next_id;
+    server.next_id += 1;
+    Message::Request(Request::new(
+        id.into(),
+        "textDocument/hover".into(),
+        json!({"textDocument":{"uri":uri},"position":point(source,"native_value(42)")}),
+    ))
+    .write(&mut server.input)
+    .unwrap();
+    loop {
+        if let Message::Response(response) = server.receive() {
+            assert_eq!(response.id, id.into());
+            break;
+        }
+    }
+    server.change(&header_uri, 2, header);
+    loop {
+        let diagnostics = server.diagnostics();
+        if diagnostics["uri"] == uri {
+            assert_eq!(diagnostics["diagnostics"], json!([]));
+            break;
+        }
+    }
+    // Drain updates before shutdown's response.
+    let id = server.next_id;
+    server.next_id += 1;
+    Message::Request(Request::new(id.into(), "shutdown".into(), Value::Null))
+        .write(&mut server.input)
+        .unwrap();
+    loop {
+        if let Message::Response(response) = server.receive() {
+            assert_eq!(response.id, id.into());
+            break;
+        }
+    }
+    server.exit(true);
+}

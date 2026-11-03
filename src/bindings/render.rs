@@ -76,18 +76,6 @@ impl Renderer {
         return alias;
     }
 
-    pub fn constant_name(&mut self, native: &str, occupied: &HashSet<String>) -> String {
-        let name = self.binding_name(native);
-        if !occupied.contains(&name) {
-            return name;
-        }
-        let mut alias = format!("c_{name}");
-        while !crust_identifier(&alias) || !self.names.insert(alias.clone()) {
-            alias.push('_');
-        }
-        return alias;
-    }
-
     pub fn alias_type(&mut self, node: &Value) -> Result<(String, bool), String> {
         let qualified = Self::unwrap(node)?;
         if kind(qualified) == "QualType" {
@@ -138,14 +126,6 @@ impl Renderer {
             self.declarations.push((None, declaration));
         }
         return Ok(());
-    }
-
-    pub fn check_name(&mut self, index: usize) -> String {
-        let mut name = format!("__crust_import_check_{index}");
-        while !self.names.insert(name.clone()) {
-            name.push('_');
-        }
-        return name;
     }
 
     pub fn complete_records(
@@ -487,7 +467,7 @@ impl Renderer {
                 let key = format!("{tag} {native}");
                 if !opaque && !self.complete.contains(&key) {
                     return Err(format!(
-                        "C aggregates passed by value require selecting --{tag} {native} or a native wrapper"
+                        "C aggregates passed by value require the complete {tag} {native} definition or a native wrapper"
                     ));
                 }
                 let name = if let Some(name) = self.records.get(&key) {
