@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+  <dict>
+    <key>name</key><string>Crust</string>
+    <key>settings</key>
+    <array>
+      <dict>
+        <key>scope</key><string>comment.line.double-slash.crust, comment.block.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>comment</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>entity.name.type.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>type</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>entity.name.function.crust, support.function.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>method name</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>storage.type.crust, storage.modifier.crust, constant.language.crust, variable.language.crust, keyword.operator.word.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>keyword</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>keyword.control.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>keyword - control</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>keyword.control.directive.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>preprocessor keyword</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>string.quoted.double.crust, string.quoted.single.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>string</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>constant.character.escape.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>string - escape character</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>constant.numeric.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>number</string></dict>
+      </dict>
+      <dict>
+        <key>scope</key><string>keyword.operator.crust</string>
+        <key>settings</key><dict><key>vsclassificationtype</key><string>operator</string></dict>
+      </dict>
+    </array>
+  </dict>
+</plist>

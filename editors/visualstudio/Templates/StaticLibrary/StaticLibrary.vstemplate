@@ -8,6 +8,7 @@
     <DefaultName>CrustStaticLibrary</DefaultName>
     <CreateNewFolder>true</CreateNewFolder>
     <ProvideDefaultName>true</ProvideDefaultName>
+    <CreateInPlace>true</CreateInPlace>
     <SortOrder>110</SortOrder>
     <LanguageTag>Crust</LanguageTag>
     <PlatformTag>windows</PlatformTag>

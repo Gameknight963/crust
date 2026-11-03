@@ -37,6 +37,7 @@ if (-not ($crustManifest.PackageManifest.Assets.Asset | Where-Object { $_.Type -
 }
 $crustSources = @{
     'Grammars/crust.tmLanguage.json' = 'editors/vscode/syntaxes/crust.tmLanguage.json'
+    'Grammars/crust.tmLanguage.tmTheme' = 'editors/visualstudio/crust.tmLanguage.tmTheme'
     'language-configuration.json' = 'editors/vscode/language-configuration.json'
     'Server/crust-lsp.exe' = 'target/release/crust-lsp.exe'
     'Server/crust.exe' = 'target/release/crust.exe'

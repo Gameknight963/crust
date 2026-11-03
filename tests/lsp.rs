@@ -1312,7 +1312,7 @@ fn excessive_nesting_reports_diagnostics_and_the_server_recovers() {
                 .unwrap()
                 .contains("nesting limit exceeded")
         );
-        assert!(semantic_tokens(&mut server, uri).is_empty());
+        assert!(!semantic_tokens(&mut server, uri).is_empty());
         server.change(uri, version + 1, "int main() { return 0; }");
         assert_eq!(server.diagnostics()["diagnostics"], json!([]));
         assert!(!semantic_tokens(&mut server, uri).is_empty());
@@ -1334,7 +1334,7 @@ fn workspace_folder_changes_recheck_external_dependency_context() {
     let diagnostics = server.diagnostics();
     assert_eq!(diagnostics["uri"], uri);
     assert!(!diagnostics["diagnostics"].as_array().unwrap().is_empty());
-    assert!(semantic_tokens(&mut server, &uri).is_empty());
+    assert!(!semantic_tokens(&mut server, &uri).is_empty());
     server.notify(
         "workspace/didChangeWorkspaceFolders",
         json!({"event": {"removed": [], "added": [{"uri": file_uri(&project), "name": "app"}]}}),
@@ -1993,14 +1993,14 @@ fn visual_studio_semantic_tokens_use_native_classifications_for_builtins_and_sou
 }
 
 #[test]
-fn semantic_tokens_clear_after_errors_and_close_and_recover_with_unsaved_text() {
+fn semantic_tokens_survive_errors_and_clear_after_close() {
     let uri = "untitled:semantic-recovery.cr";
     let mut server = Server::start();
     server.open(uri, 1, "int main() { return 0; }");
     assert!(!semantic_tokens(&mut server, uri).is_empty());
     server.change(uri, 2, "int main() { return missing; }");
     server.diagnostics();
-    assert!(semantic_tokens(&mut server, uri).is_empty());
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
     server.change(uri, 3, "int main() { int value = 1; return value; }");
     server.diagnostics();
     assert!(!semantic_tokens(&mut server, uri).is_empty());
@@ -2015,6 +2015,97 @@ fn semantic_tokens_clear_after_errors_and_close_and_recover_with_unsaved_text() 
         json!({"textDocument": {}}),
     );
     assert_eq!(response.error.unwrap().code, -32602);
+    server.stop();
+}
+
+#[test]
+fn semantic_classifications_track_unchanged_symbols_through_incomplete_edits() {
+    let source = "struct Item { int field; };\r\nint main() { /* \u{1f980} */ Item item = {.field = 7}; int count = 1; print(item.field); return count; }";
+    let uri = "untitled:stable-classifications.cr";
+    for visual_studio in [false, true] {
+        let mut server =
+            Server::start_with_params(json!({"capabilities": {}, "initializationOptions": {
+                "visualStudioClassifications": visual_studio
+            }}));
+        assert_eq!(server.open(uri, 1, source)["diagnostics"], json!([]));
+        let mut version = 1;
+        for edited in [
+            source.replace("count = 1", "count = "),
+            source.replace("return count;", "return count"),
+            source.replace("return count;", "return missing;"),
+            format!("\u{1f980} {source}"),
+            source.trim_end_matches('}').to_owned(),
+        ] {
+            let baseline = semantic_tokens(&mut server, uri);
+            assert!(!baseline.is_empty());
+            version += 1;
+            server.change(uri, version, &edited);
+            assert!(
+                !server.diagnostics()["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            let tokens = semantic_tokens(&mut server, uri);
+            for (needle, advance, expected) in [
+                ("Item {", 0, 1),
+                ("field;", 0, 7),
+                ("Item item", 0, 1),
+                ("item.field", 0, 10),
+                ("item.field", 5, 7),
+            ] {
+                let position = at(&edited, edited.find(needle).unwrap() + advance);
+                let token = tokens
+                    .iter()
+                    .find(|token| {
+                        token[0] == position["line"].as_u64().unwrap()
+                            && token[1] == position["character"].as_u64().unwrap()
+                    })
+                    .unwrap_or_else(|| panic!("lost {needle} in {edited}"));
+                assert_eq!(token[3], expected, "{needle} in {edited}");
+            }
+            version += 1;
+            server.change(uri, version, source);
+            assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+        }
+        server.stop();
+    }
+}
+
+#[test]
+fn retained_classifications_do_not_color_comments_strings_or_renamed_bindings() {
+    let source = "struct Item { int field; }; int main() { Item item = {.field = 7}; print(item.field); return 0; }";
+    let uri = "untitled:classification-lifetimes.cr";
+    let mut server = Server::start();
+    server.open(uri, 1, source);
+    assert!(!semantic_tokens(&mut server, uri).is_empty());
+    for (index, marker) in ["/* ", "\""].iter().enumerate() {
+        let insertion = source.find("print(item.field)").unwrap();
+        let mut edited = source.to_owned();
+        edited.insert_str(insertion, marker);
+        server.change(uri, 2 + index as i32 * 2, &edited);
+        server.diagnostics();
+        let tokens = semantic_tokens(&mut server, uri);
+        assert!(
+            tokens.iter().all(|token| token[1] < insertion as u64),
+            "classified text inside {marker}"
+        );
+        server.change(uri, 3 + index as i32 * 2, source);
+        server.diagnostics();
+        semantic_tokens(&mut server, uri);
+    }
+    let changed = "typedef int Item; int main() { Item item = 7; print(item); return item; }";
+    server.change(uri, 10, changed);
+    assert_eq!(server.diagnostics()["diagnostics"], json!([]));
+    let position = point(changed, "Item item");
+    let tokens = semantic_tokens(&mut server, uri);
+    assert_eq!(
+        tokens
+            .iter()
+            .find(|token| token[1] == position["character"].as_u64().unwrap())
+            .unwrap()[3],
+        0
+    );
     server.stop();
 }
 

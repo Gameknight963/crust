@@ -32,8 +32,8 @@ Choose **File > New > Project** and search for **Crust**:
 - **Crust Shared Library** creates a DLL with the same exported function
 
 Each template creates a `.crproj`, `crust.toml`, and source file under `src/`.
-Native debug information is enabled. Build the console project, set a breakpoint
-in `src/main.cr`, and press **F5** to test source debugging. **Ctrl+F5** runs it
+Native debug information is enabled. Set a breakpoint in `src/main.cr` and press
+**F5** to build and test source debugging. **Ctrl+F5** runs it
 without debugging. Library projects build through the solution and can be linked
 by another project's manifest.
 
@@ -110,11 +110,21 @@ and ordinary struct types. Generic types have readable names with compiler IDs.
 See [native debug information](../../docs/projects.md#native-debug-information)
 for shadowing and C name collisions.
 
+## Highlighting
+
+The language server resolves types, fields, methods, parameters, and locals
+through compiler analysis. It preserves classifications for unchanged tokens
+during incomplete edits and classifies the current text again after recovery.
+TextMate supplies lexical highlighting for comments, strings, keywords, and
+numbers. Both layers use Visual Studio classifications and follow its editor
+theme.
+
 ## Development checks
 
 ```powershell
 ./editors/visualstudio/build.ps1 -Offline
 ./editors/visualstudio/test.ps1
+./editors/visualstudio/test-live.ps1
 ```
 
 The test checks the VSIX contents and runs the packaged client with Visual
@@ -132,3 +142,10 @@ console program, and link and run consumers of both library templates.
 They also build copies containing only the manifest and sources with the
 standalone compiler. The client probe checks that the SDK path provider can
 compose with the services exported by the CPS project scope.
+
+The live test requires the Visual Studio extensibility tools. It installs a copy
+of the VSIX in a uniquely named experimental profile, creates a project through
+Visual Studio's template engine, and checks editor classifications during an
+incomplete edit. It verifies the first F5 build, a source breakpoint, local
+evaluation, source stepping, and Ctrl+F5 execution. The experimental profile and
+diagnostics under `target/visualstudio-live-tests/` remain available for inspection.

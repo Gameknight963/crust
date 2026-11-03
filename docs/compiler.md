@@ -66,6 +66,7 @@ ownership checking, C generation, and native compilation.
 | `editors/visualstudio/ProjectTool.cs` | Compiler process invocation and project metadata |
 | `editors/visualstudio/CrustBuildProperties.cs` | Bundled SDK and compiler defaults for Visual Studio projects |
 | `editors/visualstudio/CrustLaunchProvider.cs` | Target-aware native debugger launch and working-directory selection |
+| `editors/visualstudio/CrustDebugTargets.cs` | CPS debugger dropdown and project launch selection |
 | `editors/msbuild/Crust.props`, `Crust.targets` | MSBuild project properties, source items, and build targets |
 | `editors/msbuild/Tasks/` | Compiler task invocation, metadata, and source diagnostics for both MSBuild hosts |
 | `editors/visualstudio/ConsoleRunner.cs` | Console input, output, and exit handling |

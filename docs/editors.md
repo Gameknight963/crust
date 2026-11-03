@@ -89,8 +89,10 @@ Semantic highlighting distinguishes types, fields, methods, parameters, and othe
 bindings through compiler resolution. Declarations and built-in names have
 separate modifiers. Token ranges use UTF-16 positions and update with unsaved
 text. Clients that support semantic-token refresh requests are refreshed after
-document changes, including dependency edits. A compiler error clears semantic
-tokens until the program checks successfully again.
+document changes, including dependency edits. During incomplete edits, the server
+classifies independently resolvable bindings and retains previous classifications
+for unchanged tokens. Changed names are classified again when analysis succeeds.
+Comments and strings use the current text and do not retain old classifications.
 
 ## Visual Studio
 
@@ -132,8 +134,12 @@ The Debug page configures arguments and the working directory. Enable
 for source breakpoints and stepping.
 
 The client uses Visual Studio's editing UI for compiler diagnostics, completion,
-navigation, references, rename, and semantic highlighting. Syntax highlighting
-and bracket configuration use the same files as the VS Code extension.
+navigation, references, rename, and semantic highlighting. Semantic tokens use
+Visual Studio's native classifications for types, fields, methods, and locals.
+TextMate syntax highlighting supplies comments, strings, keywords, and numbers.
+Its scopes map to Visual Studio classifications so both layers follow the
+selected editor theme. The grammar and bracket configuration are shared with
+the VS Code extension.
 
 Set `CRUST_LSP_PATH` to a development server's full path before starting Visual
 Studio to use that server. The default is the server bundled with the VSIX.

@@ -105,6 +105,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
 
     watch::register(connection, &params)?;
     let mut documents = HashMap::new();
+    let mut semantic_snapshots = HashMap::new();
     let mut published = HashMap::new();
     let mut shutdown = false;
     for message in &connection.receiver {
@@ -127,6 +128,17 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                             String::from("shutdown takes no parameters"),
                         )
                     }
+                } else if request.method == "textDocument/semanticTokens/full" {
+                    match semantic_tokens::request(
+                        request.params,
+                        &documents,
+                        &workspace_roots,
+                        visual_studio,
+                        &mut semantic_snapshots,
+                    ) {
+                        Ok(result) => Response::new_ok(request.id, result),
+                        Err(error) => Response::new_err(request.id, error.code, error.message),
+                    }
                 } else if matches!(
                     request.method.as_str(),
                     "textDocument/hover"
@@ -138,7 +150,6 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "textDocument/completion"
                         | "workspace/symbol"
                         | "textDocument/signatureHelp"
-                        | "textDocument/semanticTokens/full"
                 ) {
                     match semantic::request(
                         &request.method,
@@ -146,7 +157,6 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         &documents,
                         document_changes,
                         &workspace_roots,
-                        visual_studio,
                     ) {
                         Ok(result) => Response::new_ok(request.id, result),
                         Err(error) => Response::new_err(request.id, error.code, error.message),
@@ -195,6 +205,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         &workspace_roots,
                     )
                 };
+                semantic_snapshots.retain(|uri, _| documents.contains_key(uri));
                 if let Err(error) = result {
                     connection.sender.send(
                         Notification::new(

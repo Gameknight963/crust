@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.ProjectSystem;
 using Microsoft.VisualStudio.ProjectSystem.Debug;
@@ -24,12 +26,17 @@ internal sealed class CrustLaunchProvider : DebugLaunchProviderBase
         {
             var configuration = await ConfigurationAsync().ConfigureAwait(false);
             var info = await ProjectTool.ReadMetadataAsync(configuration.Compiler, configuration.Manifest).ConfigureAwait(false);
-            ProjectTool.ExecutableTarget(info, configuration.Target);
-            return true;
+            return info.targets.Any(target => target.kind == "executable");
         }
         catch (Exception error) when (error is InvalidOperationException || error is IOException
             || error is System.ComponentModel.Win32Exception || error is ArgumentException)
-        { return false; }
+        {
+            // Let the build/launch request report the configuration error. A
+            // false result turns a missing manifest into VS's generic message
+            // that the startup project cannot be launched.
+            Debug.WriteLine("Crust launch configuration: " + error);
+            return true;
+        }
     }
 
     public override async Task<IReadOnlyList<IDebugLaunchSettings>> QueryDebugTargetsAsync(DebugLaunchOptions launchOptions)
