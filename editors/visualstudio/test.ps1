@@ -60,7 +60,7 @@ foreach ($crustEntry in $crustSources.GetEnumerator()) {
 }
 $crustProbe = Join-Path $crustTestRoot 'ClientProbe.exe'
 $crustCsc = Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/Roslyn/csc.exe'
-& $crustCsc /nologo /warnaserror /langversion:latest /r:System.Web.Extensions.dll "/out:$crustProbe" (Join-Path $PSScriptRoot 'tests/ClientProbe.cs')
+& $crustCsc /nologo /warnaserror /langversion:latest /r:System.Web.Extensions.dll /r:System.ComponentModel.Composition.dll "/out:$crustProbe" (Join-Path $PSScriptRoot 'tests/ClientProbe.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Client probe compilation failed' }
 & $crustProbe $crustTestRoot $VisualStudioRoot
 if ($LASTEXITCODE -ne 0) { throw 'Visual Studio client checks failed' }

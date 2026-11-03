@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.Composition;
+using System.ComponentModel.Composition.Hosting;
+using System.ComponentModel.Composition.Primitives;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -107,6 +110,23 @@ internal static class ClientProbe
     private static void CheckProjectProperties(string package, Assembly assembly)
     {
         var type = assembly.GetType("Crust.VisualStudio.CrustBuildProperties", true);
+        // CPS exports UnconfiguredProject in this scope. Its common services
+        // are accessed through the project, rather than exported separately.
+        using (var catalog = new TypeCatalog(type))
+        using (var container = new CompositionContainer(catalog))
+        {
+            const string projectContract = "Microsoft.VisualStudio.ProjectSystem.UnconfiguredProject";
+            var batch = new CompositionBatch();
+            batch.AddExport(new Export(projectContract,
+                new Dictionary<string, object> { { "ExportTypeIdentity", projectContract } },
+                () => throw new InvalidOperationException("This check must not construct project services.")));
+            container.Compose(batch);
+            const string propertiesContract = "Microsoft.VisualStudio.ProjectSystem.Build.IProjectGlobalPropertiesProvider";
+            var import = new ContractBasedImportDefinition(propertiesContract, propertiesContract,
+                Enumerable.Empty<KeyValuePair<string, Type>>(), ImportCardinality.ExactlyOne,
+                false, true, CreationPolicy.Any);
+            Assert(container.GetExports(import).Count() == 1, "SDK provider composes in the CPS project scope");
+        }
         string escaped = (string)type.GetMethod("Escape", BindingFlags.NonPublic | BindingFlags.Static)
             .Invoke(null, new object[] { "C:\\sdk % & ; ' $(test)" });
         Assert(escaped == "C:\\sdk %25 & %3B %27 %24%28test%29", "MSBuild property escaping");

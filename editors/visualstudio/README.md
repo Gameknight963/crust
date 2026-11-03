@@ -37,6 +37,19 @@ in `src/main.cr`, and press **F5** to test source debugging. **Ctrl+F5** runs it
 without debugging. Library projects build through the solution and can be linked
 by another project's manifest.
 
+The manifest and sources also build with the standalone compiler:
+
+```text
+crust check
+crust build
+crust run
+```
+
+Run these from the directory containing `crust.toml`. `crust run` selects the
+console template's executable. The library templates use `crust build` and are
+linked by a consuming project. The compiler reads the manifest directly.
+The `.crproj` and bundled MSBuild SDK provide Visual Studio solution integration.
+
 Install a C11 compiler and development libraries for native builds, as described
 in the project README. Templates use the compiler and SDK bundled with the VSIX.
 
@@ -116,3 +129,6 @@ flags, arguments, and working-directory settings.
 Template checks read the packaged Visual Studio catalog, create each project in
 a path containing spaces and Unicode, build with both MSBuild hosts, run the
 console program, and link and run consumers of both library templates.
+They also build copies containing only the manifest and sources with the
+standalone compiler. The client probe checks that the SDK path provider can
+compose with the services exported by the CPS project scope.

@@ -109,6 +109,9 @@ Use **File > New > Project** and search for **Crust** to create a console
 application, static library, or shared library. Templates include `.crproj`,
 `crust.toml`, and starter source with native debug information enabled.
 Use the console template to try **F5** debugging and **Ctrl+F5** console execution.
+Generated projects also build through `crust build` from their manifest directory.
+The standalone compiler reads `crust.toml` directly. The `.crproj` file supplies
+Visual Studio solution integration.
 
 Open a source file or `crust.toml`, then use **Tools > Crust** to build, check,
 or run its project. Commands save open documents, write compiler output to the

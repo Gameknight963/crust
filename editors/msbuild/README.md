@@ -2,6 +2,8 @@
 
 A `.crproj` file connects MSBuild and Visual Studio to a `crust.toml` project.
 The compiler reads targets, imports, and native dependencies from the manifest.
+`crust check`, `crust build`, and `crust run` use that manifest directly, so the
+same sources build with the standalone compiler on each supported platform.
 
 ## Build from the checkout
 

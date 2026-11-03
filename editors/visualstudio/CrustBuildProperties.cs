@@ -14,7 +14,7 @@ namespace Crust.VisualStudio;
 internal sealed class CrustBuildProperties : StaticGlobalPropertiesProviderBase
 {
     [ImportingConstructor]
-    public CrustBuildProperties(IProjectCommonServices services) : base(services) { }
+    public CrustBuildProperties(UnconfiguredProject project) : base(project.Services) { }
 
     public override Task<IImmutableDictionary<string, string>> GetGlobalPropertiesAsync(CancellationToken cancellationToken)
     {

@@ -1,7 +1,9 @@
 """Instantiate templates from the installed template catalog and build their projects."""
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -18,10 +20,10 @@ EXPECTED = {
 }
 
 
-def run(arguments):
+def run(arguments, env=None):
     result = subprocess.run(
         [str(arg) for arg in arguments], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60,
+        encoding="utf-8", errors="replace", timeout=60, env=env,
     )
     if result.returncode:
         raise AssertionError(f"{arguments}\n{result.stdout}\n{result.stderr}")
@@ -93,6 +95,24 @@ def main():
         copy_file(project_node, template_root / project_node.get("File"), project)
         copy_items(project_node, template_root, destination)
         ET.parse(project)
+        # A checkout with only the manifest and sources must build independently
+        # of Visual Studio, its SDK, and the optional MSBuild project file.
+        portable = package / "portable-template-tests" / name
+        portable.mkdir(parents=True)
+        copy_items(project_node, template_root, portable)
+        assert not list(portable.rglob("*.crproj"))
+        sdk_settings = {"crust_sdk_path", "crustsdkpath", "crust_compiler_path", "crust_lsp_path"}
+        standalone_env = {key: value for key, value in os.environ.items() if key.lower() not in sdk_settings}
+        standalone_env["PATH"] = os.pathsep.join(
+            directory for directory in standalone_env["PATH"].split(os.pathsep)
+            if not any((Path(directory) / tool).is_file() for tool in ("MSBuild.exe", "dotnet.exe"))
+        )
+        assert shutil.which("MSBuild.exe", path=standalone_env["PATH"]) is None
+        assert shutil.which("dotnet.exe", path=standalone_env["PATH"]) is None
+        run([compiler, "check", "--project", portable], env=standalone_env)
+        run([compiler, "build", "--project", portable], env=standalone_env)
+        portable_target, = json.loads(run([compiler, "metadata", "--project", portable]))["targets"]
+        assert Path(portable_target["output"]).is_file(), portable_target
         metadata = json.loads(run([compiler, "metadata", "--project", destination]))
         target, = metadata["targets"]
         assert target["kind"] == EXPECTED[identity] and target["debug"], metadata
@@ -102,9 +122,10 @@ def main():
         assert output.is_file(), output
         if target["kind"] == "executable":
             assert run([output]).strip() == "Hello from Crust!"
+            assert run([portable_target["output"]]).strip() == "Hello from Crust!"
             assert output.with_suffix(".pdb").is_file(), "Console template must support source debugging"
         else:
-            consumer = destination / "consumer"
+            consumer = portable / "consumer"
             consumer.mkdir()
             (consumer / "crust.toml").write_text(
                 '[project]\nname = "consumer"\n[dependencies]\napi = { path = ".." }\n'
@@ -115,8 +136,8 @@ def main():
                 'extern int add(int, int) = "crust_add";\nint main() { print(add(20, 22)); return 0; }\n',
                 encoding="utf-8",
             )
-            assert run([compiler, "run", "--project", consumer]).strip() == "42"
-        print(f"{identity}: packaged catalog, creation, both MSBuild hosts, and native execution passed")
+            assert run([compiler, "run", "--project", consumer], env=standalone_env).strip() == "42"
+        print(f"{identity}: packaged catalog, standalone CLI without .crproj, both MSBuild hosts, and execution passed")
     assert seen == set(EXPECTED)
 
 
