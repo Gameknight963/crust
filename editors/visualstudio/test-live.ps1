@@ -67,7 +67,7 @@ function Wait-CrustMode($Dte, [string]$Expected) {
     throw "Expected $Expected, observed $crustMode. $([CrustLiveIde]::Output($Dte, 'Debug'))"
 }
 
-function Wait-CrustClassification([string]$Text, [hashtable]$Expected) {
+function Wait-CrustClassification([string]$Text, [hashtable]$Expected, [string[]]$OrdinaryKeywords = @()) {
     $crustDeadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         Start-Sleep -Milliseconds 200
@@ -85,7 +85,16 @@ function Wait-CrustClassification([string]$Text, [hashtable]$Expected) {
                     })
                 })
             })
-            if ($crustMissing.Count -eq 0) { return }
+            $crustControlKeywords = @($OrdinaryKeywords | Where-Object {
+                $crustOccurrences = [regex]::Matches($Text, '\b' + [regex]::Escape($_) + '\b')
+                $crustSnapshot.spans | Where-Object {
+                    $crustSpan = $_
+                    $_.types -contains 'keyword - control' -and ($crustOccurrences | Where-Object {
+                        $_.Index -ge $crustSpan.start -and $_.Index + $_.Length -le $crustSpan.start + $crustSpan.length
+                    })
+                }
+            })
+            if ($crustMissing.Count -eq 0 -and $crustControlKeywords.Count -eq 0) { return }
         } catch { }
     } while ([DateTime]::UtcNow -lt $crustDeadline)
     throw "Editor classifications did not match. Expected: $($Expected | ConvertTo-Json -Compress). Observed: $(Get-Content -LiteralPath $crustClassifications -Raw -ErrorAction SilentlyContinue)"
@@ -129,6 +138,11 @@ try {
     if ($crustTreeItems.Split("`n") -notcontains 'src/main.cr' -or $crustTreeItems.Split("`n") -notcontains 'crust.toml') { throw "Solution Explorer omitted default project files: $crustTreeItems" }
     Write-Output 'PASS: Solution Explorer includes source and manifest files through default globs'
     Write-Output 'PASS: real template creation, project loading, and SDK discovery'
+    Set-Content -LiteralPath (Join-Path $crustDirectory 'support.cr') -Value 'int support() { return 0; }'
+    $crustKeywordText = "import `"support.cr`";`nint main() { unsafe { return support(); } }`n"
+    [CrustLiveIde]::Edit($crustDte, $crustSource, $crustKeywordText)
+    Wait-CrustClassification $crustKeywordText @{ import = 'keyword'; unsafe = 'keyword'; return = 'keyword - control' } @('import', 'unsafe')
+    Write-Output 'PASS: import and unsafe use ordinary keyword classification, while return keeps control-flow classification'
     $crustSemanticText = "struct Counter { int value; };`nint main() {`n    Counter count = { .value = 42 };`n    print(count.value);`n    return 0;`n}`n"
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustSemanticText)
     $crustExpected = @{ Counter = 'struct name'; value = 'field name'; count = 'local name'; int = 'keyword'; main = 'method name' }

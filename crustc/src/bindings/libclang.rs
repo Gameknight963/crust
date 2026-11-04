@@ -145,6 +145,7 @@ api! {
     clang_getNumDiagnostics(*mut c_void) -> c_uint;
     clang_getDiagnostic(*mut c_void,c_uint) -> *mut c_void;
     clang_getDiagnosticSeverity(*mut c_void) -> c_uint;
+    clang_getDiagnosticLocation(*mut c_void) -> Location;
     clang_formatDiagnostic(*mut c_void,c_uint) -> StringValue;
     clang_disposeDiagnostic(*mut c_void) -> ();
 }
@@ -165,6 +166,9 @@ impl Drop for Unit {
 
 impl Unit {
     fn location(&self, cursor: Cursor) -> (PathBuf, usize, usize) {
+        return self.presumed_location(unsafe { (self.api.clang_getCursorLocation)(cursor) });
+    }
+    fn presumed_location(&self, location: Location) -> (PathBuf, usize, usize) {
         let mut file = StringValue {
             data: std::ptr::null(),
             flags: 0,
@@ -172,12 +176,7 @@ impl Unit {
         let mut line = 0;
         let mut column = 0;
         unsafe {
-            (self.api.clang_getPresumedLocation)(
-                (self.api.clang_getCursorLocation)(cursor),
-                &mut file,
-                &mut line,
-                &mut column,
-            );
+            (self.api.clang_getPresumedLocation)(location, &mut file, &mut line, &mut column);
         }
         let path = PathBuf::from(self.string(file));
         return (
@@ -230,7 +229,17 @@ impl Unit {
             for i in 0..(result.api.clang_getNumDiagnostics)(unit) {
                 let diagnostic = (result.api.clang_getDiagnostic)(unit, i);
                 let severity = (result.api.clang_getDiagnosticSeverity)(diagnostic);
-                let message = result.string((result.api.clang_formatDiagnostic)(diagnostic, 3));
+                let (file, line, column) =
+                    result.presumed_location((result.api.clang_getDiagnosticLocation)(diagnostic));
+                let message = if file.as_os_str().is_empty() {
+                    result.string((result.api.clang_formatDiagnostic)(diagnostic, 3))
+                } else {
+                    format!(
+                        "{}:{line}:{column}: {}",
+                        crate::source::display_path(&file),
+                        result.string((result.api.clang_formatDiagnostic)(diagnostic, 0))
+                    )
+                };
                 (result.api.clang_disposeDiagnostic)(diagnostic);
                 if severity >= 3 {
                     return Err(message);

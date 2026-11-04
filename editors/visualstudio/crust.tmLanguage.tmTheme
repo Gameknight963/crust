@@ -17,7 +17,7 @@
         <key>settings</key><dict><key>vsclassificationtype</key><string>method name</string></dict>
       </dict>
       <dict>
-        <key>scope</key><string>storage.type.crust, storage.modifier.crust, constant.language.crust, variable.language.crust, keyword.operator.word.crust</string>
+        <key>scope</key><string>storage.type.crust, storage.modifier.crust, keyword.other.crust, constant.language.crust, variable.language.crust, keyword.operator.word.crust</string>
         <key>settings</key><dict><key>vsclassificationtype</key><string>keyword</string></dict>
       </dict>
       <dict>

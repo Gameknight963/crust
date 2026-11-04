@@ -185,6 +185,11 @@ int main() {
 For-loop clauses may be empty. An omitted condition continues until a `break`
 or return. Header variables are scoped to the loop.
 
+A loop with a known always-true condition, including `while (true)` and
+`for (;;)`, has no fallthrough path unless a reachable `break` exits that loop.
+A non-void function can end with such a loop. Nested-loop and switch breaks
+exit their own constructs. Unreachable statements still receive compiler checks.
+
 A single-statement body can contain an expression, return, loop control, or
 another control-flow statement. An `else` belongs to the nearest unmatched
 `if`. Local declarations in control-flow bodies require braces.

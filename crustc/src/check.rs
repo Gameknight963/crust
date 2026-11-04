@@ -218,6 +218,7 @@ struct Loan {
     scope: Option<usize>,
 }
 
+#[derive(Clone)]
 struct LoopContext {
     is_switch: bool,
     scope_count: usize,
@@ -818,7 +819,11 @@ impl FunctionChecker<'_> {
     fn statements(&mut self, statements: &[Statement]) -> Result<bool, Diagnostic> {
         let mut returns = false;
         for statement in statements {
+            let unreachable_loops = returns.then(|| self.loops.clone());
             let statement_returns = self.statement(statement)?;
+            if let Some(loops) = unreachable_loops {
+                self.loops = loops;
+            }
             returns = returns || statement_returns;
         }
         return Ok(returns);
@@ -1138,7 +1143,13 @@ impl FunctionChecker<'_> {
                 self.condition(condition)?;
                 let before = self.scopes.clone();
                 let before_borrows = self.save_borrows();
+                let condition_value = constant_truth(condition, self.constants);
+                let before_loops = self.loops.clone();
                 let then_returns = self.block(then_block)?;
+                let then_loops = self.loops.clone();
+                if condition_value == Some(false) {
+                    self.loops = before_loops;
+                }
                 let then_state = self.scopes.clone();
                 let then_borrows = self.save_borrows();
                 self.scopes = before;
@@ -1147,6 +1158,9 @@ impl FunctionChecker<'_> {
                     Some(block) => self.block(block)?,
                     None => false,
                 };
+                if condition_value == Some(true) {
+                    self.loops = then_loops;
+                }
                 let else_state = self.scopes.clone();
                 let else_borrows = self.save_borrows();
                 match (then_returns, else_returns) {
@@ -1233,10 +1247,18 @@ impl FunctionChecker<'_> {
                         ));
                     }
                 }
-                self.scopes = after_condition;
-                for state in context.breaks {
-                    self.scopes = merge(&self.scopes, &state);
+                let mut exits = context.breaks;
+                if constant_truth(condition, self.constants) != Some(true) {
+                    exits.push(after_condition.clone());
                 }
+                let Some(mut after) = exits.pop() else {
+                    self.scopes = after_condition;
+                    return Ok(true);
+                };
+                for state in exits {
+                    after = merge(&after, &state);
+                }
+                self.scopes = after;
             }
             StatementKind::DoWhile { body, condition } => {
                 let before = self.scopes.clone();
@@ -1279,7 +1301,9 @@ impl FunctionChecker<'_> {
                             "a loop must restore moved outer owners before the next iteration",
                         ));
                     }
-                    exits.push(self.scopes.clone());
+                    if constant_truth(condition, self.constants) != Some(true) {
+                        exits.push(self.scopes.clone());
+                    }
                 }
                 let Some(mut after) = exits.pop() else {
                     self.scopes = before;
@@ -4468,6 +4492,47 @@ impl FunctionChecker<'_> {
         }
         unreachable!("variable was resolved before changing its state");
     }
+}
+
+// Only prove conditions whose evaluated operands are known and side-effect free.
+// Emission uses the same proof when omitting an impossible condition exit.
+pub(crate) fn constant_truth(
+    expression: &Expression,
+    constants: &HashMap<Span, i128>,
+) -> Option<bool> {
+    if let Some(value) = constants.get(&expression.span) {
+        return Some(*value != 0);
+    }
+    return match &expression.kind {
+        ExpressionKind::Boolean(value) => Some(*value),
+        ExpressionKind::Unary {
+            operator: UnaryOperator::Not,
+            operand,
+        } => constant_truth(operand, constants).map(|value| !value),
+        ExpressionKind::Binary {
+            operator: BinaryOperator::And,
+            left,
+            right,
+        } => {
+            if !constant_truth(left, constants)? {
+                Some(false)
+            } else {
+                constant_truth(right, constants)
+            }
+        }
+        ExpressionKind::Binary {
+            operator: BinaryOperator::Or,
+            left,
+            right,
+        } => {
+            if constant_truth(left, constants)? {
+                Some(true)
+            } else {
+                constant_truth(right, constants)
+            }
+        }
+        _ => None,
+    };
 }
 
 fn constant_integer(expression: &Expression) -> Option<i128> {

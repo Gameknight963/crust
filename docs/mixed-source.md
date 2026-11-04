@@ -118,3 +118,10 @@ language server. The native compiler diagnoses C bodies when building.
 
 Files without directives or project definitions retain the existing frontend
 path and can be checked without invoking a native compiler or loading libclang.
+
+## Generated header locations
+
+Generated C headers can use `#line` to assign diagnostic filenames and line
+numbers. These filenames can be labels such as `cgo-builtin-export-prolog`.
+Crust preserves those locations without requiring a corresponding source file.
+Actual included headers remain part of the preprocessing snapshot.

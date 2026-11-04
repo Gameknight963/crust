@@ -187,7 +187,7 @@ mod tests {
             ),
             ("int main(void) { int n = 1; }", "every path"),
             ("int main(void) { if (1) { return 0; } }", "every path"),
-            ("int main(void) { while (1) { return 0; } }", "every path"),
+            ("int main(void) { while (0) { return 0; } }", "every path"),
             (
                 "int main(void) { int n = 0; int n = 1; return n; }",
                 "already declared",

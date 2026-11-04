@@ -532,3 +532,76 @@ fn explicitly_unsafe_header_declarations_keep_their_caller_contract() {
     ));
     assert_eq!(output.status.code(), Some(42), "{output:?}");
 }
+
+#[test]
+fn generated_headers_accept_synthetic_line_filenames_without_opening_them() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("target/cgo-line-labels")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("generated.h"),
+        r#"
+#line 1 "cgo-builtin-export-prolog"
+typedef long long GoInt64;
+#line 1 "cgo-gcc-export-header-prolog"
+#include "tail.h"
+#line 77 "virtual-generated-export.h"
+static inline GoInt64 cgo_answer(GoInt64 value) { return value + CGO_OFFSET; }
+"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("tail.h"), "#define CGO_OFFSET 1\n").unwrap();
+    let entry = root.join("main.cr");
+    std::fs::write(&entry, "#pragma crust begin_c\n#include \"generated.h\"\n#pragma crust end_c\nint main(){ print(cgo_answer(41LL)); return 0; }\n").unwrap();
+    let sources = crustc::source::SourceSet::load_with(&entry, |path| {
+        assert!(
+            !matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(
+                    "cgo-builtin-export-prolog"
+                        | "cgo-gcc-export-header-prolog"
+                        | "virtual-generated-export.h"
+                )
+            ),
+            "attempted to open logical filename: {}",
+            path.display()
+        );
+        std::fs::read_to_string(path)
+    })
+    .unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n"
+    );
+
+    std::fs::write(
+        root.join("bad.h"),
+        "#line 37 \"virtual-generated-error.h\"\nmissing_c_type cgo_bad(void);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &entry,
+        "#pragma crust begin_c\n#include \"bad.h\"\n#pragma crust end_c\nint main(){return 0;}\n",
+    )
+    .unwrap();
+    let error = crustc::source::SourceSet::load_with(&entry, |path| {
+        assert!(!path.ends_with("virtual-generated-error.h"));
+        std::fs::read_to_string(path)
+    })
+    .err()
+    .expect("invalid native declaration should report a C diagnostic");
+    assert!(
+        error.diagnostic.message.contains("missing_c_type"),
+        "{error}"
+    );
+    assert_eq!(error.diagnostic.span.line, 37, "{error}");
+}

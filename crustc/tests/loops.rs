@@ -505,3 +505,71 @@ fn rejects_loop_control_outside_loops_and_for_scope_leaks() {
         assert!(crustc::check(source).is_err(), "should reject {source}");
     }
 }
+
+#[test]
+fn constant_true_loops_finish_nonvoid_functions_without_unreachable_returns() {
+    run(
+        r#"
+        int scan(int end) {
+            int index = 0;
+            while (true) {
+                if (index == end) { return index; }
+                index++;
+                continue;
+            }
+        }
+        int forever() { for (;;) { continue; } }
+        int dead_break() { while (!false) { if (false) { break; } return 7; } }
+        int nested() { while (true) { while (true) { break; } return 8; } }
+        int with_switch() { while (true) { switch (1) { case 1: break; } return 9; } }
+        int with_do() { int n=0; do { n++; if(n==3) { return n; } continue; } while (true); }
+        int unexpected() { print(99); return 1; }
+        int truth() { while (true || unexpected()) { return 10; } }
+        int poll(int& count) { count++; return 0; }
+        int dynamic() { int count=0; while (poll(&count) || true) { if(count==3) { return count; } } return 0; }
+        int dead_tail() { while (true) { return 11; break; } }
+        int main() {
+            print(scan(4)); print(dead_break()); print(nested());
+            print(with_switch()); print(with_do()); print(truth()); print(dead_tail()); print(dynamic());
+            return 0;
+        }
+    "#,
+        "4\n7\n8\n9\n3\n10\n11\n3\n",
+        "",
+    );
+}
+
+#[test]
+fn loop_exits_keep_return_and_owner_requirements() {
+    for body in [
+        "while (true) { break; }",
+        "while (true) { if (flag) { break; } }",
+        "while (flag) { return 1; }",
+        "do { break; } while (true);",
+        "while (true) { if (true) { break; } else { return 1; } }",
+    ] {
+        let source = format!("int test(bool flag) {{ {body} }} int main() {{return 0;}}");
+        assert!(crustc::check(&source).is_err(), "should reject {source}");
+    }
+    run(
+        r#"
+        int take(Box<int> value) {
+            while (true) {
+                Box<int> moved = move(value);
+                print(moved.get());
+                break;
+            }
+            return 42;
+        }
+        Box<int> return_owner(Box<int> value) { while (true) { return move(value); } }
+        int main() {
+            print(take(Box<int>::create(7)));
+            Box<int> returned=return_owner(Box<int>::create(9)); print(returned.get());
+            return 0;
+        }
+    "#,
+        "7\n42\n9\n",
+        "drop:7\ndrop:9\n",
+    );
+    assert!(crustc::check("int main() { Box<int> value=Box<int>::create(7); while(true) { move(value); continue; } }").is_err());
+}

@@ -567,8 +567,12 @@ pub(crate) fn prepare(
                     let content =
                         if let Some(content) = result.replay.snapshot.inputs.get(&filename) {
                             content.clone()
+                        } else if let Some(content) = result.replay.external.get(&physical) {
+                            content.clone()
                         } else {
-                            read(&filename).map_err(|e| error(&filename, e.to_string()))?
+                            // #line filenames describe presumed source locations.
+                            // They need not name files, including cgo's prolog labels.
+                            String::new()
                         };
                     result.inputs.insert(filename.clone(), content);
                 }
@@ -801,7 +805,21 @@ pub(crate) fn prepare(
             &names,
             &source_functions,
         )
-        .map_err(|message| compiler_error(&origin, &result.inputs[&origin], read, message))?;
+        .map_err(|message| {
+            compiler_error(
+                &origin,
+                &result.inputs[&origin],
+                &mut |path| {
+                    result.inputs.get(path).cloned().ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "no physical source for line label",
+                        )
+                    })
+                },
+                message,
+            )
+        })?;
         let base = result.text.len();
         result.text.push_str(&declarations.text);
         let span = Span {

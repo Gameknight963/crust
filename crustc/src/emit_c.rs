@@ -909,7 +909,12 @@ impl Emitter<'_> {
                 then_block,
                 else_block,
             } => {
-                let condition = self.value_expression(condition);
+                let condition =
+                    if let Some(value) = crate::check::constant_truth(condition, self.constants) {
+                        i32::from(value).to_string()
+                    } else {
+                        self.value_expression(condition)
+                    };
                 self.cleanup_temporaries();
                 self.line(&format!("if ({condition})"));
                 self.block(then_block);
@@ -1025,9 +1030,11 @@ impl Emitter<'_> {
             } => {
                 self.line("while (1) {");
                 self.indent += 1;
-                let condition = self.value_expression(condition);
-                self.cleanup_temporaries();
-                self.line(&format!("if (!{condition}) {{ break; }}"));
+                if crate::check::constant_truth(condition, self.constants) != Some(true) {
+                    let condition = self.value_expression(condition);
+                    self.cleanup_temporaries();
+                    self.line(&format!("if (!{condition}) {{ break; }}"));
+                }
                 self.loops.push(LoopContext {
                     is_switch: false,
                     scope_count: self.scopes.len(),
@@ -1055,9 +1062,11 @@ impl Emitter<'_> {
                 self.block(body);
                 self.loops.pop();
                 self.line(&format!("{label}: ;"));
-                let condition = self.value_expression(condition);
-                self.cleanup_temporaries();
-                self.line(&format!("if (!{condition}) {{ break; }}"));
+                if crate::check::constant_truth(condition, self.constants) != Some(true) {
+                    let condition = self.value_expression(condition);
+                    self.cleanup_temporaries();
+                    self.line(&format!("if (!{condition}) {{ break; }}"));
+                }
                 self.indent -= 1;
                 self.line("}");
             }
