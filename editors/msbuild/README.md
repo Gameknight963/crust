@@ -54,8 +54,10 @@ SDK relative to its checkout.
 and `TargetPath` metadata. Source errors retain their original file locations
 in the MSBuild log and Visual Studio Error List.
 
-Solution Explorer displays Crust sources and supporting files from the project
-directory. Entry files and source imports determine what the compiler builds.
+Solution Explorer automatically includes Crust sources and supporting files from
+the project directory, excluding generated output directories. New files appear
+through the SDK directory globs. Entry files and source imports determine what
+the compiler builds.
 Local settings can go in the ignored `<project>.crproj.user` file.
 
 In Visual Studio, **F5** starts the selected executable with the native debugger

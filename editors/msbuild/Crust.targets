@@ -12,7 +12,7 @@
     <ProjectConfiguration Include="Default|AnyCPU"><Configuration>Default</Configuration><Platform>AnyCPU</Platform></ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ProjectCapability Include="Crust;DeclaredSourceItems;UserSourceItems;UseFileGlobs;OpenProjectFile;HandlesOwnReload;ProjectConfigurationsDeclaredAsItems" />
+    <ProjectCapability Include="Crust;SourceItemsFromImports;DeclaredSourceItems;UserSourceItems;UseFileGlobs;OpenProjectFile;HandlesOwnReload;ProjectConfigurationsDeclaredAsItems" />
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/ProjectItemsSchema.xaml" />
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/General.xaml"><Context>Project;BrowseObject</Context></PropertyPageSchema>
     <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Rules/CrustLocal.xaml;$(MSBuildThisFileDirectory)Rules/DebuggerGeneral.xaml"><Context>Project</Context></PropertyPageSchema>

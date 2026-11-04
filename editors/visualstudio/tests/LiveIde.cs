@@ -59,6 +59,23 @@ public static class CrustLiveIde
         dte.Solution.SaveAs(root + "/probe.sln");
         return project.FullName;
     }
+    public static string ProjectItems(object raw)
+    {
+        var project = ((EnvDTE.DTE)raw).Solution.Projects.Item(1);
+        var paths = new System.Collections.Generic.List<string>();
+        CollectItems(project.ProjectItems, "", paths);
+        return string.Join("\n", paths);
+    }
+    private static void CollectItems(EnvDTE.ProjectItems items, string prefix, System.Collections.Generic.List<string> paths)
+    {
+        if (items == null) return;
+        foreach (EnvDTE.ProjectItem item in items)
+        {
+            string path = prefix + item.Name;
+            paths.Add(path);
+            CollectItems(item.ProjectItems, path + "/", paths);
+        }
+    }
     public static void Edit(object raw, string file, string text)
     {
         var document = ((EnvDTE.DTE)raw).ItemOperations.OpenFile(file).Document;

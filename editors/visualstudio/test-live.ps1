@@ -119,6 +119,15 @@ try {
     $crustSource = Join-Path $crustDirectory 'src/main.cr'
     if (-not (Test-Path -LiteralPath (Join-Path $crustDirectory 'crust.toml')) -or
         -not (Test-Path -LiteralPath $crustSource)) { throw 'Visual Studio omitted the template manifest or starter source.' }
+    $crustTreeDeadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $crustTreeItems = [CrustLiveIde]::ProjectItems($crustDte)
+        if ($crustTreeItems.Split("`n") -contains 'src/main.cr' -and $crustTreeItems.Split("`n") -contains 'crust.toml') { break }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $crustTreeDeadline)
+    Set-Content -LiteralPath (Join-Path $crustRoot 'project-items.txt') -Value $crustTreeItems
+    if ($crustTreeItems.Split("`n") -notcontains 'src/main.cr' -or $crustTreeItems.Split("`n") -notcontains 'crust.toml') { throw "Solution Explorer omitted default project files: $crustTreeItems" }
+    Write-Output 'PASS: Solution Explorer includes source and manifest files through default globs'
     Write-Output 'PASS: real template creation, project loading, and SDK discovery'
     $crustSemanticText = "struct Counter { int value; };`nint main() {`n    Counter count = { .value = 42 };`n    print(count.value);`n    return 0;`n}`n"
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustSemanticText)

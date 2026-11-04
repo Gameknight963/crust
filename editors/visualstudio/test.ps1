@@ -8,6 +8,8 @@ if (-not $VisualStudioRoot) {
 if (-not $VisualStudioRoot) { throw 'Pass -VisualStudioRoot with the Visual Studio installation path.' }
 $crustTestRoot = Join-Path $crustRepoRoot ("target/visualstudio-tests/" + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($crustTestRoot) | Out-Null
+Add-Type -AssemblyName System.Xaml
+[Reflection.Assembly]::LoadFrom((Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/Microsoft.Build.Framework.dll')) | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustPackage = Join-Path $crustRepoRoot 'target/crust-visualstudio.vsix'
 $crustArchive = [IO.Compression.ZipFile]::OpenRead($crustPackage)
@@ -15,6 +17,13 @@ try {
     foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/crustc.exe', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
         if (-not $crustArchive.GetEntry($crustRequired)) { throw "VSIX is missing $crustRequired" }
     }
+    foreach ($crustRuleEntry in ($crustArchive.Entries | Where-Object { $_.FullName -like 'Sdk/Rules/*.xaml' })) {
+        $crustRuleReader = [IO.StreamReader]::new($crustRuleEntry.Open())
+        try { $crustRuleText = $crustRuleReader.ReadToEnd() } finally { $crustRuleReader.Dispose() }
+        try { [System.Xaml.XamlServices]::Parse($crustRuleText) | Out-Null }
+        catch { throw "Invalid packaged CPS rule $($crustRuleEntry.FullName): $($_.Exception.Message)" }
+    }
+    Write-Output 'Packaged CPS rules parse with the MSBuild XAML schema'
     if ($crustArchive.Entries | Where-Object { $_.Name -like 'Microsoft.VisualStudio.*.dll' -or $_.Name -like 'Microsoft.Build.*.dll' }) {
         throw 'VSIX should use the Visual Studio host assemblies.'
     }
