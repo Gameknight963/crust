@@ -21,7 +21,7 @@ fn declarations() -> String {
     let header = root().join(if enabled() {
         "examples/sqlite_project/native.h"
     } else {
-        "tests/native/sqlite_api.h"
+        "crustc/tests/native/sqlite_api.h"
     });
     return format!(
         "{}\n{}\n{}",
