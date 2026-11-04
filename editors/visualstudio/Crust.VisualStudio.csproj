@@ -81,6 +81,9 @@
     <Content Include="$(LibClangRuntime)">
       <Link>Server/libclang.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../lib/**/*">
+      <Link>lib/%(RecursiveDir)%(Filename)%(Extension)</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="../../third-party/llvm/LICENSE.TXT">
       <Link>Server/third-party/llvm/LICENSE.TXT</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

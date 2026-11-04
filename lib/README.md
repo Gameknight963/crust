@@ -1,10 +1,10 @@
 # Crust library
 
-Import the files you need using paths relative to your source file:
+Import the files you need from the compiler's installed standard library:
 
 ```cpp
-import "../lib/box.cr";
-import "../lib/vector.cr";
+import <std/box.cr>;
+import <std/vector.cr>;
 
 int main() {
     Vector<Box<int>> values = Vector<Box<int>>::create();

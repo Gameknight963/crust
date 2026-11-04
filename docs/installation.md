@@ -49,3 +49,32 @@ examples, including a mixed C/Crust program using the bundled runtime. It also b
 against the packaged README. It writes the completed archive and a `.sha256` file after these checks
 pass. `manifest.json` records the version, target, source revision, working-tree
 state, and file digests.
+
+## Library imports
+
+`import <std/vector.cr>;` loads the source library bundled with the compiler.
+The compiler resolves its executable's symbolic links before finding the adjacent
+library installation. Checkout builds use the checkout's `lib/` directory.
+`CRUST_STDLIB` overrides the standard-library directory. Other angle-bracket
+imports search the directories in `CRUST_LIBRARY_PATH`, using the platform's
+PATH separator. For example, `<json/parser.cr>` searches for `json/parser.cr`
+under those directories. Quoted imports remain relative to their source file.
+Library imports reject parent-directory traversal.
+
+Library references also work in manifest dependency and native input paths.
+The file module's native backend can be linked without an installation-specific
+path:
+
+```toml
+[dependencies]
+standard = { path = "<std/crust.toml>" }
+
+[[targets]]
+name = "app"
+entry = "main.cr"
+
+[targets.native]
+link-targets = ["standard:files"]
+```
+
+The source can then use `import <std/file.cr>;`.

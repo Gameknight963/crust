@@ -7,9 +7,16 @@ cleanup rules, and [the native ABI](abi.md) for layout and linkage.
 
 ```cpp
 import "containers/buffer.cr";
+import <std/vector.cr>;
 ```
 
-Import paths are relative to the importing file. The compiler loads each file
+Quoted import paths are relative to the importing file. Angle-bracket imports
+search installed libraries. `<std/...>` selects the compiler's bundled standard
+library. Other library prefixes search `CRUST_LIBRARY_PATH`. Library paths use
+forward slashes and reject empty components and parent traversal. See
+[library installation](installation.md#library-imports) for discovery and overrides.
+
+The compiler loads each file
 once, including dependencies reached through multiple paths or cycles.
 Declarations share the target's global namespace and can refer forward across
 files. Duplicate declarations follow the same rules as declarations in one file.

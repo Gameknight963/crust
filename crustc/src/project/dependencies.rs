@@ -78,7 +78,8 @@ impl Graph {
                     project.manifest.display()
                 ).into());
             }
-            let path = project.directory.join(&dependency.path);
+            let path = crate::source::configured_library_path(&dependency.path)?
+                .unwrap_or_else(|| project.directory.join(&dependency.path));
             let (mut child, nested) = Project::load_one(&path).map_err(|error| LoadError {
                 message: format!(
                     "{}: dependency '{name}': {}",

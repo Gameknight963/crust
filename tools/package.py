@@ -98,6 +98,10 @@ def main():
             raise RuntimeError(f"Archive checksum mismatch: {entry}")
     compiler = extracted / "bin" / f"crust{suffix}"
     source_compiler = extracted / "bin" / f"crustc{suffix}"
+    library_probe = extracted / "library-probe.cr"
+    library_probe.write_text('import <std/box.cr>; int main(){Box<int> value=Box<int>::create(42);print(value.get());return 0;}', encoding="utf-8")
+    if command([str(source_compiler), "run", str(library_probe)], cwd=destination) != "42":
+        raise RuntimeError("Packaged standard-library import failed")
     command([str(source_compiler), "check", "examples/hello.cr"], cwd=extracted)
     mixed = extracted / "examples/mixed.cr"
     mixed_output = subprocess.check_output(

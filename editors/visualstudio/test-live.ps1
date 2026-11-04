@@ -139,7 +139,7 @@ try {
     Write-Output 'PASS: Solution Explorer includes source and manifest files through default globs'
     Write-Output 'PASS: real template creation, project loading, and SDK discovery'
     Set-Content -LiteralPath (Join-Path $crustDirectory 'support.cr') -Value 'int support() { return 0; }'
-    $crustKeywordText = "import `"support.cr`";`nint main() { unsafe { return support(); } }`n"
+    $crustKeywordText = "import `"support.cr`";`nimport <std/box.cr>;`nint main() { Box<int> value=Box<int>::create(support()); unsafe { return value.get(); } }`n"
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustKeywordText)
     Wait-CrustClassification $crustKeywordText @{ import = 'keyword'; unsafe = 'keyword'; return = 'keyword - control' } @('import', 'unsafe')
     Write-Output 'PASS: import and unsafe use ordinary keyword classification, while return keeps control-flow classification'

@@ -72,6 +72,7 @@ pub enum Token {
         decimal: bool,
     },
     StringLiteral(Vec<u8>),
+    LibraryPath(String),
 
     // Punctuation.
     LeftParen,
@@ -162,7 +163,13 @@ pub(crate) fn discovery_tokens(source: &str) -> Vec<SpannedToken> {
             let _ = lexer.skip_block_comment(start);
             continue;
         }
-        let kind = if current.is_ascii_alphabetic() || current == '_' {
+        let kind = if current == '<'
+            && tokens
+                .last()
+                .is_some_and(|token: &SpannedToken| token.kind == Token::Import)
+        {
+            lexer.library_path(start)
+        } else if current.is_ascii_alphabetic() || current == '_' {
             Ok(lexer.identifier(start))
         } else if current.is_ascii_digit() {
             lexer.number(start)
@@ -229,7 +236,13 @@ impl Lexer<'_> {
                 continue;
             }
 
-            let kind = if current.is_ascii_alphabetic() || current == '_' {
+            let kind = if current == '<'
+                && tokens
+                    .last()
+                    .is_some_and(|token| token.kind == Token::Import)
+            {
+                self.library_path(start)?
+            } else if current.is_ascii_alphabetic() || current == '_' {
                 self.identifier(start)
             } else if current.is_ascii_digit()
                 || (current == '.' && self.peek_next().is_some_and(|next| next.is_ascii_digit()))
@@ -255,6 +268,26 @@ impl Lexer<'_> {
         });
 
         return Ok(tokens);
+    }
+
+    fn library_path(&mut self, start: Span) -> Result<Token, LexError> {
+        self.advance();
+        let begin = self.offset;
+        while let Some(character) = self.peek() {
+            if character == '>' {
+                let name = self.source[begin..self.offset].to_owned();
+                self.advance();
+                return Ok(Token::LibraryPath(name));
+            }
+            if character.is_whitespace() {
+                break;
+            }
+            self.advance();
+        }
+        return Err(LexError::new(
+            start,
+            "expected '>' after library import path",
+        ));
     }
 
     fn identifier(&mut self, start: Span) -> Token {

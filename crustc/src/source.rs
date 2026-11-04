@@ -34,6 +34,62 @@ pub(crate) fn display_path(path: &Path) -> String {
         .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned());
 }
 
+/// Resolve an angle-bracket library path independently of the importing file.
+pub(crate) fn library_path(name: &str) -> Result<PathBuf, String> {
+    if name == "std"
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || name.contains(['\\', '\0', ':'])
+        || Path::new(name)
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("library imports require a relative path without parent traversal".to_owned());
+    }
+    let mut candidates = Vec::new();
+    if let Some(relative) = name.strip_prefix("std/") {
+        if relative.is_empty() {
+            return Err("standard-library imports require a filename".to_owned());
+        }
+        if let Some(root) = std::env::var_os("CRUST_STDLIB") {
+            candidates.push(PathBuf::from(root).join(relative));
+        } else if let Ok(executable) = std::env::current_exe() {
+            let executable = executable.canonicalize().unwrap_or(executable);
+            if let Some(directory) = executable.parent() {
+                candidates.push(directory.join("../lib").join(relative));
+                for ancestor in directory.ancestors() {
+                    if ancestor.join("crustc/Cargo.toml").is_file() {
+                        candidates.push(ancestor.join("lib").join(relative));
+                        break;
+                    }
+                }
+            }
+        }
+    } else if let Some(paths) = std::env::var_os("CRUST_LIBRARY_PATH") {
+        candidates.extend(std::env::split_paths(&paths).map(|root| root.join(name)));
+    }
+    for candidate in &candidates {
+        if candidate.exists() {
+            return identity(candidate).map_err(|error| error.to_string());
+        }
+    }
+    return Err(format!(
+        "could not find library import <{name}>. Install the bundled library or configure CRUST_STDLIB / CRUST_LIBRARY_PATH"
+    ));
+}
+
+pub(crate) fn configured_library_path(value: &Path) -> Result<Option<PathBuf>, String> {
+    if let Some(name) = value
+        .to_str()
+        .and_then(|value| value.strip_prefix('<'))
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        return library_path(name).map(Some);
+    }
+    return Ok(None);
+}
+
 pub struct SourceFile {
     pub path: PathBuf,
     pub text: String,
@@ -575,14 +631,20 @@ impl SourceSet {
                         "imports must be top-level declarations",
                     )));
                 }
-                let Some(SpannedToken {
-                    kind: Token::StringLiteral(bytes),
-                    ..
-                }) = tokens.get(position + 1)
-                else {
-                    return Err(
-                        self.locate(Diagnostic::new(token.span, "expected a quoted import path"))
-                    );
+                let library = match tokens.get(position + 1).map(|token| &token.kind) {
+                    Some(Token::LibraryPath(name)) => Some(name.clone()),
+                    _ => None,
+                };
+                let bytes = match tokens.get(position + 1).map(|token| &token.kind) {
+                    Some(Token::StringLiteral(bytes)) => Some(bytes.as_slice()),
+                    Some(Token::LibraryPath(name)) => Some(name.as_bytes()),
+                    _ => None,
+                };
+                let Some(bytes) = bytes else {
+                    return Err(self.locate(Diagnostic::new(
+                        token.span,
+                        "expected a quoted or angle-bracket import path",
+                    )));
                 };
                 let name = std::str::from_utf8(bytes)
                     .ok()
@@ -611,7 +673,13 @@ impl SourceSet {
                         "import paths must be relative to the source file",
                     )));
                 }
-                imports.push((path.parent().unwrap().join(imported), token.span));
+                let dependency = if let Some(name) = library {
+                    library_path(&name)
+                        .map_err(|message| self.locate(Diagnostic::new(token.span, message)))?
+                } else {
+                    path.parent().unwrap().join(imported)
+                };
+                imports.push((dependency, token.span));
                 position += 3;
                 continue;
             }

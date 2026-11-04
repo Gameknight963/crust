@@ -320,3 +320,85 @@ fn import_recursion_is_bounded_and_absolute_paths_are_rejected_before_reading() 
         .is_err()
     );
 }
+
+#[test]
+fn standard_library_imports_resolve_without_checkout_relative_paths() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("target/library-import-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = root.join("main.cr");
+    std::fs::write(&entry, "import <std/vector.cr>;\nimport <std/box.cr>;\nint main(){ Vector<Box<int>> values=Vector<Box<int>>::create(); values.push(Box<int>::create(42)); print(values.at(0).get()); return 0; }\n").unwrap();
+    let sources = crustc::source::SourceSet::load(&entry).unwrap();
+    let output = common::tracked_generated_c(&sources.compile().unwrap(), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n"
+    );
+    assert_eq!(
+        sources
+            .files()
+            .iter()
+            .filter(|file| file.path.ends_with("box.cr"))
+            .count(),
+        1
+    );
+    for path in [
+        "std/../box.cr",
+        "std//box.cr",
+        "std/C:/box.cr",
+        "std/./box.cr",
+        "std/missing.cr",
+        "std/",
+        "unknown/file.cr",
+    ] {
+        std::fs::write(&entry, format!("import <{path}>; int main(){{return 0;}} ")).unwrap();
+        assert!(
+            crustc::source::SourceSet::load(&entry).is_err(),
+            "accepted {path}"
+        );
+    }
+}
+
+#[test]
+fn library_search_paths_and_standard_overrides_work_from_other_directories() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("target/library-path-tests")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(root.join("packages/json")).unwrap();
+    std::fs::create_dir_all(root.join("standard")).unwrap();
+    std::fs::write(
+        root.join("packages/json/parser.cr"),
+        "int json_value(){return 42;}",
+    )
+    .unwrap();
+    std::fs::write(root.join("standard/probe.cr"), "int std_value(){return 7;}").unwrap();
+    let entry = root.join("main.cr");
+    std::fs::write(&entry, "import <json/parser.cr>; import <std/probe.cr>; int main(){print(json_value());print(std_value());return 0;}").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crustc"))
+        .arg("run")
+        .arg(&entry)
+        .current_dir(std::env::temp_dir())
+        .env("CRUST_LIBRARY_PATH", root.join("packages"))
+        .env("CRUST_STDLIB", root.join("standard"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "42\n7\n"
+    );
+}

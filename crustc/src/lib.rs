@@ -53,7 +53,7 @@ fn analyze_snapshot(
     completion: bool,
     kind: ProgramKind,
 ) -> Result<analysis::Analysis, Diagnostic> {
-    if preprocess::needed(source) {
+    if memory_sources_needed(source) {
         let sources = memory_sources(source)?;
         let mut analysis = if completion {
             sources.analyze_completion_with_kind(kind)
@@ -90,7 +90,7 @@ pub fn check_with_kind(source: &str, kind: ProgramKind) -> Result<(), Diagnostic
 }
 
 fn check_inner(source: &str, kind: ProgramKind) -> Result<(), Diagnostic> {
-    if preprocess::needed(source) {
+    if memory_sources_needed(source) {
         return memory_sources(source)?
             .check_with_kind(kind)
             .map_err(|e| e.diagnostic);
@@ -111,7 +111,7 @@ pub fn compile_with_kind(source: &str, kind: ProgramKind) -> Result<String, Diag
 
 pub fn emit_header(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
     return frontend::run(|| {
-        if preprocess::needed(source) {
+        if memory_sources_needed(source) {
             return memory_sources(source)?
                 .emit_header(kind)
                 .map_err(|e| e.diagnostic);
@@ -123,7 +123,7 @@ pub fn emit_header(source: &str, kind: ProgramKind) -> Result<String, Diagnostic
 }
 
 fn compile_inner(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> {
-    if preprocess::needed(source) {
+    if memory_sources_needed(source) {
         return memory_sources(source)?
             .compile_with_kind(kind)
             .map_err(|e| e.diagnostic);
@@ -132,6 +132,16 @@ fn compile_inner(source: &str, kind: ProgramKind) -> Result<String, Diagnostic> 
     let program = parser::parse(tokens)?;
     let checked = check::check_with_kind(program, kind)?;
     return Ok(emit_c::generate(&checked));
+}
+
+fn memory_sources_needed(text: &str) -> bool {
+    return preprocess::needed(text)
+        || (text.contains("import")
+            && lexer::tokenize_raw(text).is_ok_and(|tokens| {
+                tokens
+                    .iter()
+                    .any(|token| matches!(token.kind, lexer::Token::LibraryPath(_)))
+            }));
 }
 
 fn memory_sources(text: &str) -> Result<source::SourceSet, Diagnostic> {

@@ -17,6 +17,7 @@ pub(super) struct Import {
     pub span: Span,
     pub argument: std::ops::Range<usize>,
     pub literal: Option<String>,
+    pub library: Option<String>,
 }
 
 pub(super) fn imports(text: &str) -> Vec<Import> {
@@ -33,6 +34,9 @@ pub(super) fn imports(text: &str) -> Vec<Import> {
             };
             let literal = match tokens.get(index + 1).map(|t| &t.kind) {
                 Some(Token::StringLiteral(bytes)) => String::from_utf8(bytes.clone()).ok(),
+                Some(Token::LibraryPath(name)) => crate::source::library_path(name)
+                    .ok()
+                    .map(|path| crate::source::display_path(&path)),
                 _ => None,
             };
             previous = end.span.end;
@@ -43,6 +47,10 @@ pub(super) fn imports(text: &str) -> Vec<Import> {
                 },
                 argument: token.span.end..end.span.start,
                 literal,
+                library: match tokens.get(index + 1).map(|token| &token.kind) {
+                    Some(Token::LibraryPath(name)) => Some(name.clone()),
+                    _ => None,
+                },
             });
         }
     }
@@ -69,12 +77,14 @@ pub(crate) fn required(
         }
         for import in imports(&text) {
             if let Some(name) = import.literal {
-                if Path::new(&name).components().any(|part| {
-                    matches!(
-                        part,
-                        std::path::Component::Prefix(_) | std::path::Component::RootDir
-                    )
-                }) {
+                if import.library.is_none()
+                    && Path::new(&name).components().any(|part| {
+                        matches!(
+                            part,
+                            std::path::Component::Prefix(_) | std::path::Component::RootDir
+                        )
+                    })
+                {
                     continue;
                 }
                 pending.push(path.parent().unwrap().join(name));
@@ -153,7 +163,7 @@ impl Snapshot {
                 scanned.insert(path.clone());
                 let mut names: Vec<_> = imports(&text)
                     .into_iter()
-                    .filter_map(|i| i.literal)
+                    .filter_map(|i| if i.library.is_some() { None } else { i.literal })
                     .filter(|name| {
                         !Path::new(name).is_absolute()
                             && !Path::new(name).components().any(|part| {
@@ -164,6 +174,12 @@ impl Snapshot {
                             })
                     })
                     .collect();
+                names.extend(
+                    imports(&text)
+                        .into_iter()
+                        .filter(|import| import.library.is_some())
+                        .filter_map(|import| import.literal),
+                );
                 for (line, directive) in directive_lines(&text) {
                     if directive.is_none() {
                         continue;
@@ -315,7 +331,22 @@ impl Snapshot {
         let mut body = String::new();
         let mut previous = 0;
         for import in imports(text) {
-            if let Some(name) = &import.literal {
+            if let Some(name) = &import.library
+                && import.literal.is_none()
+            {
+                let message = crate::source::library_path(name).err().unwrap_or_else(|| {
+                    format!(
+                        "library import <{name}> changed during preprocessing; retry the operation"
+                    )
+                });
+                return Err(SourceError {
+                    path: path.to_owned(),
+                    diagnostic: Diagnostic::new(import.span, message),
+                });
+            }
+            if let Some(name) = &import.literal
+                && import.library.is_none()
+            {
                 let name = Path::new(name);
                 if name.is_absolute()
                     || name.components().any(|c| {

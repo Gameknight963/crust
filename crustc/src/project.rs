@@ -249,7 +249,8 @@ impl Project {
                 ("library directory", &mut target.native.library_dirs, true),
             ] {
                 for path in paths {
-                    let original = directory.join(&*path);
+                    let original = crate::source::configured_library_path(path)?
+                        .unwrap_or_else(|| directory.join(&*path));
                     *path = original.canonicalize().map_err(|error| {
                         format!(
                             "{}: target '{}' native {kind} {}: {error}",

@@ -3,6 +3,7 @@
   "name": "Crust",
   "fileTypes": ["cr"],
   "patterns": [
+    { "name": "meta.import.crust", "begin": "\\b(import)\\s*(<)", "beginCaptures": { "1": { "name": "keyword.other.crust" }, "2": { "name": "string.quoted.other.lt-gt.include.crust" } }, "end": ">|$", "contentName": "string.quoted.other.lt-gt.include.crust", "endCaptures": { "0": { "name": "string.quoted.other.lt-gt.include.crust" } } },
     { "name": "comment.line.double-slash.crust", "begin": "//", "end": "$" },
     { "name": "comment.block.crust", "begin": "/\\*", "end": "\\*/" },
     { "name": "string.quoted.double.crust", "begin": "\"", "end": "\"|$", "patterns": [{ "name": "constant.character.escape.crust", "match": "\\\\(x[0-9a-fA-F]+|[0-7]{1,3}|.)" }] },

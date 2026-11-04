@@ -3,7 +3,8 @@ use ::crustc::diagnostic::Diagnostic;
 pub use ::crustc::*;
 
 pub fn fixture(source: &str) -> String {
-    if source.contains("Box<") && !source.contains("struct Box") {
+    if source.contains("Box<") && !source.contains("struct Box") && !source.contains("<std/box.cr>")
+    {
         return format!("{source}\n{}", include_str!("box.cr"));
     }
     return source.to_owned();

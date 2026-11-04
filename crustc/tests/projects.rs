@@ -2457,3 +2457,13 @@ fn local_shared_dependencies_supply_runtime_files() {
     );
     assert!(!fixture.directory.join("support/target").exists());
 }
+
+#[test]
+fn installed_standard_library_native_dependencies_are_portable() {
+    let fixture = Fixture::new();
+    fixture.write("main.cr", "import <std/file.cr>; int main(){File file=File::temporary();file.write_byte(65u);file.rewind();print(file.read_byte());return 0;}");
+    fixture.manifest("[dependencies]\nstandard={path='<std/crust.toml>'}\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\nlink-targets=['standard:files']\n");
+    let output = fixture.invoke(&["run"]);
+    success(&output);
+    assert_eq!(text(&output), "65\n");
+}

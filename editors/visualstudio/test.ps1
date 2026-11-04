@@ -14,7 +14,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustPackage = Join-Path $crustRepoRoot 'target/crust-visualstudio.vsix'
 $crustArchive = [IO.Compression.ZipFile]::OpenRead($crustPackage)
 try {
-    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/crustc.exe', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
+    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/crustc.exe', 'lib/box.cr', 'lib/native/file.h', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
         if (-not $crustArchive.GetEntry($crustRequired)) { throw "VSIX is missing $crustRequired" }
     }
     foreach ($crustRuleEntry in ($crustArchive.Entries | Where-Object { $_.FullName -like 'Sdk/Rules/*.xaml' })) {

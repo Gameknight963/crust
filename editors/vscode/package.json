@@ -2,7 +2,7 @@
   "name": "crust-language",
   "displayName": "Crust",
   "description": "Crust language support and compiler diagnostics",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "crust-lang",
   "private": true,
   "license": "UNLICENSED",

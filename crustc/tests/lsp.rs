@@ -3093,3 +3093,22 @@ fn mixed_source_rechecks_unsaved_included_headers() {
     }
     server.exit(true);
 }
+
+#[test]
+fn standard_library_imports_support_diagnostics_and_navigation() {
+    let mut server = Server::start();
+    let uri = "untitled:standard-library.cr";
+    let source = "import <std/box.cr>; int main(){Box<int> value=Box<int>::create(42);print(value.get());return 0;}";
+    let diagnostics = server.open(uri, 1, source);
+    assert!(
+        diagnostics["diagnostics"].as_array().unwrap().is_empty(),
+        "{diagnostics}"
+    );
+    let response = server.request(
+        "textDocument/definition",
+        json!({"textDocument":{"uri":uri},"position":point(source,"Box")}),
+    );
+    let result = response.result.unwrap();
+    assert!(result.to_string().contains("lib/box.cr"), "{result}");
+    server.stop();
+}
