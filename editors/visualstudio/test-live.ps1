@@ -144,7 +144,7 @@ try {
     if (-not ($crustCompletions.items | Where-Object { $_.label -eq 'begin_c' -and $_.insertion -eq 'begin_c' })) { throw 'Visual Studio did not offer the native C marker.' }
     if (-not $crustCompletions.committedText.StartsWith('#pragma crust begin_c')) { throw 'Visual Studio did not commit the native C marker.' }
     Write-Output 'PASS: Visual Studio IntelliSense offers the native C marker'
-    $crustText = "#pragma crust begin_c`n#include <stdio.h>`nstatic int mark(void) { FILE* f = fopen(`"ran.txt`", `"wb`"); if (!f) return 1; fputs(`"run`", f); return fclose(f); }`n#pragma crust end_c`nint main() {`n    int answer = 42;`n    print(answer);`n    return mark();`n}`n"
+    $crustText = "#pragma crust begin_c`n#include <stdio.h>`nstatic int mark(void) { FILE* f = fopen(`"ran.txt`", `"wb`"); if (!f) return 1; fputs(`"run`", f); return fclose(f); }`n#pragma crust end_c`nint main() {`n    int answer = 42;`n    printf(`"%d\n`", answer);`n    return mark();`n}`n"
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustText)
     [CrustLiveIde]::Breakpoint($crustDte, $crustSource, 7)
     [CrustLiveIde]::Start($crustDte)

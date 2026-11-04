@@ -446,8 +446,9 @@ int main() {
 ```
 
 - String literals contain UTF-8 bytes followed by a terminating zero
-- Their type is a fixed-size `uint8_t` array, including the terminating byte
-- A `char` or `uint8_t` array destination may provide extra capacity, which is filled with zeros
+- Their type is `const char[N]`, including the terminating byte. Literal storage has static lifetime
+- Literals convert implicitly to `const char*` or `const void*` in pointer contexts, including C calls and variadic arguments
+- A `char` or `uint8_t` array destination receives a writable copy and may provide extra capacity, which is filled with zeros
 - String literals support the same byte escapes as character literals
 - Adjacent literals concatenate, including across whitespace and comments
 - Array copies, indexing, mutation, borrows, fields, parameters, and returns use ordinary array rules
@@ -456,8 +457,9 @@ int main() {
 - `print` also accepts `char` and `uint8_t` slices and writes their full length, including embedded zeroes, followed by a newline
 - `sizeof` includes the terminating zero and any destination padding
 
-Array declarations specify their capacity. For example, `uint8_t text[3] = "hi"`
-holds two text bytes and the terminating zero.
+Array declarations may specify their capacity. For example, `uint8_t text[3] = "hi"`
+holds two text bytes and the terminating zero. `char text[] = "hi"` infers the
+capacity of three. Writes to literal storage and conversion to `char*` are rejected.
 
 ## Enums
 

@@ -435,6 +435,7 @@ impl Types {
             let id = self.arrays.len();
             self.arrays.push(ArrayType {
                 element,
+                readonly: false,
                 length: 0,
                 span,
             });
@@ -637,7 +638,12 @@ impl Types {
                 format!("{}[]", self.describe(self.arrays[id].element))
             }
             Type::Array(id) => format!(
-                "{}[{}]",
+                "{}{}[{}]",
+                if self.arrays[id].readonly {
+                    "const "
+                } else {
+                    ""
+                },
                 self.describe(self.arrays[id].element),
                 self.arrays[id].length
             ),

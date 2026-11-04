@@ -1442,6 +1442,7 @@ impl Parser {
                 let (initializer, constants) = self.storage_initializer()?;
                 (storage::link_name(&name), initializer, constants)
             };
+            let ty = self.infer_string_array(ty, initializer.as_ref());
             let end = self.expect(
                 Token::Semicolon,
                 "expected ';' after external variable declaration",
@@ -1861,6 +1862,40 @@ impl Parser {
         return qualifiers;
     }
 
+    fn infer_string_array(&mut self, ty: Type, initializer: Option<&Expression>) -> Type {
+        if let Type::Array(id) = ty
+            && self.arrays[id].length == 0
+            && matches!(
+                self.arrays[id].element,
+                Type::Integer(IntType::Char | IntType::U8)
+            )
+            && let Some(Expression {
+                kind: ExpressionKind::StringLiteral { bytes, .. },
+                ..
+            }) = initializer
+        {
+            let element = self.arrays[id].element;
+            let length = bytes.len() + 1;
+            let id = self
+                .arrays
+                .iter()
+                .position(|array| {
+                    array.element == element && array.length == length && !array.readonly
+                })
+                .unwrap_or_else(|| {
+                    self.arrays.push(ArrayType {
+                        element,
+                        length,
+                        readonly: false,
+                        span: self.arrays[id].span,
+                    });
+                    self.arrays.len() - 1
+                });
+            return Type::Array(id);
+        }
+        return ty;
+    }
+
     fn array_suffix(&mut self, mut element: Type) -> Result<Type, Diagnostic> {
         let mut dimensions = Vec::new();
         while self.consume(&Token::LeftBracket) {
@@ -1889,16 +1924,15 @@ impl Parser {
             {
                 return Err(Diagnostic::new(span, "array elements must be values"));
             }
-            let id = if let Some(id) = self
-                .arrays
-                .iter()
-                .position(|array| array.element == element && array.length == length)
-            {
+            let id = if let Some(id) = self.arrays.iter().position(|array| {
+                array.element == element && array.length == length && !array.readonly
+            }) {
                 id
             } else {
                 let id = self.arrays.len();
                 self.arrays.push(ArrayType {
                     element,
+                    readonly: false,
                     length,
                     span,
                 });
@@ -2126,6 +2160,7 @@ impl Parser {
                 "local variables need an initializer: 'type name = expression;'",
             )?;
             let initializer = self.initializer()?;
+            let ty = self.infer_string_array(ty, Some(&initializer));
             StatementKind::Local {
                 name_span,
                 declaration_span,
@@ -2512,18 +2547,17 @@ impl Parser {
                     bytes.extend_from_slice(next);
                     span = span.through(self.advance().span);
                 }
-                let element = Type::Integer(IntType::U8);
+                let element = Type::Integer(IntType::Char);
                 let length = bytes.len() + 1;
-                let id = if let Some(id) = self
-                    .arrays
-                    .iter()
-                    .position(|array| array.element == element && array.length == length)
-                {
+                let id = if let Some(id) = self.arrays.iter().position(|array| {
+                    array.element == element && array.length == length && array.readonly
+                }) {
                     id
                 } else {
                     let id = self.arrays.len();
                     self.arrays.push(ArrayType {
                         element,
+                        readonly: true,
                         length,
                         span,
                     });

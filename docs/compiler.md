@@ -334,7 +334,7 @@ referent reads and places where needed.
 - Layout dependency ordering includes arrays and rejects cycles through array elements
 - Owning arrays have live-value flags and drop elements in reverse index order
 - Indexed places capture the array address and check the index before element access
-- String literals lower to numeric byte-array initializers, preserving UTF-8 bytes across C compiler execution encodings
+- String literals use native `char` elements and static const storage. Pointer contexts lower to octal-escaped C literals, while array copies use numeric initializers to preserve exact UTF-8 bytes
 - Text output bounds its zero-byte scan by the array capacity
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
 - Method calls lower to ordinary functions with receiver parameters

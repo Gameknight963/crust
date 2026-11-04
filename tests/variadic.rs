@@ -19,11 +19,14 @@ fn snprintf_and_variadic_callbacks_promote_narrow_integers_booleans_and_enums() 
 fn variadic_calls_require_fixed_arguments_and_c_values() {
     crust::check("extern void consume(int count, ...); int main(){consume(0,1);return 0;}")
         .unwrap();
+    crust::check(
+        r#"extern void consume(int count, ...); int main(){consume(0, "text");return 0;}"#,
+    )
+    .unwrap();
     for body in [
         "unsafe { consume(); }",
         "unsafe { consume(0, Box<int>::create(1)); }",
         "int values[1] = {1}; unsafe { consume(0, values); }",
-        "unsafe { consume(0, \"text\"); }",
         "unsafe { consume(0, print(1)); }",
         "typedef void (*Fixed)(int); Fixed callback = consume;",
         "typedef void (*Variadic)(int, ...); Variadic callback = consume; unsafe { callback(); }",

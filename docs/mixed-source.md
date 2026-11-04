@@ -50,15 +50,14 @@ The compiler diagnoses shorter markers such as `#pragma begin_c` at the pragma.
 
 int main()
 {
-    char text[7] = "hello\n";
-    printf(&text[0]);
+    printf("hello\n");
     return 0;
 }
 ```
 
-Crust string literals are byte arrays. A native `char` array supplies the element
-type required by C string APIs. Take its first element's address for a pointer
-parameter. The call above uses the `printf` declaration discovered from the header.
+Crust string literals have type `const char[N]` and convert to `const char*`
+for C string parameters. The call above uses the `printf` declaration discovered
+from the header. Use `char text[] = "hello"` when a C API needs a writable copy.
 
 ## Preprocessing
 

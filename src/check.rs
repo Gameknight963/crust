@@ -2658,6 +2658,26 @@ impl FunctionChecker<'_> {
             let actual = self.reference_expression(expression)?;
             return self.convert(expression, actual, expected);
         }
+        if matches!(expression.kind, ExpressionKind::StringLiteral { .. })
+            && let Type::Pointer(pointer) = expected
+        {
+            let actual = self.expression(expression)?;
+            let pointer = self.types.pointers[pointer];
+            if pointer.mutable
+                || !matches!(pointer.pointee, Type::Integer(IntType::Char) | Type::Void)
+            {
+                return Err(Diagnostic::new(
+                    expression.span,
+                    format!(
+                        "expected an {} value, found {}",
+                        self.types.describe(expected),
+                        self.types.describe(actual)
+                    ),
+                ));
+            }
+            self.expression_types.insert(expression.span, expected);
+            return Ok(());
+        }
         if let ExpressionKind::StringLiteral { bytes, .. } = &expression.kind
             && let Type::Array(_) = expected
         {
@@ -3089,6 +3109,11 @@ impl FunctionChecker<'_> {
 
     fn variadic_arguments(&mut self, arguments: &[Expression]) -> Result<(), Diagnostic> {
         for argument in arguments {
+            if matches!(argument.kind, ExpressionKind::StringLiteral { .. }) {
+                let pointer = self.types.pointer_to(Type::Integer(IntType::Char), false);
+                self.require_type(argument, pointer)?;
+                continue;
+            }
             let ty = if let ExpressionKind::Unary {
                 operator: UnaryOperator::Address,
                 operand,
@@ -4024,7 +4049,10 @@ impl FunctionChecker<'_> {
         if matches!(ty, Type::Struct(_)) {
             return self.owner_temporary(expression, ty);
         }
-        if !ty.is_borrow() && !matches!(ty, Type::Pointer(_)) {
+        if !ty.is_borrow()
+            && !matches!(ty, Type::Pointer(_))
+            && !matches!(ty, Type::Array(id) if self.types.arrays[id].readonly)
+        {
             return Err(Diagnostic::new(
                 expression.span,
                 "dereference of a temporary requires a returned borrow or raw pointer",

@@ -4,7 +4,6 @@
 
 int main()
 {
-    char text[7] = "hello\n";
-    printf(&text[0]);
+    printf("hello\n");
     return 0;
 }

@@ -49,6 +49,15 @@ impl<'checked> Emitter<'checked> {
         } else {
             match &expression.kind {
                 ExpressionKind::StringLiteral { bytes, .. } => {
+                    if matches!(self.expression_type(expression), Type::Pointer(_)) {
+                        return format!(
+                            "\"{}\"",
+                            bytes
+                                .iter()
+                                .map(|byte| format!("\\{byte:03o}"))
+                                .collect::<String>()
+                        );
+                    }
                     let bytes = bytes
                         .iter()
                         .copied()

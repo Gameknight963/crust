@@ -35,7 +35,7 @@ Crust supports structs, typedefs, static and instance methods, shared and exclus
 See [examples/](examples/) for runnable programs.
 
 Fixed-size arrays support checked indexing and resource cleanup. String literals
-use UTF-8 byte arrays.
+use const native `char` arrays containing UTF-8 and work with C string APIs.
 
 [Floating-point numbers](examples/floats.cr) support `float`, `double`, and
 `long double`, including C calls and checked numeric conversions.

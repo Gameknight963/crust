@@ -142,3 +142,45 @@ fn malformed_strings_and_incompatible_destinations_report_frontend_errors() {
         assert!(crust::check(source).is_err(), "should reject {source}");
     }
 }
+
+#[test]
+fn literals_use_const_native_char_pointers_and_static_storage() {
+    run(
+        r#"
+        #pragma crust begin_c
+        #include <stdio.h>
+        #include <string.h>
+        #pragma crust end_c
+        const char* greeting() { return "hello"; }
+        const char* saved = "global";
+        struct Label { const char* text; };
+        int main() {
+            const char* text = greeting();
+            Label label = { .text = "field" };
+            unsafe { printf("%s %s %s %s\n", text, saved, label.text, "argument"); }
+            unsafe { print(strlen("hello")); }
+            print("hello"[1]);
+            print(sizeof("hello"));
+            char copy[] = "hello";
+            copy[0] = 'H';
+            print(copy); unsafe { printf("%s\n", greeting()); }
+            return 0;
+        }
+    "#,
+        "hello global field argument\n5\n101\n6\nHello\nhello\n",
+    );
+}
+
+#[test]
+fn literal_storage_requires_const_char_pointer_access() {
+    for source in [
+        r#"int main() { char* p = "hello"; return 0; }"#,
+        r#"int main() { const uint8_t* p = "hello"; return 0; }"#,
+        r#"int main() { unsafe { const char* p = "hello"; p[0] = 'H'; } return 0; }"#,
+        r#"int main() { "hello"[0] = 'H'; return 0; }"#,
+    ] {
+        assert!(crust::check(source).is_err(), "should reject {source}");
+    }
+    let error = crust::check(r#"int main() { char* p = "hello"; return 0; }"#).unwrap_err();
+    assert!(error.message.contains("const char[6]"), "{}", error.message);
+}

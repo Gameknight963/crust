@@ -227,6 +227,7 @@ impl Parser {
         let ty = self.array_suffix(ty)?;
         self.value_scopes.last_mut().unwrap().insert(name.clone());
         let (mut initializer, constant_values) = self.storage_initializer()?;
+        let ty = self.infer_string_array(ty, initializer.as_ref());
         let end = self.expect(Token::Semicolon, "expected ';' after static variable")?;
         let global = format!("!scope_{}_{}", name_span.start, name);
         if let Some(initializer) = &mut initializer {

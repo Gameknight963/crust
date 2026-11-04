@@ -1389,6 +1389,16 @@ impl Emitter<'_> {
             ExpressionKind::EnumValue { .. } => unreachable!("enum constants have checked values"),
             ExpressionKind::StringLiteral { bytes, .. } => {
                 let ty = self.expression_type(expression);
+                if matches!(ty, Type::Pointer(_)) {
+                    let literal = format!(
+                        "\"{}\"",
+                        bytes
+                            .iter()
+                            .map(|byte| format!("\\{byte:03o}"))
+                            .collect::<String>()
+                    );
+                    return Some(self.temporary(ty, &literal));
+                }
                 let signed_char = matches!(ty, Type::Array(id) if self.types.arrays[id].element == Type::Integer(IntType::Char))
                     && IntType::Char.signed();
                 let mut values = bytes
@@ -1402,6 +1412,15 @@ impl Emitter<'_> {
                     })
                     .collect::<Vec<_>>();
                 values.push(String::from("0"));
+                if matches!(ty, Type::Array(id) if self.types.arrays[id].readonly) {
+                    let name = self.fresh_name("string");
+                    self.line(&format!(
+                        "static {} const {name} = {{ .crust_elements = {{ {} }} }};",
+                        c_type(ty),
+                        values.join(", ")
+                    ));
+                    return Some(name);
+                }
                 return Some(self.temporary(
                     ty,
                     &format!(
@@ -1991,6 +2010,9 @@ impl Emitter<'_> {
             }
             _ => {
                 let value = self.value_expression(expression);
+                if matches!(expression.kind, ExpressionKind::StringLiteral { .. }) {
+                    return value;
+                }
                 if self.expression_type(expression).is_borrow() {
                     if matches!(
                         self.expression_type(expression),

@@ -486,6 +486,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArrayType {
     pub element: Type,
+    pub readonly: bool,
     pub length: usize,
     pub span: Span,
 }
