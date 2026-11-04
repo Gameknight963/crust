@@ -1,6 +1,8 @@
 Crust (C-Rust get it) is to Rust (the language) as Crust is to Rust (the game)
 
 # Crust
+[![CI](https://github.com/Gameknight963/crust/actions/workflows/ci.yml/badge.svg)](https://github.com/Gameknight963/crust/actions/workflows/ci.yml)
+![GitHub Repo Views](https://gitviews.com/repo/gameknight963/crust.svg?style=flat&label-color=orange)
 
 A C-like language with ownership checking, written in Rust. The compiler generates
 C and builds native executables, static libraries, and shared libraries.
