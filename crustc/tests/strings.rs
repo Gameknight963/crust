@@ -1,5 +1,53 @@
 mod common;
 
+#[test]
+fn literals_borrow_as_c_character_slices_and_counted_byte_slices() {
+    run(
+        r#"
+        size_t chars(const char[]& text) { return text.length; }
+        size_t bytes(const uint8_t[]& text) { return text.length; }
+        int main() {
+            print(chars("hello")); print(bytes("h\0i")); print(chars(""));
+            print(bytes("é")); return 0;
+        }
+    "#,
+        "6\n3\n1\n2\n",
+    );
+}
+
+#[test]
+fn safe_string_copy_accepts_literals_and_rejects_mutable_literal_views() {
+    let output = common::tracked_run_sizes(
+        r#"
+        import <std/string.cr>;
+        int main() {
+            Result<String, TextError> copied=String::try_copy("hello");
+            print(copied.value().count()); print(copied.value().view());
+            const char[]& text="world"; print(text.length);
+            Result<String, TextError> c_text=String::try_from_c_string("hello"); print(c_text.value().count());
+            return 0;
+        }
+    "#,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "5\nhello\n6\n5\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).replace('\r', ""),
+        "drop:bytes:5\ndrop:bytes:5\n"
+    );
+    assert!(
+        common::compiler::check("void edit(char[]& text) {} int main(){edit(\"hello\");return 0;}")
+            .is_err()
+    );
+}
+
 fn run(source: &str, expected: &str) {
     let output = common::tracked_run(source);
     assert!(

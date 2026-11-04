@@ -298,6 +298,7 @@ impl FunctionChecker<'_> {
         let id = self.next_loan;
         self.next_loan += 1;
         self.loans.push(Loan {
+            reserved: false,
             id,
             root,
             fields,

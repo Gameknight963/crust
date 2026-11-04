@@ -120,6 +120,10 @@ TextMate supplies lexical highlighting for comments, strings, keywords, and
 numbers. Both layers use Visual Studio classifications and follow its editor
 theme.
 
+Hover signatures use native classified text with clickable declaration names.
+The Gflat/Roslyn tooltip workaround copies editor foreground colors into the
+tooltip classification map while preserving tooltip fonts, size, and styling.
+
 Preprocessor keywords, native region markers, and include filenames have distinct
 classifications. Directive completion works during compiler errors.
 Type `#pragma b` and complete it to get `#pragma crust begin_c`. Inside an include,

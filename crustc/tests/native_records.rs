@@ -376,7 +376,8 @@ fn native_packed_records_support_source_methods_and_nested_destructors() {
         r#"{}
         extern struct Child{{int score = "value";int read()const{{return this.score;}}~Child(){{print(this.score);}}}};
         extern struct Parent{{unsigned char tag;Child nested = "child";}};
-        int main(){{Parent values[2]={{{{.tag=1,.nested={{.score=41}}}},{{.tag=2,.nested={{.score=42}}}}}};print(values[0].nested.read());return 0;}}
+        Child extract(Parent value){{return move(value.nested);}}
+        int main(){{Parent values[2]={{{{.tag=1,.nested={{.score=41}}}},{{.tag=2,.nested={{.score=42}}}}}};print(values[0].nested.read());{{Parent single={{.tag=3,.nested={{.score=43}}}};Child moved=extract(move(single));print(moved.read());}}return 0;}}
     "#,
         native_header(&path)
     );
@@ -388,7 +389,7 @@ fn native_packed_records_support_source_methods_and_nested_destructors() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-        "41\n42\n41\n"
+        "41\n43\n43\n42\n41\n"
     );
 }
 

@@ -66,8 +66,6 @@ fn rejects_aliases_moves_and_reads_that_conflict_with_live_argument_borrows() {
     for body in [
         "int n = 1; both(&n, &n);",
         "int n = 1; mixed(&n, &const n);",
-        "int n = 1; value(&n, n);",
-        "int n = 1; value(&n, read(&const n));",
         "Box<int> a = Box<int>::create(1); owner_and_borrow(&const a, move(a));",
         "Box<int> a = Box<int>::create(1); value(a.get_mut(), owned_first(move(a), &const a));",
         "Box<int> a = Box<int>::create(1); owned_first(move(a), &const a);",

@@ -325,6 +325,7 @@ referent reads and places where needed.
 - Distinct field paths permit independent access, while array indices remain conservative
 - Reborrow loans record their parent, allowing access through that ancestry while checking conflicts with sibling and child loans
 - Call argument loans are temporary, and scope exit releases local-reference loans
+- Stable mutable whole-object argument loans reserve addresses while later arguments evaluate, then activate together before the call
 - Borrowed return signatures identify a single borrowed input, and return checking verifies the source root
 - Calls transfer the selected argument's origin into a returned loan and retain its surviving reborrow ancestry
 - Reference initializers retain temporary ancestors, and statement and condition boundaries release other temporary loans
@@ -339,6 +340,7 @@ referent reads and places where needed.
 - String literals use native `char` elements and static const storage. Pointer contexts lower to octal-escaped C literals, while array copies use numeric initializers to preserve exact UTF-8 bytes
 - Text output bounds its zero-byte scan by the array capacity
 - Generated struct cleanup calls the custom destructor, then cleans up owning fields in reverse declaration order
+- Owned local field moves have per-projection availability and per-leaf cleanup flags. Branches merge availability, and assignments restore the affected flags
 - Method calls lower to ordinary functions with receiver parameters
 - Unsafe blocks lower to ordinary C blocks with the same cleanup rules
 - Raw pointer indexing captures the base and index once, with checked conversion of offsets to the host `ptrdiff_t` representation

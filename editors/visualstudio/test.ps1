@@ -14,7 +14,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustPackage = Join-Path $crustRepoRoot 'target/crust-visualstudio.vsix'
 $crustArchive = [IO.Compression.ZipFile]::OpenRead($crustPackage)
 try {
-    foreach ($crustRequired in @('Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/crustc.exe', 'lib/box.cr', 'lib/native/file.h', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
+    foreach ($crustRequired in @('Licenses/Gflat.txt', 'Licenses/Roslyn.txt', 'Crust.VisualStudio.dll', 'Crust.VisualStudio.pkgdef', 'Server/crust-lsp.exe', 'Server/crust.exe', 'Server/crustc.exe', 'lib/box.cr', 'lib/native/file.h', 'Server/libclang.dll', 'Server/third-party/llvm/LICENSE.TXT', 'Tools/Crust.Console.exe', 'Grammars/crust.tmLanguage.json', 'language-configuration.json', 'crust.pkgdef', 'Sdk/Crust.props', 'Sdk/Crust.targets', 'Sdk/tasks/net472/Crust.Build.Tasks.dll', 'Sdk/tasks/net8.0/Crust.Build.Tasks.dll')) {
         if (-not $crustArchive.GetEntry($crustRequired)) { throw "VSIX is missing $crustRequired" }
     }
     foreach ($crustRuleEntry in ($crustArchive.Entries | Where-Object { $_.FullName -like 'Sdk/Rules/*.xaml' })) {
@@ -68,6 +68,14 @@ foreach ($crustEntry in $crustSources.GetEnumerator()) {
         throw "Packaged $($crustEntry.Key) differs from the current build input."
     }
 }
+$crustEditorAssemblies = Join-Path $VisualStudioRoot 'Common7/IDE/CommonExtensions/Microsoft/Editor'
+$crustThemeReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Text.UI.Wpf') | ForEach-Object { '/r:' + (Join-Path $crustEditorAssemblies "Microsoft.VisualStudio.$_.dll") }
+$crustFrameworkReferences = Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.7.2'
+$crustThemeReferences += '/r:' + (Join-Path $crustFrameworkReferences 'PresentationCore.dll')
+$crustThemeReferences += '/r:' + (Join-Path $crustFrameworkReferences 'WindowsBase.dll')
+$crustThemeReferences += '/r:' + (Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.7.2/Facades/netstandard.dll')
+& (Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/Roslyn/csc.exe') /nologo /warnaserror /target:library @crustThemeReferences "/out:$crustTestRoot/ThemeColorCheck.dll" (Join-Path $PSScriptRoot 'tests/ThemeColorCheck.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Tooltip theme test compilation failed' }
 $crustProbe = Join-Path $crustTestRoot 'ClientProbe.exe'
 $crustCsc = Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/Roslyn/csc.exe'
 & $crustCsc /nologo /warnaserror /langversion:latest /r:System.Web.Extensions.dll /r:System.ComponentModel.Composition.dll "/out:$crustProbe" (Join-Path $PSScriptRoot 'tests/ClientProbe.cs')

@@ -19,10 +19,13 @@ $crustClassifications = Join-Path $crustRoot 'classifications.json'
 $crustPreviousClassifications = $env:CRUST_LIVE_CLASSIFICATIONS
 $crustEditor = Join-Path $crustVs 'Common7/IDE/CommonExtensions/Microsoft/Editor'
 $crustProbe = Join-Path $crustRoot 'Crust.EditorProbe.dll'
-$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Language', 'Language.Intellisense') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
+$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Text.UI.Wpf', 'Language', 'Language.Intellisense') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
 $crustImmutable = Join-Path $crustVs 'Common7/IDE/PublicAssemblies/System.Collections.Immutable.dll'
 if (-not (Test-Path -LiteralPath $crustImmutable)) { throw 'Visual Studio immutable collections assembly was not found.' }
 $crustReferences += '/r:' + $crustImmutable
+$crustFrameworkReferences = Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.7.2'
+$crustReferences += '/r:' + (Join-Path $crustFrameworkReferences 'PresentationCore.dll')
+$crustReferences += '/r:' + (Join-Path $crustFrameworkReferences 'WindowsBase.dll')
 $crustReferences += '/r:' + (Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.7.2/Facades/netstandard.dll')
 & (Join-Path $crustVs 'MSBuild/Current/Bin/Roslyn/csc.exe') /nologo /warnaserror /target:library /r:System.ComponentModel.Composition.dll /r:System.Web.Extensions.dll @crustReferences "/out:$crustProbe" (Join-Path $PSScriptRoot 'tests/EditorProbe.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Editor probe compilation failed.' }
@@ -155,6 +158,13 @@ try {
     if (Test-Path -LiteralPath ($crustClassifications + '.features-error')) { throw (Get-Content ($crustClassifications + '.features-error') -Raw) }
     $crustFeatures = Get-Content -LiteralPath ($crustClassifications + '.features') -Raw | ConvertFrom-Json
     if ($crustFeatures.hover -notmatch 'support' -or $crustFeatures.hover -notmatch 'int') { throw "Quick Info missing: $($crustFeatures | ConvertTo-Json -Compress)" }
+    foreach ($crustClassification in @('keyword', 'method name', 'parameter name')) {
+        if ($crustFeatures.classes -notcontains $crustClassification) { throw "Hover lacks syntax classification $crustClassification" }
+    }
+    foreach ($crustColor in $crustFeatures.colors) {
+        if ($crustColor.editor -ne $crustColor.tooltip) { throw "Tooltip color differs from editor for $($crustColor.classification): $($crustColor | ConvertTo-Json -Compress)" }
+    }
+    Write-Output 'PASS: classified hover content and Roslyn tooltip foreground workaround'
     [CrustLiveIde]::ParameterInfo($crustDte, $crustSource, 3, 29)
     $crustSignatureDeadline = [DateTime]::UtcNow.AddSeconds(10)
     do {

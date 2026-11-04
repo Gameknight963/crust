@@ -237,7 +237,13 @@ fn run_project(mut project: Project, options: &Options) -> Result<ExitCode, Stri
                 |path| fs::read_to_string(path),
             )
             .map_err(|error| error.to_string())?;
-            protected.extend(sources.files().iter().map(|file| file.path.clone()));
+            protected.extend(
+                sources
+                    .files()
+                    .iter()
+                    .filter(|file| file.physical)
+                    .map(|file| file.path.clone()),
+            );
             protected.extend_from_slice(sources.native_headers());
         }
     }
@@ -335,7 +341,13 @@ fn process_source(
     let protected: Vec<_> = protected
         .iter()
         .cloned()
-        .chain(sources.files().iter().map(|file| file.path.clone()))
+        .chain(
+            sources
+                .files()
+                .iter()
+                .filter(|file| file.physical)
+                .map(|file| file.path.clone()),
+        )
         .chain(sources.native_headers().iter().cloned())
         .chain(native.runtime_libraries.iter().cloned())
         .collect();

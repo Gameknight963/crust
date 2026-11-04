@@ -183,7 +183,6 @@ fn local_loans_preserve_exclusivity_and_block_owner_invalidation() {
         "int n = 1; int& a = &n; int& b = a; print(a);",
         "int n = 1; int& a = &n; const int& b = &const a; a = 2;",
         "int n = 1; int& a = &n; pair(a, a);",
-        "int n = 1; int& a = &n; mixed(a, a);",
         "Box<int> a = Box<int>::create(1); const int& view = a.get(); Box<int> b = move(a);",
         "Box<int> a = Box<int>::create(1); const int& view = a.get(); a = Box<int>::create(2);",
         "Box<int> a = Box<int>::create(1); Box<int>& slot = &a; const int& view = slot.get(); slot = Box<int>::create(2);",

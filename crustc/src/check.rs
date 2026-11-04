@@ -184,8 +184,9 @@ enum State {
     MaybeMoved,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Variable {
+    fields: std::rc::Rc<HashMap<Vec<String>, State>>,
     storage: Option<usize>,
     volatile: bool,
     external: bool,
@@ -209,6 +210,7 @@ struct Place {
 
 #[derive(Clone)]
 struct Loan {
+    reserved: bool,
     id: usize,
     root: (usize, String),
     fields: Vec<String>,
@@ -373,6 +375,7 @@ fn analyze(
             ));
         }
         globals.entry(global.name.clone()).or_insert(Variable {
+            fields: Default::default(),
             storage: Some(storage),
             volatile: global.volatile,
             external: global.external,
@@ -953,7 +956,7 @@ impl FunctionChecker<'_> {
                         "cannot assign to a const external variable",
                     ));
                 }
-                self.record_binding_symbol(*name_span, target);
+                self.record_binding_symbol(*name_span, &target);
                 if target.ty.is_borrow() {
                     let target = Expression {
                         span: *name_span,
@@ -984,7 +987,7 @@ impl FunctionChecker<'_> {
                     volatile: false,
                     via: None,
                 };
-                self.access(&place.root, &[], true, None, statement.span)?;
+                self.access_loans(&place.root, &[], true, None, statement.span)?;
                 self.check_capture_move(&place, statement.span)?;
                 self.bind_captures(&place, value)?;
                 self.set_state(name, State::Available);
@@ -1073,7 +1076,15 @@ impl FunctionChecker<'_> {
                         "volatile storage operations require copyable values",
                     ));
                 }
-                self.access(&place.root, &place.fields, true, place.via, target.span)?;
+                self.access_loans(&place.root, &place.fields, true, place.via, target.span)?;
+                if place.via.is_none()
+                    && self
+                        .scopes
+                        .get(place.root.0)
+                        .is_some_and(|scope| scope.contains_key(&place.root.1))
+                {
+                    self.set_field_state(&place, State::Available);
+                }
                 if self.types.contains_borrows(place.ty) {
                     self.check_capture_move(&place, target.span)?;
                     self.bind_captures(&place, value)?;
@@ -1684,9 +1695,7 @@ impl FunctionChecker<'_> {
                     ));
                 }
                 self.require_unsafe(expression.span, "calling a function pointer")?;
-                for (argument, expected) in arguments.iter().zip(&signature.parameters) {
-                    self.require_type(argument, *expected)?;
-                }
+                self.call_arguments(arguments, &signature.parameters)?;
                 self.variadic_arguments(&arguments[signature.parameters.len()..])?;
                 self.end_loans_since(previous_loans);
                 return Ok(signature.result);
@@ -2030,7 +2039,7 @@ impl FunctionChecker<'_> {
                     return self.function_reference(name, expression.span);
                 }
                 let variable = self.available(name, expression.span)?;
-                self.record_binding_symbol(*name_span, variable);
+                self.record_binding_symbol(*name_span, &variable);
                 if self.types.owns(variable.ty) && !self.unevaluated {
                     return Err(Diagnostic::new(
                         expression.span,
@@ -2189,7 +2198,7 @@ impl FunctionChecker<'_> {
                     } = &arguments[0].kind
                     {
                         let variable = self.available(owner, arguments[0].span)?;
-                        self.record_binding_symbol(*name_span, variable);
+                        self.record_binding_symbol(*name_span, &variable);
                         if !self.types.owns(variable.ty) {
                             if variable.ty.is_borrow() {
                                 return Err(Diagnostic::new(
@@ -2233,6 +2242,42 @@ impl FunctionChecker<'_> {
                             self.capture_value(expression.span, &place);
                             self.set_state(name, State::Moved);
                             return Ok(place.ty);
+                        }
+                    }
+                    if matches!(arguments[0].kind, ExpressionKind::Field { .. }) {
+                        let place = self.checked_place(&arguments[0])?;
+                        let mut root_expression = &arguments[0];
+                        let mut ancestors = Vec::new();
+                        while let ExpressionKind::Field { base, .. } = &root_expression.kind {
+                            ancestors.push(self.probe_receiver_type(base)?);
+                            root_expression = base;
+                        }
+                        if let ExpressionKind::Variable { name, .. } = &root_expression.kind {
+                            let variable = self.available(name, root_expression.span)?;
+                            if variable.reference.is_none()
+                                && variable.storage.is_none()
+                                && !variable.external
+                                && !variable.ty.is_borrow()
+                                && place.via.is_none()
+                            {
+                                if self.types.owns(place.ty) && ancestors.iter().any(|ty| matches!(ty, Type::Struct(id) if self.types.structs[*id].has_destructor || self.types.structs[*id].is_union || self.types.structs[*id].tagged)) {
+                                    return Err(Diagnostic::new(arguments[0].span, "field moves cannot cross a custom destructor or union"));
+                                }
+                                self.access(
+                                    &place.root,
+                                    &place.fields,
+                                    self.types.owns(place.ty),
+                                    None,
+                                    arguments[0].span,
+                                )?;
+                                self.expression_types.insert(arguments[0].span, place.ty);
+                                self.check_capture_move(&place, arguments[0].span)?;
+                                self.capture_value(expression.span, &place);
+                                if self.types.owns(place.ty) {
+                                    self.set_field_state(&place, State::Moved);
+                                }
+                                return Ok(place.ty);
+                            }
                         }
                     }
                     let pointer = match &arguments[0].kind {
@@ -2314,9 +2359,7 @@ impl FunctionChecker<'_> {
 
                 // This ordering is also the language's evaluation order.
                 let previous_loans = self.loans.len();
-                for (argument, expected) in arguments.iter().zip(&signature.parameters) {
-                    self.require_type(argument, *expected)?;
-                }
+                self.call_arguments(arguments, &signature.parameters)?;
                 self.variadic_arguments(&arguments[signature.parameters.len()..])?;
                 if !self.unevaluated {
                     self.apply_retention(&signature, arguments, previous_loans, expression.span)?;
@@ -2664,6 +2707,28 @@ impl FunctionChecker<'_> {
                 return self.convert(expression, actual, expected);
             }
         }
+        if let ExpressionKind::StringLiteral { .. } = &expression.kind
+            && let Type::Borrow {
+                pointee: Pointee::Slice(id),
+                mutable: false,
+                ..
+            } = expected
+            && matches!(
+                self.types.arrays[id].element,
+                Type::Integer(IntType::Char | IntType::U8)
+            )
+        {
+            let loan = self.borrow(
+                (0, format!("@literal{}", expression.span.start)),
+                Vec::new(),
+                false,
+                None,
+                expression.span,
+            )?;
+            self.references.insert(expression.span, loan);
+            self.expression_types.insert(expression.span, expected);
+            return Ok(());
+        }
         if let Type::Borrow { mutable, .. } = expected {
             if let ExpressionKind::Variable { name, .. } = &expression.kind
                 && self.lookup(name, expression.span)?.ty.is_borrow()
@@ -2857,14 +2922,14 @@ impl FunctionChecker<'_> {
             self.scopes
                 .iter()
                 .rev()
-                .find_map(|scope| scope.get(name).copied())
+                .find_map(|scope| scope.get(name).cloned())
                 .filter(|variable| variable.storage.is_some() && !variable.external)
                 .map(|variable| (name.clone(), *name_span, variable))
         } else {
             None
         };
         let place = if let Some((name, span, variable)) = storage {
-            self.record_binding_symbol(span, variable);
+            self.record_binding_symbol(span, &variable);
             self.receiver_types.insert(operand.span, variable.ty);
             Place {
                 ty: variable.ty,
@@ -3094,7 +3159,7 @@ impl FunctionChecker<'_> {
         return Ok(self.types.pointer_to(function_type, true));
     }
 
-    fn record_binding_symbol(&mut self, span: Span, variable: Variable) {
+    fn record_binding_symbol(&mut self, span: Span, variable: &Variable) {
         if let Some(declaration) = variable.declaration {
             self.symbol_uses.insert(span, declaration);
         }
@@ -3129,6 +3194,73 @@ impl FunctionChecker<'_> {
         {
             self.symbol_uses.insert(span, field.span);
         }
+    }
+
+    fn call_arguments(
+        &mut self,
+        arguments: &[Expression],
+        parameters: &[Type],
+    ) -> Result<(), Diagnostic> {
+        let mut reserved = Vec::new();
+        for (argument, expected) in arguments.iter().zip(parameters) {
+            let first = self.next_loan;
+            self.require_type(argument, *expected)?;
+            // Capture a stable whole-object address now, activate exclusivity
+            // when the call starts. Returned references and projected storage
+            // keep their normal eager loans because later calls can invalidate them.
+            if !matches!(
+                argument.kind,
+                ExpressionKind::Variable { .. }
+                    | ExpressionKind::Unary {
+                        operator: UnaryOperator::Address | UnaryOperator::Borrow { .. },
+                        ..
+                    }
+            ) {
+                continue;
+            }
+            if let Some(id) = self.references.get(&argument.span).copied()
+                && let Some(loan) = self.loans.iter_mut().find(|loan| loan.id == id)
+                && id >= first
+                && loan.mutable
+                && loan.fields.is_empty()
+                && loan.alternatives.is_empty()
+                && loan.root.0 > 0
+                && self
+                    .scopes
+                    .get(loan.root.0)
+                    .is_some_and(|scope| scope.contains_key(&loan.root.1))
+            {
+                loan.reserved = true;
+                reserved.push(id);
+            }
+        }
+        for id in &reserved {
+            let loan = self
+                .loans
+                .iter()
+                .find(|loan| loan.id == *id)
+                .expect("argument reservation");
+            let mut parents = vec![*id];
+            parents.extend(
+                self.loans
+                    .iter()
+                    .filter(|other| other.reserved && !reserved.contains(&other.id))
+                    .map(|other| other.id),
+            );
+            self.access_through(
+                &loan.root,
+                &loan.fields,
+                true,
+                &parents,
+                arguments.first().map(|argument| argument.span).unwrap(),
+            )?;
+        }
+        for loan in &mut self.loans {
+            if reserved.contains(&loan.id) {
+                loan.reserved = false;
+            }
+        }
+        return Ok(());
     }
 
     fn variadic_arguments(&mut self, arguments: &[Expression]) -> Result<(), Diagnostic> {
@@ -4018,7 +4150,7 @@ impl FunctionChecker<'_> {
             ExpressionKind::Variable { name, name_span } => {
                 let place = self.place(expression)?;
                 let variable = self.lookup(name, expression.span)?;
-                self.record_binding_symbol(*name_span, variable);
+                self.record_binding_symbol(*name_span, &variable);
                 self.expression_types
                     .entry(expression.span)
                     .or_insert(place.ty);
@@ -4185,6 +4317,53 @@ impl FunctionChecker<'_> {
         via: Option<usize>,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        if !self.unevaluated
+            && let Some(variable) = self.scopes.get(root.0).and_then(|scope| scope.get(&root.1))
+            && let Some((path, state)) = variable
+                .fields
+                .iter()
+                .find(|(path, state)| **state != State::Available && fields_overlap(path, fields))
+        {
+            return Err(Diagnostic::new(
+                span,
+                format!(
+                    "field '{}.{}' {}",
+                    root.1,
+                    path.join("."),
+                    if *state == State::MaybeMoved {
+                        "may have been moved on another path"
+                    } else {
+                        "has been moved"
+                    }
+                ),
+            ));
+        }
+
+        return self.access_loans(root, fields, exclusive, via, span);
+    }
+
+    fn set_field_state(&mut self, place: &Place, state: State) {
+        if self.unevaluated {
+            return;
+        }
+        let variable = self.scopes[place.root.0]
+            .get_mut(&place.root.1)
+            .expect("owned local projection");
+        let fields = std::rc::Rc::make_mut(&mut variable.fields);
+        fields.retain(|path, _| !path.starts_with(&place.fields));
+        if state != State::Available {
+            fields.insert(place.fields.clone(), state);
+        }
+    }
+
+    fn access_loans(
+        &self,
+        root: &(usize, String),
+        fields: &[String],
+        exclusive: bool,
+        via: Option<usize>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
         let parents: Vec<_> = via.into_iter().collect();
         self.access_through(root, fields, exclusive, &parents, span)?;
         if let Some(loan) = via.and_then(|id| self.loans.iter().find(|loan| loan.id == id))
@@ -4227,7 +4406,7 @@ impl FunctionChecker<'_> {
                     .iter()
                     .any(|(other, projection)| other == root && fields_overlap(fields, projection)))
                 && !authorized.contains(&loan.id)
-                && (exclusive || loan.mutable)
+                && (exclusive || (loan.mutable && !loan.reserved))
         }) {
             let name = root
                 .1
@@ -4252,7 +4431,19 @@ impl FunctionChecker<'_> {
         if self.unevaluated {
             return Ok(usize::MAX);
         }
-        self.access(&root, &fields, mutable, parent, span)?;
+        if mutable && self.loans.iter().any(|loan| loan.reserved) {
+            self.access(&root, &fields, false, parent, span)?;
+            let mut parents: Vec<_> = parent.into_iter().collect();
+            parents.extend(
+                self.loans
+                    .iter()
+                    .filter(|loan| loan.reserved)
+                    .map(|loan| loan.id),
+            );
+            self.access_through(&root, &fields, true, &parents, span)?;
+        } else {
+            self.access(&root, &fields, mutable, parent, span)?;
+        }
         let alternatives = if let Some(parent) = parent {
             let loan = self
                 .loans
@@ -4277,6 +4468,7 @@ impl FunctionChecker<'_> {
         let id = self.next_loan;
         self.next_loan += 1;
         self.loans.push(Loan {
+            reserved: false,
             id,
             root,
             fields,
@@ -4370,6 +4562,7 @@ impl FunctionChecker<'_> {
         let id = self.next_loan;
         self.next_loan += 1;
         self.loans.push(Loan {
+            reserved: false,
             id,
             root,
             fields,
@@ -4423,6 +4616,7 @@ impl FunctionChecker<'_> {
         scope.insert(
             name.to_owned(),
             Variable {
+                fields: Default::default(),
                 storage: None,
                 volatile: false,
                 external: false,
@@ -4444,7 +4638,7 @@ impl FunctionChecker<'_> {
                 } else if variable.storage.is_some() && variable.mutable {
                     self.require_unsafe(span, "accessing mutable global or static storage")?;
                 }
-                return Ok(*variable);
+                return Ok(variable.clone());
             }
         }
         return Err(Diagnostic::new(span, format!("unknown variable '{name}'")));
@@ -4487,6 +4681,7 @@ impl FunctionChecker<'_> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(variable) = scope.get_mut(name) {
                 variable.state = state;
+                variable.fields = Default::default();
                 return;
             }
         }
@@ -4571,6 +4766,34 @@ fn merge(left: &Scopes, right: &Scopes) -> Scopes {
     let mut result = left.clone();
     for (scope, other) in result.iter_mut().zip(right) {
         for (name, variable) in scope {
+            let keys: HashSet<_> = variable
+                .fields
+                .keys()
+                .chain(other[name].fields.keys())
+                .cloned()
+                .collect();
+            let mut fields = HashMap::new();
+            for path in keys {
+                let left = variable
+                    .fields
+                    .get(&path)
+                    .copied()
+                    .unwrap_or(State::Available);
+                let right = other[name]
+                    .fields
+                    .get(&path)
+                    .copied()
+                    .unwrap_or(State::Available);
+                fields.insert(
+                    path,
+                    if left == right {
+                        left
+                    } else {
+                        State::MaybeMoved
+                    },
+                );
+            }
+            variable.fields = std::rc::Rc::new(fields);
             if variable.state != other[name].state {
                 variable.state = State::MaybeMoved;
             }
@@ -4582,7 +4805,9 @@ fn merge(left: &Scopes, right: &Scopes) -> Scopes {
 fn same_owner_states(left: &Scopes, right: &Scopes, types: &Types) -> bool {
     for (scope, other) in left.iter().zip(right) {
         for (name, variable) in scope {
-            if types.owns(variable.ty) && variable.state != other[name].state {
+            if types.owns(variable.ty)
+                && (variable.state != other[name].state || variable.fields != other[name].fields)
+            {
                 return false;
             }
         }

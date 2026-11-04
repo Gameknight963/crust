@@ -24,6 +24,8 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
     [Import] public ITextDocumentFactoryService Documents = null;
     [Import] public IAsyncCompletionBroker Completions = null;
     [Import] public IAsyncQuickInfoBroker QuickInfo = null;
+    [Import] public IClassificationFormatMapService FormatMaps = null;
+    [Import] public IClassificationTypeRegistryService Registry = null;
     private static readonly object Gate = new object();
 
     public void TextViewCreated(ITextView view)
@@ -95,9 +97,28 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
                 snapshot.CreateTrackingPoint(cursor + 2, PointTrackingMode.Positive), CancellationToken.None);
             string hover = items == null ? "" : Flatten(items.Items, 0);
             long hoverMilliseconds = timer.ElapsedMilliseconds;
-            File.WriteAllText(output + ".features", new JavaScriptSerializer().Serialize(new { hover, hoverMilliseconds }));
+            var classes = items == null ? new string[0] : HoverClasses(items.Items, 0).Distinct().ToArray();
+            var colors = new[] { "keyword", "method name", "parameter name" }.Select(name => new {
+                classification = name,
+                editor = FormatMaps.GetClassificationFormatMap("text").GetTextProperties(Registry.GetClassificationType(name)).ForegroundBrush.ToString(),
+                tooltip = FormatMaps.GetClassificationFormatMap("tooltip").GetTextProperties(Registry.GetClassificationType(name)).ForegroundBrush.ToString()
+            }).ToArray();
+            File.WriteAllText(output + ".features", new JavaScriptSerializer().Serialize(new { hover, hoverMilliseconds, classes, colors }));
         }
         catch (Exception error) { File.WriteAllText(output + ".features-error", error.ToString()); }
+    }
+
+    private static IEnumerable<string> HoverClasses(object value, int depth)
+    {
+        if (value == null || value is string || depth > 8) yield break;
+        var classification = value.GetType().GetProperty("ClassificationTypeName");
+        if (classification != null) yield return (string)classification.GetValue(value);
+        var list = value as System.Collections.IEnumerable;
+        if (list != null) { foreach (var item in list) foreach (string name in HoverClasses(item, depth + 1)) yield return name; }
+        else foreach (string propertyName in new[] { "Runs", "Elements", "Content" }) {
+            var property = value.GetType().GetProperty(propertyName);
+            if (property != null) foreach (string name in HoverClasses(property.GetValue(value), depth + 1)) yield return name;
+        }
     }
 
     private static string Flatten(object value, int depth)

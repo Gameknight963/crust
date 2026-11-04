@@ -9,18 +9,27 @@ using System.Threading.Tasks;
 using Microsoft.VisualStudio.LanguageServer.Client;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
+using StreamJsonRpc;
 
 namespace Crust.VisualStudio;
 
 [Export(typeof(ILanguageClient))]
 [ContentType("crust")]
-public sealed class CrustLanguageClient : ILanguageClient, IDisposable
+public sealed class CrustLanguageClient : ILanguageClient, ILanguageClientCustomMessage2, IDisposable
 {
     private Process? server;
+    private readonly HoverConnection hover;
+    private readonly object messages = new object();
+    public CrustLanguageClient() : this(new HoverConnection()) { }
+    [ImportingConstructor]
+    public CrustLanguageClient(HoverConnection hover) => this.hover = hover;
+    public object? MiddleLayer => null;
+    public object CustomMessageTarget => messages;
+    public Task AttachForCustomMessageAsync(JsonRpc rpc) { hover.Rpc = rpc; return Task.CompletedTask; }
 
     public string Name => "crust";
     public IEnumerable<string> ConfigurationSections => Array.Empty<string>();
-    public object InitializationOptions => new { visualStudioClassifications = true };
+    public object InitializationOptions => new { visualStudioClassifications = true, visualStudioNativeHover = true };
     public IEnumerable<string> FilesToWatch => new[] { "**/*.cr", "**/crust.toml", "**/*.h", "**/*.inc", "**/*.c" };
     public bool ShowNotificationOnInitializeFailed => true;
     public event AsyncEventHandler<EventArgs>? StartAsync;
@@ -76,7 +85,7 @@ public sealed class CrustLanguageClient : ILanguageClient, IDisposable
         if (handler != null) await handler.InvokeAsync(this, EventArgs.Empty);
     }
 
-    public Task OnServerInitializedAsync() => Task.CompletedTask;
+    public Task OnServerInitializedAsync() { hover.Ready = true; return Task.CompletedTask; }
 
     public Task<InitializationFailureContext?> OnServerInitializeFailedAsync(ILanguageClientInitializationInfo initializationState)
     {
@@ -89,6 +98,8 @@ public sealed class CrustLanguageClient : ILanguageClient, IDisposable
 
     public void Dispose()
     {
+        hover.Ready = false;
+        hover.Rpc = null;
         var process = Interlocked.Exchange(ref server, null);
         if (process != null) Stop(process);
     }

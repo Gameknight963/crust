@@ -184,11 +184,8 @@ fn receiver_loans_cover_later_arguments_and_enclosing_calls() {
         int both(int a, int b) { return a + b; }
         int inspect(const struct A& a, int b) { return a.n + b; }
     "#;
-    for body in [
-        "a.set(a.get());",
-        "a.set(a.n);",
-        "inspect(&const a, a.set(2));",
-    ] {
+    {
+        let body = "inspect(&const a, a.set(2));";
         let error = crustc::check(&format!(
             "{prelude} int main() {{ struct A a = {{ .n = 1 }}; {body} return 0; }}"
         ))
@@ -198,7 +195,7 @@ fn receiver_loans_cover_later_arguments_and_enclosing_calls() {
             "{body}: {error}"
         );
     }
-    crustc::check(&format!("{prelude} int main() {{ struct A a = {{ .n = 1 }}; a.sum(&a); a.sum(&const a); both(a.set(2), a.get()); a.set(3); return 0; }}")).unwrap();
+    crustc::check(&format!("{prelude} int main() {{ struct A a = {{ .n = 1 }}; a.sum(&a); a.sum(&const a); a.set(a.get()); a.set(a.n); both(a.set(2), a.get()); a.set(3); return 0; }}")).unwrap();
 }
 
 #[test]

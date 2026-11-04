@@ -46,17 +46,23 @@ internal static class ClientProbe
             Path.Combine(visualStudio, "MSBuild", "Current", "Bin"),
             ide
         };
+        directories = directories.Concat(Directory.GetDirectories(Path.Combine(ide, "PublicAssemblies")))
+            .Concat(Directory.GetDirectories(Path.Combine(ide, "PrivateAssemblies"))).ToArray();
         AppDomain.CurrentDomain.AssemblyResolve += (_, eventArgs) =>
         {
             var requested = new AssemblyName(eventArgs.Name);
             var candidates = directories.Select(directory => Path.Combine(directory, requested.Name + ".dll"))
-                .Where(File.Exists).ToArray();
+                .Where(File.Exists).OrderByDescending(path => AssemblyName.GetAssemblyName(path).Version).ToArray();
             string exact = candidates.FirstOrDefault(path => AssemblyName.GetAssemblyName(path).Version == requested.Version);
             string candidate = exact ?? candidates.FirstOrDefault();
             return candidate == null ? null : Assembly.LoadFrom(candidate);
         };
         Environment.SetEnvironmentVariable("CRUST_LSP_PATH", null);
         var assembly = Assembly.LoadFrom(Path.Combine(package, "Crust.VisualStudio.dll"));
+        var themeTest = Assembly.LoadFrom(Path.Combine(package, "ThemeColorCheck.dll"));
+        themeTest.GetType("Crust.PackageTests.ThemeColorCheck", true).GetMethod("Run").Invoke(null,
+            new object[] { assembly.GetType("Crust.VisualStudio.CrustThemeColors", true) });
+        Console.WriteLine("Roslyn tooltip theme foregrounds and preserved font/style checks passed");
         var language = Activator.CreateInstance(assembly.GetType("Crust.VisualStudio.CrustLanguageInfo", true));
         var languageName = new object[] { null };
         language.GetType().GetMethod("GetLanguageName").Invoke(language, languageName);

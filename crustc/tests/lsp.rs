@@ -9,6 +9,40 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 #[test]
+fn native_visual_studio_hover_contains_classified_runs_and_navigation_targets() {
+    let mut server = Server::start_with_params(
+        json!({"capabilities":{},"initializationOptions":{"visualStudioNativeHover":true}}),
+    );
+    let uri = "untitled:classified-hover.cr";
+    let text = "int answer(int value){return value;} int main(){return answer(42);}";
+    server.open(uri, 1, text);
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":at(text,text.rfind("answer").unwrap())}),
+        )
+        .result
+        .unwrap();
+    let runs = hover["_vs_rawContent"]["Elements"][0]["Runs"]
+        .as_array()
+        .unwrap();
+    for class in ["keyword", "method name", "parameter name"] {
+        assert!(
+            runs.iter()
+                .any(|run| run["ClassificationTypeName"] == class),
+            "{hover}"
+        );
+    }
+    let function = runs.iter().find(|run| run["Text"] == "answer").unwrap();
+    assert_eq!(
+        function["_crust_target"]["range"]["start"],
+        at(text, text.find("answer").unwrap())
+    );
+    assert_eq!(function["Style"], 0);
+    server.stop();
+}
+
+#[test]
 fn hover_and_definition_survive_an_unrelated_body_error() {
     let mut server = Server::start();
     let uri = "file:///crust-editor-recovery/main.cr";
@@ -216,11 +250,12 @@ impl Server {
             output,
             next_id: 1,
         };
+        let native_hover = params["initializationOptions"]["visualStudioNativeHover"] == true;
         let initialized = server.request("initialize", params);
         let capabilities = &initialized.result.unwrap()["capabilities"];
         assert_eq!(capabilities["positionEncoding"], "utf-16");
         assert_eq!(capabilities["textDocumentSync"]["change"], 1);
-        assert_eq!(capabilities["hoverProvider"], true);
+        assert_eq!(capabilities["hoverProvider"], !native_hover);
         assert_eq!(capabilities["definitionProvider"], true);
         assert_eq!(capabilities["referencesProvider"], true);
         assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);

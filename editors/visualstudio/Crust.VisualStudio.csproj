@@ -35,6 +35,11 @@
     <PackageReference Include="Microsoft.VisualStudio.Utilities" Version="17.14.40264" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.14.2142" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.VisualStudio.Language" Version="17.14.249" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VisualStudio.Text.UI.Wpf" Version="17.14.249" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VisualStudio.Text.UI" Version="17.14.249" ExcludeAssets="runtime" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="WindowsBase" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.ComponentModel.Composition" />
@@ -45,6 +50,12 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Design" />
     <Compile Include="CrustLanguageClient.cs" />
+    <Compile Include="CrustThemeColors.cs" />
+    <Compile Include="CrustQuickInfo.cs" />
+    <Compile Include="HoverConnection.cs" />
+    <Compile Include="HoverContent.cs" />
+    <Content Include="Licenses/Gflat.txt"><IncludeInVSIX>true</IncludeInVSIX></Content>
+    <Content Include="Licenses/Roslyn.txt"><IncludeInVSIX>true</IncludeInVSIX></Content>
     <Compile Include="CrustPackage.cs" />
     <Compile Include="ProjectTool.cs" />
     <Compile Include="CrustBuildProperties.cs" />

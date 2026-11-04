@@ -91,6 +91,8 @@ pub(crate) fn configured_library_path(value: &Path) -> Result<Option<PathBuf>, S
 }
 
 pub struct SourceFile {
+    /// False for presumed filenames introduced by C #line directives.
+    pub physical: bool,
     pub path: PathBuf,
     pub text: String,
     offset: usize,
@@ -535,6 +537,7 @@ impl SourceSet {
             .map(|p| p.inputs.clone())
             .unwrap_or_default();
         self.files.push(SourceFile {
+            physical: true,
             path: path.clone(),
             text,
             offset,
@@ -544,8 +547,12 @@ impl SourceSet {
             if self.files.iter().any(|file| file.path == input) {
                 continue;
             }
-            self.native_headers.push(input.clone());
+            let physical = input.is_file();
+            if physical {
+                self.native_headers.push(input.clone());
+            }
             self.files.push(SourceFile {
+                physical,
                 path: input,
                 text: content.clone(),
                 offset: self.next_offset,

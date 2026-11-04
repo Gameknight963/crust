@@ -344,6 +344,7 @@ pub(super) fn request(
     document_changes: bool,
     workspace_roots: &[PathBuf],
     database: &database::Database,
+    native_hover: bool,
 ) -> Result<Value, RequestError> {
     if method == "textDocument/signatureHelp" {
         return super::signature::request(params, documents, workspace_roots, database);
@@ -429,7 +430,11 @@ pub(super) fn request(
         return Ok(Value::Null);
     };
     if method == "textDocument/hover" {
-        return Ok(context.hover(offset));
+        let mut hover = context.hover(offset);
+        if native_hover {
+            super::hover::classified(&context, &mut hover);
+        }
+        return Ok(hover);
     }
     if method == "textDocument/prepareRename" {
         return Ok(context.analysis.rename_target(context.file, offset)

@@ -80,6 +80,9 @@ fn file_open_errors_reject_unterminated_paths_and_leave_no_live_handles() {
             unsafe { test_file_fail_next(0); }
             Result<File,FileError> failed=File::try_open(&path,FileMode::Read);
             print((int)failed.error_value());
+            unsafe { test_file_fail_next(0); }
+            Result<File,FileError> literal=File::try_open("literal-path",FileMode::Read);
+            print((int)literal.error_value());
             Result<File,FileError> mode=File::try_open(&path,(FileMode)255);
             print((int)mode.error_value());
             char empty[1]={0};
@@ -90,7 +93,7 @@ fn file_open_errors_reject_unterminated_paths_and_leave_no_live_handles() {
         }
     "#
         .replace("PATH_DECLARATION", &declaration),
-        "7\n0\n0\n0\n0\n",
+        "7\n0\n0\n0\n0\n0\n",
     );
 }
 

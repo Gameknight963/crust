@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 mod completion;
 mod database;
 mod directives;
+mod hover;
 mod rename;
 mod semantic;
 mod semantic_tokens;
@@ -75,6 +76,9 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
     let visual_studio = params["initializationOptions"]["visualStudioClassifications"]
         .as_bool()
         .unwrap_or(false);
+    let native_hover = params["initializationOptions"]["visualStudioNativeHover"]
+        .as_bool()
+        .unwrap_or(false);
     let semantic_refresh = params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"]
         .as_bool()
         .unwrap_or(false);
@@ -90,7 +94,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
         json!({
             "capabilities": {
                 "positionEncoding": "utf-16",
-                "hoverProvider": true,
+                "hoverProvider": !native_hover,
                 "definitionProvider": true,
                 "referencesProvider": true,
                 "documentHighlightProvider": true,
@@ -214,6 +218,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         document_changes,
                         &workspace_roots,
                         &database,
+                        native_hover,
                     ) {
                         Ok(mut result) => {
                             if request.method == "textDocument/hover" && !markdown_hover {

@@ -247,7 +247,6 @@ fn rejects_struct_copies_partial_moves_and_access_after_whole_value_moves() {
             "Box<int> value = first.value;",
             "owning field cannot be copied",
         ),
-        ("Box<int> value = move(first.value);", "individual fields"),
         (
             "struct Item second = move(first); print(first.id);",
             "has been moved",

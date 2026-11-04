@@ -223,6 +223,7 @@ fn generate_inner(checked: &CheckedProgram, sources: &[Source], native: bool) ->
         emitter.scopes[0].insert(
             variable.name.clone(),
             Local {
+                field_live: Vec::new(),
                 mutable: !variable.readonly,
                 name: variable.link_name.clone(),
                 ty: variable.ty,
@@ -264,6 +265,8 @@ fn generate_inner(checked: &CheckedProgram, sources: &[Source], native: bool) ->
             scope.insert(
                 parameter.name.clone(),
                 Local {
+                    field_live: emitter
+                        .field_flags(parameter.ty, &format!("crust_live_arg_{index}")),
                     mutable: true,
                     name: format!("crust_arg_{index}"),
                     ty: parameter.ty,
@@ -420,6 +423,7 @@ impl CapturedPlace {
 
 #[derive(Clone)]
 struct Local {
+    field_live: Vec<(Vec<String>, String, Type)>,
     mutable: bool,
     name: String,
     ty: Type,
@@ -691,11 +695,107 @@ impl Emitter<'_> {
         }
     }
 
+    fn field_flags(&self, ty: Type, stem: &str) -> Vec<(Vec<String>, String, Type)> {
+        fn leaves(
+            types: &Types,
+            ty: Type,
+            path: Vec<String>,
+            output: &mut Vec<(Vec<String>, Type)>,
+        ) {
+            if !types.owns(ty) {
+                return;
+            }
+            if let Type::Struct(id) = ty
+                && !types.structs[id].has_destructor
+                && !types.structs[id].tagged
+                && !types.structs[id].is_union
+            {
+                for field in &types.structs[id].fields {
+                    let mut path = path.clone();
+                    path.push(field.name.clone());
+                    leaves(types, field.ty, path, output);
+                }
+            } else {
+                output.push((path, ty));
+            }
+        }
+        let mut paths = Vec::new();
+        leaves(self.types, ty, Vec::new(), &mut paths);
+        return paths
+            .into_iter()
+            .filter(|(path, _)| !path.is_empty())
+            .enumerate()
+            .map(|(index, (path, ty))| (path, format!("{stem}_field_{index}"), ty))
+            .collect();
+    }
+
+    fn local_projection(&self, expression: &Expression) -> Option<(Local, Vec<String>)> {
+        match &expression.kind {
+            ExpressionKind::Variable { name, .. } => {
+                let local = self.local(name);
+                if local.ty.is_borrow() {
+                    return None;
+                }
+                return Some((local, Vec::new()));
+            }
+            ExpressionKind::Field { base, name, .. } => {
+                let (local, mut path) = self.local_projection(base)?;
+                path.push(name.clone());
+                return Some((local, path));
+            }
+            _ => return None,
+        }
+    }
+
+    fn set_field_flags(&mut self, local: &Local, path: &[String], live: bool) {
+        for (field, flag, _) in &local.field_live {
+            if field.starts_with(path) {
+                self.line(&format!("{flag} = {};", if live { 1 } else { 0 }));
+            }
+        }
+    }
+
+    fn drop_fields(&mut self, local: &Local, path: &[String]) {
+        for (field, flag, ty) in local.field_live.iter().rev() {
+            if !field.starts_with(path) {
+                continue;
+            }
+            let mut place = local.name.clone();
+            let mut owner = local.ty;
+            for name in field {
+                let Type::Struct(id) = owner else {
+                    unreachable!("owning field projection");
+                };
+                place = if self.types.structs[id].native_name.is_some() {
+                    format!("*crust_native_field_mut_{id}_{name}(&({place}))")
+                } else {
+                    format!("({place}).crust_field_{name}")
+                };
+                owner = self.types.structs[id]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .unwrap()
+                    .ty;
+            }
+            self.line(&format!("if ({flag}) {{"));
+            self.indent += 1;
+            self.drop_value(*ty, &place);
+            self.line(&format!("{flag} = 0;"));
+            self.indent -= 1;
+            self.line("}");
+        }
+    }
+
     fn drop_local(&mut self, local: &Local) {
         if let Some(live) = &local.live {
             self.line(&format!("if ({live}) {{"));
             self.indent += 1;
-            self.drop_value(local.ty, &local.name);
+            if local.field_live.is_empty() {
+                self.drop_value(local.ty, &local.name);
+            } else {
+                self.drop_fields(local, &[]);
+            }
             self.line(&format!("{live} = 0;"));
             self.indent -= 1;
             self.line("}");
@@ -716,6 +816,9 @@ impl Emitter<'_> {
             self.temporary_slots();
         }
         for name in &scope.declaration_order {
+            for (_, flag, _) in &scope.variables[name].field_live {
+                self.line(&format!("int {flag} = 1;"));
+            }
             if let Some(live) = &scope.variables[name].live {
                 self.line(&format!("int {live} = 1;"));
             }
@@ -760,9 +863,14 @@ impl Emitter<'_> {
                 } else {
                     None
                 };
+                let field_live = self.field_flags(*ty, &local);
+                for (_, flag, _) in &field_live {
+                    self.line(&format!("int {flag} = 1;"));
+                }
                 self.scopes.last_mut().unwrap().insert(
                     name.clone(),
                     Local {
+                        field_live,
                         mutable: true,
                         name: local,
                         ty: *ty,
@@ -778,6 +886,7 @@ impl Emitter<'_> {
                 self.scopes.last_mut().unwrap().insert(
                     name.clone(),
                     Local {
+                        field_live: Vec::new(),
                         mutable,
                         name: storage,
                         ty: *ty,
@@ -798,6 +907,9 @@ impl Emitter<'_> {
                 }
                 self.drop_local(&local);
                 self.line(&format!("{} = {value};", local.name));
+                for (_, flag, _) in &local.field_live {
+                    self.line(&format!("{flag} = 1;"));
+                }
                 if let Some(live) = local.live {
                     self.line(&format!("{live} = 1;"));
                 }
@@ -811,8 +923,20 @@ impl Emitter<'_> {
                     return;
                 }
                 let place = self.place(target);
-                self.drop_value(self.place_type(target), &place);
+                let projection = self.local_projection(target);
+                if let Some((local, path)) = &projection {
+                    if !local.field_live.is_empty() {
+                        self.drop_fields(local, path);
+                    } else {
+                        self.drop_value(self.place_type(target), &place);
+                    }
+                } else {
+                    self.drop_value(self.place_type(target), &place);
+                }
                 self.line(&format!("{place} = {value};"));
+                if let Some((local, path)) = projection {
+                    self.set_field_flags(&local, &path, true);
+                }
             }
             StatementKind::CompoundAssign {
                 target,
@@ -1398,6 +1522,19 @@ impl Emitter<'_> {
             ExpressionKind::EnumValue { .. } => unreachable!("enum constants have checked values"),
             ExpressionKind::StringLiteral { bytes, .. } => {
                 let ty = self.expression_type(expression);
+                if let Type::Borrow {
+                    pointee: Pointee::Slice(id),
+                    ..
+                } = ty
+                {
+                    let literal = bytes
+                        .iter()
+                        .map(|byte| format!("\\{byte:03o}"))
+                        .collect::<String>();
+                    return Some(self.temporary(ty, &format!(
+                        "({}){{ .crust_elements = ({} const *)\"{}\", .crust_field_length = {} }}",
+                        c_type(ty), c_type(self.types.arrays[id].element), literal, bytes.len() + usize::from(self.types.arrays[id].element == Type::Integer(IntType::Char)))));
+                }
                 if matches!(ty, Type::Pointer(_)) {
                     let literal = format!(
                         "\"{}\"",
@@ -1601,6 +1738,11 @@ impl Emitter<'_> {
                     let ExpressionKind::Variable { name: owner, .. } = &arguments[0].kind else {
                         let place = self.place(&arguments[0]);
                         let value = self.temporary(self.expression_type(expression), &place);
+                        if self.types.owns(self.expression_type(expression))
+                            && let Some((local, path)) = self.local_projection(&arguments[0])
+                        {
+                            self.set_field_flags(&local, &path, false);
+                        }
                         if let ExpressionKind::Field { base, .. } = &arguments[0].kind
                             && let ExpressionKind::Variable { name, .. } = &base.kind
                             && let Type::Struct(id) = self.local(name).ty

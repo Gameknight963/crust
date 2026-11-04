@@ -460,6 +460,7 @@ int main() {
 - String literals contain UTF-8 bytes followed by a terminating zero
 - Their type is `const char[N]`, including the terminating byte. Literal storage has static lifetime
 - Literals convert implicitly to `const char*` or `const void*` in pointer contexts, including C calls and variadic arguments
+- Literals also convert to read-only `char` or `uint8_t` slices. Character slices include the terminating zero, matching character-array borrows. UTF-8 byte slices exclude the final zero and retain embedded zeroes
 - A `char` or `uint8_t` array destination receives a writable copy and may provide extra capacity, which is filled with zeros
 - String literals support the same byte escapes as character literals
 - Adjacent literals concatenate, including across whitespace and comments
@@ -629,12 +630,14 @@ int main() {
 - Private fields protect the invariants used by safe wrappers around raw pointers
 - Structs with copyable fields are copyable unless they define a destructor
 - Owning fields, mutable reference fields, and custom destructors make the enclosing struct move-only
-- Ownership transfers use whole-struct moves
+- Ownership transfers use whole-struct moves or `move(value.field)` from an owned local or by-value parameter
+- Moving a field leaves its siblings available. Reading, borrowing, or moving the parent requires all moved fields to be restored through assignment
+- Field moves cannot cross a struct with a custom destructor or a union. Moving through a borrow and moving individual array elements remain restricted
 - Owning fields are destroyed in reverse declaration order
 
 Field access and borrowed method receivers use a named variable, field, or
-pointee, including a returned borrow. Empty structs, partial initialization, and
-partial field moves need further language support.
+pointee, including a returned borrow. Empty structs and partial initialization
+need further language support.
 
 ### Opaque structs
 
@@ -713,7 +716,7 @@ int main() {
 - Multiple shared borrows may coexist
 - Exclusive borrows prevent conflicting reads, writes, moves, and borrows
 - Borrow permissions apply through fields and owning pointees
-- Argument borrows remain active through the call, including later argument evaluation
+- Stable mutable whole-object arguments reserve their addresses before later argument evaluation and activate their exclusive borrows at the call. Other argument borrows become active immediately
 - Separate struct fields can be borrowed independently
 - Borrowing a field prevents conflicting access to that field or any containing value
 - Borrow parameters can be forwarded or reborrowed for nested calls
@@ -893,9 +896,10 @@ struct Counter {
 - Field and method names within a struct must be distinct
 - `this` is reserved for the receiver
 
-Receiver borrows follow the call rules above. An exclusive call such as
-`counter.set(counter.get())` conflicts with the shared access in its argument.
-Read the argument into a local before calling `set`.
+Receiver borrows follow the call rules above. Calls such as
+`counter.set(counter.get())` can compute their value arguments before the
+receiver's exclusive borrow activates. Passing two overlapping references to
+the same call remains an error.
 
 ### Value receivers
 

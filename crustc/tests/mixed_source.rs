@@ -583,6 +583,21 @@ static inline GoInt64 cgo_answer(GoInt64 value) { return value + CGO_OFFSET; }
         "42\n"
     );
 
+    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_crustc"))
+        .args(["run", entry.to_str().unwrap()])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&cli.stdout).replace('\r', ""),
+        "42\n"
+    );
+
     std::fs::write(
         root.join("bad.h"),
         "#line 37 \"virtual-generated-error.h\"\nmissing_c_type cgo_bad(void);\n",

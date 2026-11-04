@@ -29,6 +29,12 @@ elements. Owning values transfer through `move`, consuming calls, and returned
 values. A moved binding becomes available again after reinitialization.
 `move` on a copyable value leaves its source available.
 
+An owned local or by-value parameter can transfer a field with `move(value.field)`.
+The remaining fields retain their own availability and cleanup. Assignment can
+restore a moved field, and using the whole value requires every field to be
+available. Field moves cannot cross a custom destructor or union, or extract
+storage reached through a borrow.
+
 Control-flow checking requires a value to be available on every path reaching
 its use. Replacing an owner evaluates the replacement first, destroys the old
 value if it remains live, and installs the new value.
@@ -56,7 +62,11 @@ temporarily suspends conflicting access through the parent. An inner shared
 reborrow permits shared reads and suspends mutation. The parent regains access
 when the inner loan ends.
 
-Call-argument loans cover the call and its remaining argument evaluation.
+Stable mutable whole-object arguments reserve their addresses during argument
+evaluation and activate their exclusive loans when the call starts. Later
+arguments can read that object or temporarily borrow it to compute a value.
+Moving it or passing overlapping references to the same call remains an error.
+Projected and returned-reference arguments retain their normal immediate loans.
 Returned-reference temporaries used in an expression remain live until that
 expression statement or initializer ends. Condition temporaries end before
 entering the chosen control-flow body. The left operand's temporary loans end

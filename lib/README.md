@@ -60,6 +60,9 @@ preserves the buffer on allocation failure. Use `view()` for shared access and
 `try_push(byte)` grows fallibly and returns `Result<Unit, AllocError>`.
 
 `String::try_copy(bytes)` validates and copies counted UTF-8 bytes.
+It accepts literals directly, such as `String::try_copy("hello")`. Literal-to-byte-slice
+conversion excludes the terminating zero and preserves embedded zeroes. Character
+slices retain the final zero for bounded C-string APIs such as `String::try_from_c_string("hello")`.
 `String::try_from_bytes(move(buffer))` validates an owned buffer and returns it
 on failure. `try_from_c_string(text)` copies through the first zero in a bounded
 `const char[]&`, requiring a terminator within the slice.
