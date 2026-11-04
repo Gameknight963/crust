@@ -328,9 +328,9 @@ pub(super) fn request(
     if method == "textDocument/hover"
         && let Some(document) = documents.get(&params.text_document.uri)
         && let Some(cursor) = offset(&document.text, &params.position)
-        && let Some(hover) = super::directives::hover(&document.text, cursor)
+        && super::directives::contains(&document.text, cursor)
     {
-        return Ok(hover);
+        return Ok(Value::Null);
     }
     let Some(context) = Context::load(&params.text_document.uri, documents, workspace_roots) else {
         if new_name.is_some() {

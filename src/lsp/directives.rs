@@ -206,34 +206,6 @@ fn headers(text: &str, cursor: usize, directive: &Range<usize>, uri: &str) -> Op
     return Some(json!(items.into_values().collect::<Vec<_>>()));
 }
 
-pub(super) fn hover(text: &str, cursor: usize) -> Option<Value> {
-    let directive = line(text, cursor)?;
-    if cursor == directive.start {
-        return Some(Value::Null);
-    }
-    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let mut start = cursor;
-    let mut end = cursor;
-    while start > directive.start && word(text.as_bytes()[start - 1]) {
-        start -= 1;
-    }
-    while end < directive.end && word(text.as_bytes()[end]) {
-        end += 1;
-    }
-    let name = &text[start..end];
-    let before = text[directive.start + 1..start].trim();
-    if !(before.is_empty()
-        || before == "pragma" && matches!(name, "crust" | "begin_c" | "end_c")
-        || before == "pragma crust" && matches!(name, "begin_c" | "end_c"))
-    {
-        return Some(Value::Null);
-    }
-    let description = description(name);
-    if description.is_empty() {
-        return Some(Value::Null);
-    }
-    return Some(
-        json!({"contents": {"kind": "markdown", "value": description},
-        "range": {"start": position(text, start), "end": position(text, end)}}),
-    );
+pub(super) fn contains(text: &str, cursor: usize) -> bool {
+    return line(text, cursor).is_some();
 }

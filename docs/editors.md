@@ -94,9 +94,8 @@ classifies independently resolvable bindings and retains previous classification
 for unchanged tokens. Changed names are classified again when analysis succeeds.
 Comments and strings use the current text and do not retain old classifications.
 
-Preprocessor directives have completion and hover help even when program analysis
-fails. Native region markers complete to `#pragma crust begin_c` and
-`#pragma crust end_c`. Include completion lists local, project, and system headers.
+Preprocessor directives have completion even when program analysis fails. Native
+region markers complete to `#pragma crust begin_c` and `#pragma crust end_c`. Include completion lists local, project, and system headers.
 
 ## Visual Studio
 

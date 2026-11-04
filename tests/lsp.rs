@@ -1407,7 +1407,7 @@ fn complete(server: &mut Server, uri: &str, position: Value) -> Vec<Value> {
 }
 
 #[test]
-fn directive_completion_and_hover_work_without_a_checked_program_or_c_compiler() {
+fn directives_offer_completion_without_language_construct_hovers() {
     let uri = "untitled:directives.cr";
     let mut server = Server::start();
     for (version, (marked, label, insertion)) in [
@@ -1448,12 +1448,8 @@ fn directive_completion_and_hover_work_without_a_checked_program_or_c_compiler()
             "textDocument/hover",
             json!({"textDocument": {"uri": uri}, "position": point(source, word)}),
         );
-        assert!(
-            response.result.unwrap()["contents"]["value"]
-                .as_str()
-                .unwrap()
-                .contains("#pragma crust")
-        );
+        assert!(response.error.is_none());
+        assert!(response.result.unwrap_or(Value::Null).is_null());
         assert!(complete(&mut server, uri, json!({"line": 0, "character": 0})).is_empty());
         let response = server.request(
             "textDocument/hover",
