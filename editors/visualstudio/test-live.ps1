@@ -19,7 +19,7 @@ $crustClassifications = Join-Path $crustRoot 'classifications.json'
 $crustPreviousClassifications = $env:CRUST_LIVE_CLASSIFICATIONS
 $crustEditor = Join-Path $crustVs 'Common7/IDE/CommonExtensions/Microsoft/Editor'
 $crustProbe = Join-Path $crustRoot 'Crust.EditorProbe.dll'
-$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Language') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
+$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Language', 'Language.Intellisense') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
 $crustImmutable = Join-Path $crustVs 'Common7/IDE/PublicAssemblies/System.Collections.Immutable.dll'
 if (-not (Test-Path -LiteralPath $crustImmutable)) { throw 'Visual Studio immutable collections assembly was not found.' }
 $crustReferences += '/r:' + $crustImmutable
@@ -138,15 +138,50 @@ try {
     if ($crustTreeItems.Split("`n") -notcontains 'src/main.cr' -or $crustTreeItems.Split("`n") -notcontains 'crust.toml') { throw "Solution Explorer omitted default project files: $crustTreeItems" }
     Write-Output 'PASS: Solution Explorer includes source and manifest files through default globs'
     Write-Output 'PASS: real template creation, project loading, and SDK discovery'
-    Set-Content -LiteralPath (Join-Path $crustDirectory 'support.cr') -Value 'int support() { return 0; }'
+    Set-Content -LiteralPath (Join-Path $crustDirectory 'src/support.cr') -Value 'int support() { return 0; }'
     $crustKeywordText = "import `"support.cr`";`nimport <std/box.cr>;`nint main() { Box<int> value=Box<int>::create(support()); unsafe { return value.get(); } }`n"
+    $crustInitialColorTimer = [Diagnostics.Stopwatch]::StartNew()
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustKeywordText)
     Wait-CrustClassification $crustKeywordText @{ import = 'keyword'; unsafe = 'keyword'; return = 'keyword - control' } @('import', 'unsafe')
+    if ($crustInitialColorTimer.ElapsedMilliseconds -gt 5000) { throw "Initial highlighting took $($crustInitialColorTimer.ElapsedMilliseconds) ms." }
+    Write-Output "PASS: first-file highlighting in $($crustInitialColorTimer.ElapsedMilliseconds) ms"
     Write-Output 'PASS: import and unsafe use ordinary keyword classification, while return keeps control-flow classification'
+    Set-Content -LiteralPath (Join-Path $crustDirectory 'src/support.cr') -Value 'int support(int value) { return value; }'
+    $crustFeatureText = "// crust editor feature probe`nimport `"support.cr`";`nint main() { return support(42); }`n"
+    [CrustLiveIde]::Edit($crustDte, $crustSource, $crustFeatureText)
+    Wait-CrustClassification $crustFeatureText @{ support = 'method name'; return = 'keyword - control' }
+    $crustFeatureDeadline = [DateTime]::UtcNow.AddSeconds(20)
+    while (-not (Test-Path -LiteralPath ($crustClassifications + '.features')) -and [DateTime]::UtcNow -lt $crustFeatureDeadline) { Start-Sleep -Milliseconds 100 }
+    if (Test-Path -LiteralPath ($crustClassifications + '.features-error')) { throw (Get-Content ($crustClassifications + '.features-error') -Raw) }
+    $crustFeatures = Get-Content -LiteralPath ($crustClassifications + '.features') -Raw | ConvertFrom-Json
+    if ($crustFeatures.hover -notmatch 'support' -or $crustFeatures.hover -notmatch 'int') { throw "Quick Info missing: $($crustFeatures | ConvertTo-Json -Compress)" }
+    [CrustLiveIde]::ParameterInfo($crustDte, $crustSource, 3, 29)
+    $crustSignatureDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $crustLspOutput = Get-Content -LiteralPath ($crustClassifications + '.lsp-output') -Raw
+    } while ($crustLspOutput -notmatch '"label":"int support' -and [DateTime]::UtcNow -lt $crustSignatureDeadline)
+    if ($crustLspOutput -notmatch '"label":"int support') { throw 'Visual Studio Parameter Info did not obtain the function signature.' }
+    [CrustLiveIde]::Definition($crustDte, $crustSource, 3, 23)
+    $crustNavigationDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([CrustLiveIde]::ActiveFile($crustDte) -notlike '*support.cr' -and [DateTime]::UtcNow -lt $crustNavigationDeadline) { Start-Sleep -Milliseconds 100 }
+    if ([CrustLiveIde]::ActiveFile($crustDte) -notlike '*support.cr') { throw 'F12 did not navigate to the imported definition.' }
+    Write-Output "PASS: native Quick Info ($($crustFeatures.hoverMilliseconds) ms), Signature Help, and F12 across imports"
+    [CrustLiveIde]::References($crustDte, $crustSource, 3, 23)
+    $crustReferencesDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $crustLspInput = Get-Content -LiteralPath ($crustClassifications + '.lsp-input') -Raw
+    } while ($crustLspInput -notmatch '"method":"textDocument/references"' -and [DateTime]::UtcNow -lt $crustReferencesDeadline)
+    if ($crustLspInput -notmatch '"method":"textDocument/references"') { throw 'Find All References did not reach the language server.' }
+    Write-Output 'PASS: native Find All References command'
     $crustSemanticText = "struct Counter { int value; };`nint main() {`n    Counter count = { .value = 42 };`n    print(count.value);`n    return 0;`n}`n"
+    $crustSemanticTimer = [Diagnostics.Stopwatch]::StartNew()
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustSemanticText)
     $crustExpected = @{ Counter = 'struct name'; value = 'field name'; count = 'local name'; int = 'keyword'; main = 'method name' }
     Wait-CrustClassification $crustSemanticText $crustExpected
+    if ($crustSemanticTimer.ElapsedMilliseconds -gt 2000) { throw "Semantic highlighting after editing took $($crustSemanticTimer.ElapsedMilliseconds) ms." }
+    Write-Output "PASS: semantic highlighting after editing in $($crustSemanticTimer.ElapsedMilliseconds) ms"
     $crustIncomplete = $crustSemanticText.Replace('return 0;', 'return ;')
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustIncomplete)
     Wait-CrustClassification $crustIncomplete $crustExpected

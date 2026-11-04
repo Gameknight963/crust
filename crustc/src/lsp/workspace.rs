@@ -64,6 +64,7 @@ pub(super) fn symbols(
     params: Value,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    _database: &database::Database,
 ) -> Result<Value, RequestError> {
     let params: SymbolParams = serde_json::from_value(params)?;
     let query = params.query.to_ascii_lowercase();
@@ -77,7 +78,7 @@ pub(super) fn symbols(
             .unwrap_or_default();
         if let Ok(analysis) = graph.analyze_with_kind(kind) {
             contexts.push(Context {
-                analysis,
+                analysis: std::rc::Rc::new(analysis),
                 file: 0,
                 uri: path_uri(&graph.files()[0].path),
                 uris: sources.paths.clone(),
@@ -90,7 +91,7 @@ pub(super) fn symbols(
             && let Ok(analysis) = crate::analyze(&document.text)
         {
             contexts.push(Context {
-                analysis,
+                analysis: std::rc::Rc::new(analysis),
                 file: 0,
                 uri: uri.clone(),
                 uris: HashMap::new(),

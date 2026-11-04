@@ -5,6 +5,7 @@ pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> Result<Value, RequestError> {
     let params: PositionParams = serde_json::from_value(params)?;
     let Some(document) = documents.get(&params.text_document.uri) else {
@@ -13,9 +14,13 @@ pub(super) fn request(
     let Some(offset) = offset(&document.text, &params.position) else {
         return Ok(Value::Null);
     };
-    let Some(context) =
-        super::completion::context_at(&params.text_document.uri, offset, documents, roots)
-    else {
+    let Some(context) = super::completion::context_at(
+        &params.text_document.uri,
+        offset,
+        documents,
+        roots,
+        database,
+    ) else {
         return Ok(Value::Null);
     };
     let Some(help) = context.analysis.signature_help_at(context.file, offset) else {

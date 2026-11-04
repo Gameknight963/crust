@@ -1,6 +1,23 @@
 [$RootKey$\TextMate\Repositories]
 "crust"="$PackageFolder$\Grammars"
 
+[$RootKey$\Services\{bc1b794f-3e83-4939-a4ef-7fda920cb8ee}]
+@="{f9801e0c-892b-4886-8045-29fe53df7965}"
+"Name"="Crust Language Info"
+
+[$RootKey$\Languages\Language Services\crust]
+@="{bc1b794f-3e83-4939-a4ef-7fda920cb8ee}"
+"Package"="{f9801e0c-892b-4886-8045-29fe53df7965}"
+"LangResID"=dword:00000000
+"ShowBraceCompletion"=dword:00000001
+"ShowSmartIndent"=dword:00000001
+"EnableLineNumbersOption"=dword:00000001
+"RequestStockColors"=dword:00000001
+"ShowCompletion"=dword:00000001
+
+[$RootKey$\Languages\File Extensions\.cr]
+@="{bc1b794f-3e83-4939-a4ef-7fda920cb8ee}"
+
 [$RootKey$\TextMate\LanguageConfiguration\GrammarMapping]
 "source.crust"="$PackageFolder$\language-configuration.json"
 

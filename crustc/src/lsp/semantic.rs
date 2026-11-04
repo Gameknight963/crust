@@ -66,7 +66,7 @@ pub(super) struct Position {
 }
 
 pub(super) struct Context {
-    pub(super) analysis: Analysis,
+    pub(super) analysis: std::rc::Rc<Analysis>,
     pub(super) file: usize,
     pub(super) uris: HashMap<PathBuf, String>,
     pub(super) uri: String,
@@ -77,16 +77,25 @@ impl Context {
         uri: &str,
         documents: &HashMap<String, Document>,
         roots: &[PathBuf],
+        database: &database::Database,
     ) -> Option<Self> {
-        return Self::load_inner(uri, documents, roots, false);
+        return Self::load_inner(uri, documents, roots, false, database);
     }
 
     pub(super) fn load_completion(
         uri: &str,
         documents: &HashMap<String, Document>,
         roots: &[PathBuf],
+        database: &database::Database,
     ) -> Option<Self> {
-        return Self::load_inner(uri, documents, roots, true);
+        if let Some(context) = Self::load_inner(uri, documents, roots, true, database) {
+            return Some(context);
+        }
+        let text = &documents.get(uri)?.text;
+        let repaired = close_delimiters(text)?;
+        let mut documents = documents.clone();
+        documents.get_mut(uri)?.text = repaired;
+        return Self::load_inner(uri, &documents, roots, true, database);
     }
 
     fn load_inner(
@@ -94,42 +103,34 @@ impl Context {
         documents: &HashMap<String, Document>,
         roots: &[PathBuf],
         completion: bool,
+        database: &database::Database,
     ) -> Option<Self> {
         let document = documents.get(uri)?;
         let Some(path) = uri_path(uri) else {
             return Some(Self {
-                analysis: if completion {
-                    crate::analyze_completion(&document.text)
-                } else {
-                    crate::analyze(&document.text)
-                }
-                .ok()?,
+                analysis: std::rc::Rc::new(
+                    if completion {
+                        crate::analyze_completion(&document.text)
+                    } else {
+                        crate::analyze(&document.text)
+                    }
+                    .ok()?,
+                ),
                 file: 0,
                 uris: HashMap::new(),
                 uri: uri.to_owned(),
             });
         };
-        let sources = load_sources(documents, roots);
-        for graph in sources.graphs {
-            let kind = sources
-                .targets
-                .get(&graph.files()[0].path)
-                .copied()
-                .unwrap_or_default();
-            let analyze = || {
-                if completion {
-                    graph.analyze_completion_with_kind(kind)
-                } else {
-                    graph.analyze_with_kind(kind)
-                }
-            };
+        let snapshot = database.snapshot(documents, roots);
+        let sources = &snapshot.sources;
+        for (index, graph) in sources.graphs.iter().enumerate() {
             if let Some(file) = graph.files().iter().position(|file| file.path == path)
-                && let Ok(analysis) = analyze()
+                && let Ok(analysis) = snapshot.analyze(index, completion)
             {
                 return Some(Self {
                     analysis,
                     file,
-                    uris: sources.paths,
+                    uris: sources.paths.clone(),
                     uri: uri.to_owned(),
                 });
             }
@@ -287,29 +288,90 @@ impl Context {
     }
 }
 
+// Append missing delimiters only to the editor snapshot. Original offsets and
+// source text remain intact, and rename continues to require strict analysis.
+fn close_delimiters(text: &str) -> Option<String> {
+    use crate::lexer::Token;
+    let tokens = crate::lexer::discovery_tokens(text);
+    let mut stack = Vec::new();
+    for token in &tokens {
+        match token.kind {
+            Token::LeftBrace => stack.push('}'),
+            Token::LeftParen => stack.push(')'),
+            Token::LeftBracket => stack.push(']'),
+            Token::RightBrace | Token::RightParen | Token::RightBracket => {
+                let expected = match token.kind {
+                    Token::RightBrace => '}',
+                    Token::RightParen => ')',
+                    _ => ']',
+                };
+                if stack.pop() != Some(expected) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if stack.is_empty() {
+        return None;
+    }
+    let mut repaired = text.to_owned();
+    repaired.push('\n');
+    let mut terminated = tokens
+        .iter()
+        .rev()
+        .find(|token| token.kind != Token::EndOfFile)
+        .is_some_and(|token| {
+            matches!(
+                token.kind,
+                Token::Semicolon | Token::RightBrace | Token::LeftBrace
+            )
+        });
+    while let Some(closing) = stack.pop() {
+        if closing == '}' && !terminated {
+            repaired.push(';');
+        }
+        repaired.push(closing);
+        terminated = closing == '}';
+    }
+    return Some(repaired);
+}
+
 pub(super) fn request(
     method: &str,
     params: Value,
     documents: &HashMap<String, Document>,
     document_changes: bool,
     workspace_roots: &[PathBuf],
+    database: &database::Database,
 ) -> Result<Value, RequestError> {
     if method == "textDocument/signatureHelp" {
-        return super::signature::request(params, documents, workspace_roots);
+        return super::signature::request(params, documents, workspace_roots, database);
     }
     if method == "workspace/symbol" {
-        return super::workspace::symbols(params, documents, workspace_roots);
+        return super::workspace::symbols(params, documents, workspace_roots, database);
     }
     if method == "textDocument/completion" {
-        return super::completion::request(params, documents, workspace_roots);
+        return super::completion::request(params, documents, workspace_roots, database);
     }
     if method == "textDocument/documentSymbol" {
         let params: DocumentParams = serde_json::from_value(params)?;
-        return Ok(
-            Context::load(&params.text_document.uri, documents, workspace_roots)
-                .map(|context| context.document_symbols())
-                .unwrap_or(Value::Null),
-        );
+        return Ok(Context::load(
+            &params.text_document.uri,
+            documents,
+            workspace_roots,
+            database,
+        )
+        .or_else(|| {
+            Context::load_completion(
+                &params.text_document.uri,
+                documents,
+                workspace_roots,
+                database,
+            )
+        })
+        .map(|context| context.document_symbols())
+        .unwrap_or(Value::Null));
     }
     let (params, include_declarations, new_name) = if method == "textDocument/references" {
         let params: ReferenceParams = serde_json::from_value(params)?;
@@ -332,7 +394,30 @@ pub(super) fn request(
     {
         return Ok(Value::Null);
     }
-    let Some(context) = Context::load(&params.text_document.uri, documents, workspace_roots) else {
+    let context = Context::load(
+        &params.text_document.uri,
+        documents,
+        workspace_roots,
+        database,
+    )
+    .or_else(|| {
+        if matches!(
+            method,
+            "textDocument/hover"
+                | "textDocument/definition"
+                | "textDocument/references"
+                | "textDocument/documentHighlight"
+        ) {
+            return Context::load_completion(
+                &params.text_document.uri,
+                documents,
+                workspace_roots,
+                database,
+            );
+        }
+        return None;
+    });
+    let Some(context) = context else {
         if new_name.is_some() {
             return Err(RequestError::failed(
                 "rename requires a successfully checked program",
@@ -350,6 +435,17 @@ pub(super) fn request(
         return Ok(context.analysis.rename_target(context.file, offset)
             .map(|(symbol, location)| json!({ "range": context.range(location), "placeholder": symbol.name }))
             .unwrap_or(Value::Null));
+    }
+    if method == "textDocument/documentHighlight" {
+        return Ok(Value::Array(
+            context
+                .analysis
+                .references_at(context.file, offset, true)
+                .into_iter()
+                .filter(|location| location.file == context.file)
+                .map(|location| json!({"range": context.range(location), "kind": 1}))
+                .collect(),
+        ));
     }
     if let Some(name) = new_name {
         return context.rename(offset, &name, documents, document_changes, workspace_roots);
@@ -371,6 +467,19 @@ pub(super) fn request(
             .map(|symbol| context.location(symbol.location))
             .collect(),
     ));
+}
+
+pub(super) fn plain_hover(value: &mut Value) {
+    if let Some(contents) = value.get_mut("contents")
+        && let Some(text) = contents["value"].as_str()
+    {
+        let text = text
+            .lines()
+            .filter(|line| !line.starts_with("```"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        *contents = json!({"kind":"plaintext", "value":text});
+    }
 }
 
 fn code_block(text: &str) -> String {

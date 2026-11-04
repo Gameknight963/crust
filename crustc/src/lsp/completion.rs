@@ -84,6 +84,7 @@ fn context(
     site: &Site,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> Option<Context> {
     // Repair just the word being completed, keeping byte offsets stable when
     // it has enough space. This snapshot is used only for editor analysis.
@@ -99,7 +100,7 @@ fn context(
         document
             .text
             .replace_range(site.start..site.end, &format!("{replacement}{padding}"));
-        if let Some(context) = Context::load_completion(uri, &documents, roots) {
+        if let Some(context) = Context::load_completion(uri, &documents, roots, database) {
             return Some(context);
         }
     }
@@ -111,12 +112,13 @@ pub(super) fn context_at(
     cursor: usize,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> Option<Context> {
-    if let Some(context) = Context::load_completion(uri, documents, roots) {
+    if let Some(context) = Context::load_completion(uri, documents, roots, database) {
         return Some(context);
     }
     let site = site(&documents.get(uri)?.text, cursor)?;
-    return context(uri, &site, documents, roots);
+    return context(uri, &site, documents, roots, database);
 }
 
 fn kind(kind: SymbolKind) -> u8 {
@@ -137,17 +139,21 @@ pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> Result<Value, super::semantic::RequestError> {
     let params: CompletionParams = serde_json::from_value(params)?;
     // Use Roslyn's CompletionList response shape. Our list is prefix-filtered,
     // so ask clients to refresh it as the prefix changes.
-    return Ok(json!({"isIncomplete": true, "items": complete(params, documents, roots)}));
+    return Ok(
+        json!({"isIncomplete": true, "items": complete(params, documents, roots, database)}),
+    );
 }
 
 fn complete(
     params: CompletionParams,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> Value {
     let trigger = params.context;
     let params = params.position;
@@ -173,7 +179,13 @@ fn complete(
     let prefix = &document.text[site.start..site.cursor];
     let range = json!({ "start": position(&document.text, site.start), "end": position(&document.text, site.end) });
     let mut items = std::collections::BTreeMap::new();
-    if let Some(context) = context_at(&params.text_document.uri, site.cursor, documents, roots) {
+    if let Some(context) = context_at(
+        &params.text_document.uri,
+        site.cursor,
+        documents,
+        roots,
+        database,
+    ) {
         let symbols = if let Some((offset, access)) = site.member {
             context
                 .analysis

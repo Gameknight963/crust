@@ -13,7 +13,10 @@ pub(super) fn register(connection: &Connection, params: &Value) -> ServerResult<
                 "method": "workspace/didChangeWatchedFiles",
                 "registerOptions": { "watchers": [
                     { "globPattern": "**/*.cr", "kind": 7 },
-                    { "globPattern": "**/crust.toml", "kind": 7 }
+                    { "globPattern": "**/crust.toml", "kind": 7 },
+                    { "globPattern": "**/*.h", "kind": 7 },
+                    { "globPattern": "**/*.inc", "kind": 7 },
+                    { "globPattern": "**/*.c", "kind": 7 }
                 ] }
             }] }),
         )

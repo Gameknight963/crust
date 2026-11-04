@@ -90,6 +90,29 @@ public static class CrustLiveIde
         build.Build(true);
         if (build.LastBuildInfo != 0) throw new Exception("Visual Studio build failed: " + Output(raw, "Build"));
     }
+    public static void ParameterInfo(object raw, string file, int line, int column)
+    {
+        var dte = (EnvDTE.DTE)raw;
+        var document = dte.ItemOperations.OpenFile(file).Document;
+        ((EnvDTE.TextSelection)document.Selection).MoveToLineAndOffset(line, column);
+        dte.ExecuteCommand("Edit.ParameterInfo");
+    }
+    public static void Definition(object raw, string file, int line, int column)
+    {
+        var dte = (EnvDTE.DTE)raw;
+        var document = dte.ItemOperations.OpenFile(file).Document;
+        var selection = (EnvDTE.TextSelection)document.Selection;
+        selection.MoveToLineAndOffset(line, column);
+        dte.ExecuteCommand("Edit.GoToDefinition");
+    }
+    public static string ActiveFile(object raw) { return ((EnvDTE.DTE)raw).ActiveDocument.FullName; }
+    public static void References(object raw, string file, int line, int column)
+    {
+        var dte = (EnvDTE.DTE)raw;
+        var document = dte.ItemOperations.OpenFile(file).Document;
+        ((EnvDTE.TextSelection)document.Selection).MoveToLineAndOffset(line, column);
+        dte.ExecuteCommand("Edit.FindAllReferences");
+    }
     public static string Output(object raw, string pane)
     {
         var document = ((EnvDTE80.DTE2)raw).ToolWindows.OutputWindow.OutputWindowPanes.Item(pane).TextDocument;

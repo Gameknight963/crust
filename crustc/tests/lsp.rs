@@ -8,6 +8,168 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+#[test]
+fn hover_and_definition_survive_an_unrelated_body_error() {
+    let mut server = Server::start();
+    let uri = "file:///crust-editor-recovery/main.cr";
+    let text = "int answer(int value) { return value; }\nint main() { int result=answer(42); return missing; }";
+    assert_ne!(server.open(uri, 1, text)["diagnostics"], json!([]));
+    let params =
+        json!({"textDocument":{"uri":uri}, "position":at(text, text.rfind("answer").unwrap() + 2)});
+    let hover = server
+        .request("textDocument/hover", params.clone())
+        .result
+        .unwrap();
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("answer")
+    );
+    let definition = server
+        .request("textDocument/definition", params.clone())
+        .result
+        .unwrap();
+    assert_eq!(definition[0]["range"]["start"]["line"], 0);
+    // Rename must still validate the entire program before offering edits.
+    let rename = server.request(
+        "textDocument/rename",
+        json!({"textDocument":{"uri":uri}, "position":params["position"], "newName":"changed"}),
+    );
+    assert!(rename.error.is_some());
+    server.stop();
+}
+
+#[test]
+fn navigation_and_hover_survive_a_missing_closing_brace() {
+    let mut server = Server::start();
+    let uri = "file:///crust-editor-recovery/unclosed.cr";
+    let text = "int main(){ int count=42; print(count);";
+    assert_ne!(server.open(uri, 1, text)["diagnostics"], json!([]));
+    let params =
+        json!({"textDocument":{"uri":uri},"position":at(text,text.rfind("count").unwrap())});
+    let hover = server
+        .request("textDocument/hover", params.clone())
+        .result
+        .unwrap();
+    assert!(hover.to_string().contains("count"));
+    let definitions = server
+        .request("textDocument/definition", params)
+        .result
+        .unwrap();
+    assert_eq!(
+        definitions[0]["range"]["start"],
+        at(text, text.find("count").unwrap())
+    );
+    server.stop();
+}
+
+#[test]
+fn edit_bursts_publish_the_latest_version_and_requests_observe_it() {
+    let mut server = Server::start();
+    let uri = "untitled:edit-burst.cr";
+    server.open(uri, 1, "int main(){return 0;}");
+    for version in 2..202 {
+        server.change(uri, version, "int main(){return missing;}");
+    }
+    server.change(uri, 202, "int main(){int latest=42; return latest;}");
+    let diagnostics = server.diagnostics();
+    assert_eq!(diagnostics["version"], 202);
+    assert_eq!(diagnostics["diagnostics"], json!([]));
+    let symbols = server
+        .request(
+            "textDocument/documentSymbol",
+            json!({"textDocument":{"uri":uri}}),
+        )
+        .result
+        .unwrap();
+    assert!(symbols.to_string().contains("main"));
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":38}}),
+        )
+        .result
+        .unwrap();
+    assert!(hover.to_string().contains("latest"));
+    server.stop();
+}
+
+#[test]
+fn editor_highlights_resolve_shadowing_and_folding_ignores_literal_braces() {
+    let mut server = Server::start();
+    let uri = "untitled:structure.cr";
+    let text = "int main() {\n int value=1;\n { int value=2; print(value); }\n print(value);\n return 0;\n}";
+    server.open(uri, 1, text);
+    let highlights = server
+        .request(
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument":{"uri":uri}, "position":at(text, text.rfind("value").unwrap())
+            }),
+        )
+        .result
+        .unwrap();
+    assert_eq!(highlights.as_array().unwrap().len(), 2);
+    assert!(
+        highlights
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["range"]["start"]["line"] != 2)
+    );
+    let folding = server
+        .request(
+            "textDocument/foldingRange",
+            json!({"textDocument":{"uri":uri}}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        folding,
+        json!([{"startLine":0,"endLine":5,"kind":"region"}])
+    );
+    server.change(
+        uri,
+        2,
+        "int main() {\n print(\"} {\");\n // }\n return missing;\n}",
+    );
+    server.diagnostics();
+    let folding = server
+        .request(
+            "textDocument/foldingRange",
+            json!({"textDocument":{"uri":uri}}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        folding,
+        json!([{"startLine":0,"endLine":4,"kind":"region"}])
+    );
+    server.stop();
+}
+
+#[test]
+fn hover_respects_visual_studio_plaintext_capability() {
+    let mut server = Server::start_with_capabilities(
+        json!({"textDocument":{"hover":{"contentFormat":["plaintext"]}}}),
+    );
+    let uri = "untitled:plaintext-hover.cr";
+    server.open(uri, 1, "int main(){return 0;}");
+    let hover = server
+        .request(
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":5}}),
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        hover["contents"],
+        json!({"kind":"plaintext","value":"int main()"})
+    );
+    server.stop();
+}
+
 struct Server {
     child: Child,
     input: ChildStdin,
@@ -515,7 +677,10 @@ fn file_watch_registration_and_events_refresh_semantics_and_recover_after_bad_ev
         registration_params["registerOptions"]["watchers"],
         json!([
             { "globPattern": "**/*.cr", "kind": 7 },
-            { "globPattern": "**/crust.toml", "kind": 7 }
+            { "globPattern": "**/crust.toml", "kind": 7 },
+            { "globPattern": "**/*.h", "kind": 7 },
+            { "globPattern": "**/*.inc", "kind": 7 },
+            { "globPattern": "**/*.c", "kind": 7 }
         ])
     );
     Message::Response(Response::new_ok(registration.id, Value::Null))
@@ -2481,7 +2646,12 @@ fn semantic_requests_validate_parameters_and_recover_after_compiler_errors() {
     let query = json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 4}});
     let response = server.request("textDocument/hover", query.clone());
     assert!(response.error.is_none());
-    assert!(response.result.unwrap_or(Value::Null).is_null());
+    assert!(
+        response.result.unwrap()["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("main")
+    );
     assert_eq!(
         server
             .request("textDocument/hover", json!({}))

@@ -77,7 +77,7 @@ pub(super) fn global_edits(
             Ok(analysis) => {
                 covered.extend(graph.files().iter().map(|file| file.path.clone()));
                 contexts.push(Context {
-                    analysis,
+                    analysis: std::rc::Rc::new(analysis),
                     file: 0,
                     uri: path_uri(&graph.files()[0].path),
                     uris: sources.paths.clone(),
@@ -105,7 +105,7 @@ pub(super) fn global_edits(
             && let Ok(analysis) = crate::analyze(&document.text)
         {
             contexts.push(Context {
-                analysis,
+                analysis: std::rc::Rc::new(analysis),
                 file: 0,
                 uri: uri.clone(),
                 uris: HashMap::new(),

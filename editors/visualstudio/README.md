@@ -5,6 +5,7 @@ Language support through the bundled `crust-lsp` server:
 - Compiler diagnostics and semantic highlighting
 - Completion, hover, and signature help
 - Navigation, references, and rename
+- Symbol occurrence highlighting and code folding
 - Shared syntax highlighting and bracket configuration
 - Project build and check commands with Error List navigation
 - Executable target selection and console execution
@@ -120,11 +121,20 @@ numbers. Both layers use Visual Studio classifications and follow its editor
 theme.
 
 Preprocessor keywords, native region markers, and include filenames have distinct
-classifications. Directive completion and hover help work during compiler errors.
+classifications. Directive completion works during compiler errors.
 Type `#pragma b` and complete it to get `#pragma crust begin_c`. Inside an include,
 completion searches local, project, and C compiler system header directories.
 See [mixed C and Crust](../../docs/mixed-source.md#standard-c-headers) for a
 working `stdio.h` example.
+
+Diagnostics, semantic highlighting, hover, and navigation share checked source
+snapshots. Rapid edits are grouped before diagnostics run. Hover and navigation
+can recover from unrelated body errors and missing closing delimiters. Rename
+checks the complete program before returning edits.
+
+F12 goes to a definition, Shift+F12 finds references, and Ctrl+Shift+Space opens
+Parameter Info. Hover displays symbol signatures and types. Native headers are
+watched along with Crust sources so changing a C declaration refreshes analysis.
 
 ## Development checks
 
@@ -156,6 +166,20 @@ Visual Studio's template engine, and checks editor classifications during an
 incomplete edit. It also checks directive and string colors with invalid source
 and offers and commits a native region marker through Visual Studio's completion
 service. The test waits for the deferred LSP completion session used by VS 18.
+It queries the IDE's Quick Info service, invokes Parameter Info, follows F12
+across an import, and invokes Find All References. Highlighting must appear within
+five seconds on the first file and two seconds after an edit.
 It verifies the first F5 build, a source breakpoint, local
 evaluation, source stepping, and Ctrl+F5 execution. The experimental profile and
 diagnostics under `target/visualstudio-live-tests/` remain available for inspection.
+
+To measure a real project's language-server latency:
+
+```powershell
+python tools/benchmark_lsp.py path/to/main.cr --line 10 --character 5 --max-warm-ms 150
+```
+
+Positions are zero-based UTF-16 coordinates. The report separates the initial
+diagnostics from repeated highlighting, hover, navigation, signature, occurrence,
+and folding requests. The optional budget makes the command usable as a
+performance regression check.

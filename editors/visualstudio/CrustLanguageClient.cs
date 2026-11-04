@@ -21,7 +21,7 @@ public sealed class CrustLanguageClient : ILanguageClient, IDisposable
     public string Name => "crust";
     public IEnumerable<string> ConfigurationSections => Array.Empty<string>();
     public object InitializationOptions => new { visualStudioClassifications = true };
-    public IEnumerable<string> FilesToWatch => new[] { "**/*.cr", "**/crust.toml" };
+    public IEnumerable<string> FilesToWatch => new[] { "**/*.cr", "**/crust.toml", "**/*.h", "**/*.inc", "**/*.c" };
     public bool ShowNotificationOnInitializeFailed => true;
     public event AsyncEventHandler<EventArgs>? StartAsync;
 #pragma warning disable CS0067 // Required by ILanguageClient. VS owns normal shutdown.

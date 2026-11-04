@@ -5,11 +5,13 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
+mod database;
 mod directives;
 mod rename;
 mod semantic;
 mod semantic_tokens;
 mod signature;
+mod structure;
 mod watch;
 mod workspace;
 
@@ -76,6 +78,9 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
     let semantic_refresh = params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"]
         .as_bool()
         .unwrap_or(false);
+    let markdown_hover = params["capabilities"]["textDocument"]["hover"]["contentFormat"]
+        .as_array()
+        .is_none_or(|formats| formats.iter().any(|format| format == "markdown"));
     let mut next_refresh = 0_u64;
     let document_changes = params["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"]
         .as_bool()
@@ -88,6 +93,8 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                 "hoverProvider": true,
                 "definitionProvider": true,
                 "referencesProvider": true,
+                "documentHighlightProvider": true,
+                "foldingRangeProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentSymbolProvider": true,
                 "workspaceSymbolProvider": true,
@@ -105,11 +112,52 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
     )?;
 
     watch::register(connection, &params)?;
+    let database = database::Database::default();
     let mut documents = HashMap::new();
     let mut semantic_snapshots = HashMap::new();
     let mut published = HashMap::new();
     let mut shutdown = false;
-    for message in &connection.receiver {
+    let mut pending: Option<(String, std::time::Instant)> = None;
+    loop {
+        let message = if let Some((_, deadline)) = &pending {
+            match connection.receiver.recv_deadline(*deadline) {
+                Ok(message) => message,
+                Err(error) if error.is_timeout() => {
+                    let (active, _) = pending.take().unwrap();
+                    publish_all(
+                        connection,
+                        &documents,
+                        &mut published,
+                        &active,
+                        &workspace_roots,
+                        &database,
+                    )?;
+                    refresh_semantics(connection, semantic_refresh, &mut next_refresh)?;
+                    continue;
+                }
+                Err(_) => break,
+            }
+        } else {
+            match connection.receiver.recv() {
+                Ok(message) => message,
+                Err(_) => break,
+            }
+        };
+        // Requests must observe every preceding edit. A short debounce only
+        // combines diagnostics while the client is still sending changes.
+        let changing =
+            matches!(&message, Message::Notification(n) if n.method == "textDocument/didChange");
+        if !changing && let Some((active, _)) = pending.take() {
+            publish_all(
+                connection,
+                &documents,
+                &mut published,
+                &active,
+                &workspace_roots,
+                &database,
+            )?;
+            refresh_semantics(connection, semantic_refresh, &mut next_refresh)?;
+        }
         match message {
             Message::Request(request) => {
                 let response = if shutdown {
@@ -129,11 +177,17 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                             String::from("shutdown takes no parameters"),
                         )
                     }
+                } else if request.method == "textDocument/foldingRange" {
+                    match structure::folding(request.params, &documents) {
+                        Ok(result) => Response::new_ok(request.id, result),
+                        Err(error) => Response::new_err(request.id, error.code, error.message),
+                    }
                 } else if request.method == "textDocument/semanticTokens/full" {
                     match semantic_tokens::request(
                         request.params,
                         &documents,
                         &workspace_roots,
+                        &database,
                         visual_studio,
                         &mut semantic_snapshots,
                     ) {
@@ -145,6 +199,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                     "textDocument/hover"
                         | "textDocument/definition"
                         | "textDocument/references"
+                        | "textDocument/documentHighlight"
                         | "textDocument/prepareRename"
                         | "textDocument/rename"
                         | "textDocument/documentSymbol"
@@ -158,8 +213,14 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         &documents,
                         document_changes,
                         &workspace_roots,
+                        &database,
                     ) {
-                        Ok(result) => Response::new_ok(request.id, result),
+                        Ok(mut result) => {
+                            if request.method == "textDocument/hover" && !markdown_hover {
+                                semantic::plain_hover(&mut result);
+                            }
+                            Response::new_ok(request.id, result)
+                        }
                         Err(error) => Response::new_err(request.id, error.code, error.message),
                     }
                 } else {
@@ -189,13 +250,37 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         | "workspace/didChangeWorkspaceFolders"
                         | "workspace/didChangeWatchedFiles"
                 );
+                if refresh {
+                    database.clear();
+                }
+                let changed_uri = if notification.method == "textDocument/didChange" {
+                    notification.params["textDocument"]["uri"]
+                        .as_str()
+                        .map(str::to_owned)
+                } else {
+                    None
+                };
                 let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
                     workspace::change(notification.params, &mut workspace_roots).and_then(|()| {
-                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                        publish_all(
+                            connection,
+                            &documents,
+                            &mut published,
+                            "",
+                            &workspace_roots,
+                            &database,
+                        )
                     })
                 } else if notification.method == "workspace/didChangeWatchedFiles" {
                     watch::validate(notification.params).and_then(|()| {
-                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                        publish_all(
+                            connection,
+                            &documents,
+                            &mut published,
+                            "",
+                            &workspace_roots,
+                            &database,
+                        )
                     })
                 } else {
                     document_notification(
@@ -204,6 +289,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         &mut published,
                         notification,
                         &workspace_roots,
+                        &database,
                     )
                 };
                 semantic_snapshots.retain(|uri, _| documents.contains_key(uri));
@@ -217,16 +303,13 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                         )
                         .into(),
                     )?;
-                } else if semantic_refresh && refresh {
-                    next_refresh += 1;
-                    connection.sender.send(
-                        lsp_server::Request::new(
-                            format!("crust-semantic-refresh-{next_refresh}").into(),
-                            "workspace/semanticTokens/refresh".to_owned(),
-                            Value::Null,
-                        )
-                        .into(),
-                    )?;
+                } else if let Some(uri) = changed_uri {
+                    pending = Some((
+                        uri,
+                        std::time::Instant::now() + std::time::Duration::from_millis(40),
+                    ));
+                } else if refresh {
+                    refresh_semantics(connection, semantic_refresh, &mut next_refresh)?;
                 }
             }
             Message::Response(_) => {}
@@ -235,12 +318,28 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
     return Err("client disconnected before exit".into());
 }
 
+fn refresh_semantics(connection: &Connection, supported: bool, next: &mut u64) -> ServerResult<()> {
+    if supported {
+        *next += 1;
+        connection.sender.send(
+            lsp_server::Request::new(
+                format!("crust-semantic-refresh-{next}").into(),
+                "workspace/semanticTokens/refresh".to_owned(),
+                Value::Null,
+            )
+            .into(),
+        )?;
+    }
+    return Ok(());
+}
+
 fn document_notification(
     connection: &Connection,
     documents: &mut HashMap<String, Document>,
     published: &mut HashMap<String, Value>,
     notification: Notification,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> ServerResult<()> {
     match notification.method.as_str() {
         "textDocument/didOpen" => {
@@ -255,7 +354,7 @@ fn document_notification(
                 text: item.text,
             };
             documents.insert(item.uri.clone(), document);
-            publish_all(connection, documents, published, &item.uri, roots)?;
+            publish_all(connection, documents, published, &item.uri, roots, database)?;
         }
         "textDocument/didChange" => {
             let params: ChangeParams = serde_json::from_value(notification.params)?;
@@ -279,13 +378,6 @@ fn document_notification(
                 document.text = change.text;
             }
             document.version = params.text_document.version;
-            publish_all(
-                connection,
-                documents,
-                published,
-                &params.text_document.uri,
-                roots,
-            )?;
         }
         "textDocument/didClose" => {
             let params: CloseParams = serde_json::from_value(notification.params)?;
@@ -306,6 +398,7 @@ fn document_notification(
                 published,
                 &params.text_document.uri,
                 roots,
+                database,
             )?;
         }
         _ => {}
@@ -313,7 +406,7 @@ fn document_notification(
     return Ok(());
 }
 
-fn diagnostic_json(source: &str, diagnostic: crate::diagnostic::Diagnostic) -> Value {
+fn diagnostic_json(source: &str, diagnostic: &crate::diagnostic::Diagnostic) -> Value {
     return json!({
         "range": {
             "start": position(source, diagnostic.span.start),
@@ -351,20 +444,9 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
     let read = |path: &Path| {
         return source_text(path, &paths, documents);
     };
-    let mut graphs = Vec::new();
+    let mut graphs: Vec<crate::source::SourceSet> = Vec::new();
     let mut errors = Vec::new();
     let mut targets = HashMap::new();
-    for (uri, document) in documents {
-        if document.native {
-            continue;
-        }
-        if let Some(path) = uri_path(uri) {
-            match crate::source::SourceSet::load_with(&path, read) {
-                Ok(sources) => graphs.push(sources),
-                Err(error) => errors.push(error),
-            }
-        }
-    }
     let mut manifests: HashSet<_> = paths
         .keys()
         .filter_map(|path| {
@@ -426,6 +508,23 @@ fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sou
             }
         }
     }
+    for (uri, document) in documents {
+        if document.native {
+            continue;
+        }
+        if let Some(path) = uri_path(uri) {
+            if graphs
+                .iter()
+                .any(|graph| graph.files().iter().any(|file| file.path == path))
+            {
+                continue;
+            }
+            match crate::source::SourceSet::load_with(&path, read) {
+                Ok(sources) => graphs.push(sources),
+                Err(error) => errors.push(error),
+            }
+        }
+    }
     // Analyze entries before their open dependencies, including import cycles.
     graphs.sort_by(|a, b| {
         b.files()
@@ -447,13 +546,15 @@ fn publish_all(
     published: &mut HashMap<String, Value>,
     active: &str,
     roots: &[PathBuf],
+    database: &database::Database,
 ) -> ServerResult<()> {
+    let snapshot = database.snapshot(documents, roots);
     let Sources {
         paths,
         graphs,
         errors,
         targets,
-    } = load_sources(documents, roots);
+    } = &snapshot.sources;
     let mut diagnostics: HashMap<String, Vec<Value>> = documents
         .keys()
         .map(|uri| (uri.clone(), Vec::new()))
@@ -466,7 +567,7 @@ fn publish_all(
             diagnostics
                 .get_mut(uri)
                 .unwrap()
-                .push(diagnostic_json(&document.text, error));
+                .push(diagnostic_json(&document.text, &error));
         }
     }
     for error in errors {
@@ -474,22 +575,21 @@ fn publish_all(
             .get(&error.path)
             .cloned()
             .unwrap_or_else(|| path_uri(&error.path));
-        let text = source_text(&error.path, &paths, documents).unwrap_or_default();
+        let text = source_text(&error.path, paths, documents).unwrap_or_default();
         let values = diagnostics.entry(target).or_default();
-        let value = diagnostic_json(&text, error.diagnostic);
+        let value = diagnostic_json(&text, &error.diagnostic);
         if !values.contains(&value) {
             values.push(value);
         }
     }
     let mut covered = HashSet::new();
-    for sources in graphs {
+    for (index, sources) in graphs.iter().enumerate() {
         let entry = &sources.files()[0].path;
         if covered.contains(entry) && !targets.contains_key(entry) {
             continue;
         }
         covered.extend(sources.files().iter().map(|file| file.path.clone()));
-        let kind = targets.get(entry).copied().unwrap_or_default();
-        if let Err(error) = sources.check_with_kind(kind) {
+        if let Err(error) = snapshot.analyze(index, false) {
             let target = paths
                 .get(&error.path)
                 .cloned()
@@ -501,7 +601,7 @@ fn publish_all(
                 .unwrap()
                 .text;
             let values = diagnostics.entry(target).or_default();
-            let value = diagnostic_json(text, error.diagnostic);
+            let value = diagnostic_json(text, &error.diagnostic);
             if !values.contains(&value) {
                 values.push(value);
             }

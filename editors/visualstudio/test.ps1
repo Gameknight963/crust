@@ -77,3 +77,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Visual Studio client checks failed' }
 & (Join-Path $PSScriptRoot '../msbuild/test.ps1') -SdkRoot (Join-Path $crustTestRoot 'Sdk') -CompilerPath (Join-Path $crustTestRoot 'Server/crust.exe') -MSBuild (Join-Path $VisualStudioRoot 'MSBuild/Current/Bin/MSBuild.exe')
 & python (Join-Path $PSScriptRoot 'tests/project_templates.py') $crustTestRoot $VisualStudioRoot
 if ($LASTEXITCODE -ne 0) { throw 'Packaged project template checks failed' }
+
+# Include native header discovery in the cold analysis, then ensure the packaged
+# server reuses that snapshot for ordinary editor requests. This also runs in CI.
+$crustPerformanceRoot = Join-Path $crustTestRoot 'performance'
+[IO.Directory]::CreateDirectory($crustPerformanceRoot) | Out-Null
+$crustPerformanceSource = Join-Path $crustPerformanceRoot 'main.cr'
+[IO.File]::WriteAllText($crustPerformanceSource, "#pragma crust begin_c`n#include <stdio.h>`n#pragma crust end_c`nint answer(int value) { return value; }`nint main() { return answer(42); }`n")
+& python (Join-Path $crustRepoRoot 'tools/benchmark_lsp.py') $crustPerformanceSource --server (Join-Path $crustTestRoot 'Server/crust-lsp.exe') --line 4 --character 22 --repeat 5 --require-clean --max-warm-ms 250
+if ($LASTEXITCODE -ne 0) { throw 'Packaged editor latency regression failed' }

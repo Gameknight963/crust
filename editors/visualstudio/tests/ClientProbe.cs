@@ -57,12 +57,19 @@ internal static class ClientProbe
         };
         Environment.SetEnvironmentVariable("CRUST_LSP_PATH", null);
         var assembly = Assembly.LoadFrom(Path.Combine(package, "Crust.VisualStudio.dll"));
+        var language = Activator.CreateInstance(assembly.GetType("Crust.VisualStudio.CrustLanguageInfo", true));
+        var languageName = new object[] { null };
+        language.GetType().GetMethod("GetLanguageName").Invoke(language, languageName);
+        Assert((string)languageName[0] == "crust", "editor language identity");
+        string registration = File.ReadAllText(Path.Combine(package, "crust.pkgdef"));
+        Assert(registration.Contains("Languages\\File Extensions\\.cr") && registration.Contains("\"ShowBraceCompletion\"=dword:00000001"), "shell editing preferences");
         CheckProjectProperties(package, assembly);
         CheckProjectCommands(package, assembly);
         var type = assembly.GetType("Crust.VisualStudio.CrustLanguageClient", true);
         using (var client = (IDisposable)Activator.CreateInstance(type))
         {
             Assert((string)type.GetProperty("Name").GetValue(client) == "crust", "language ID");
+            Assert(((IEnumerable<string>)type.GetProperty("FilesToWatch").GetValue(client)).Contains("**/*.h"), "native header watchers");
             var options = type.GetProperty("InitializationOptions").GetValue(client);
             Assert((bool)options.GetType().GetProperty("visualStudioClassifications").GetValue(options), "native classifications");
             var start = type.GetEvent("StartAsync");

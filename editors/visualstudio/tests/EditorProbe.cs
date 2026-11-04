@@ -6,6 +6,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using System.Diagnostics;
+using Microsoft.VisualStudio.Language.Intellisense;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data;
 using Microsoft.VisualStudio.Text;
@@ -21,6 +23,7 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
     [Import] public IClassifierAggregatorService Classifiers = null;
     [Import] public ITextDocumentFactoryService Documents = null;
     [Import] public IAsyncCompletionBroker Completions = null;
+    [Import] public IAsyncQuickInfoBroker QuickInfo = null;
     private static readonly object Gate = new object();
 
     public void TextViewCreated(ITextView view)
@@ -28,9 +31,12 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
         string output = Environment.GetEnvironmentVariable("CRUST_LIVE_CLASSIFICATIONS");
         ITextDocument document;
         if (string.IsNullOrEmpty(output) || !Documents.TryGetTextDocument(view.TextBuffer, out document)) return;
+        if (!document.FilePath.EndsWith("main.cr", StringComparison.OrdinalIgnoreCase)) output += "." + Path.GetFileName(document.FilePath);
         var classifier = Classifiers.GetClassifier(view.TextBuffer);
         bool reading = false;
         int completionVersion = -1;
+        int featureVersion = -1;
+        var elapsed = Stopwatch.StartNew();
         Action record = () =>
         {
             lock (Gate)
@@ -43,12 +49,18 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
                     var spans = classifier.GetClassificationSpans(new SnapshotSpan(snapshot, 0, snapshot.Length));
                     var payload = new {
                         file = document.FilePath, text = snapshot.GetText(),
+                        elapsedMilliseconds = elapsed.ElapsedMilliseconds,
                         spans = spans.Select(span => new {
                             start = span.Span.Start.Position, length = span.Span.Length,
                             text = span.Span.GetText(), types = Types(span.ClassificationType).Distinct().ToArray()
                         }).ToArray()
                     };
                     File.WriteAllText(output, new JavaScriptSerializer().Serialize(payload));
+                    if (snapshot.GetText().StartsWith("// crust editor feature probe\n") && featureVersion != snapshot.Version.VersionNumber)
+                    {
+                        featureVersion = snapshot.Version.VersionNumber;
+                        _ = RecordFeaturesAsync(view, snapshot, output);
+                    }
                     if (snapshot.GetText().StartsWith("#pragma crust be\n") && completionVersion != snapshot.Version.VersionNumber)
                     {
                         completionVersion = snapshot.Version.VersionNumber;
@@ -70,6 +82,34 @@ public sealed class CrustEditorProbe : ITextViewCreationListener
             if (disposable != null) disposable.Dispose();
         };
         record();
+    }
+
+    private async Task RecordFeaturesAsync(ITextView view, ITextSnapshot snapshot, string output)
+    {
+        try
+        {
+            await Task.Delay(200);
+            int cursor = snapshot.GetText().IndexOf("support(42)", StringComparison.Ordinal);
+            var timer = Stopwatch.StartNew();
+            var items = await QuickInfo.GetQuickInfoItemsAsync(view,
+                snapshot.CreateTrackingPoint(cursor + 2, PointTrackingMode.Positive), CancellationToken.None);
+            string hover = items == null ? "" : Flatten(items.Items, 0);
+            long hoverMilliseconds = timer.ElapsedMilliseconds;
+            File.WriteAllText(output + ".features", new JavaScriptSerializer().Serialize(new { hover, hoverMilliseconds }));
+        }
+        catch (Exception error) { File.WriteAllText(output + ".features-error", error.ToString()); }
+    }
+
+    private static string Flatten(object value, int depth)
+    {
+        if (value == null || depth > 8) return "";
+        if (value is string) return (string)value;
+        var list = value as System.Collections.IEnumerable;
+        if (list != null) return string.Join(" ", list.Cast<object>().Select(item => Flatten(item, depth + 1)));
+        return string.Join(" ", new[] { "Text", "Runs", "Elements", "Content" }
+            .Select(name => value.GetType().GetProperty(name))
+            .Where(property => property != null && property.GetIndexParameters().Length == 0)
+            .Select(property => Flatten(property.GetValue(value), depth + 1)));
     }
 
     private async Task RecordCompletionsAsync(ITextView view, ITextSnapshot snapshot, string output)

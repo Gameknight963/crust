@@ -30,7 +30,7 @@ internal static class CrustServerProbe
     private static Task Relay(Stream source, Stream destination, string log)
     {
         return Task.Run(async () => {
-            using (var trace = File.Create(log))
+            using (var trace = new FileStream(log, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
             {
                 var bytes = new byte[8192];
                 int count;

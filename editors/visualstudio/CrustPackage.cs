@@ -11,6 +11,7 @@ using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Threading;
+using Microsoft.VisualStudio.TextManager.Interop;
 
 namespace Crust.VisualStudio;
 
@@ -29,6 +30,7 @@ public sealed class CrustPackage : AsyncPackage
 
     protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
     {
+        AddService(typeof(CrustLanguageInfo), (_, __, ___) => Task.FromResult<object?>(new CrustLanguageInfo()), promote: true);
         var commands = await GetServiceAsync(typeof(IMenuCommandService)) as OleMenuCommandService;
         object? windowService = await GetServiceAsync(typeof(SVsOutputWindow));
         await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
@@ -181,4 +183,15 @@ public sealed class CrustPackage : AsyncPackage
         public IntPtr Handle { get; }
         public WindowOwner(IntPtr handle) { Handle = handle; }
     }
+}
+
+[Guid("bc1b794f-3e83-4939-a4ef-7fda920cb8ee"), ComVisible(true)]
+public sealed class CrustLanguageInfo : IVsLanguageInfo
+{
+    public int GetLanguageName(out string name) { name = "crust"; return VSConstants.S_OK; }
+    public int GetFileExtensions(out string extensions) { extensions = ".cr"; return VSConstants.S_OK; }
+    public int GetColorizer(IVsTextLines buffer, out IVsColorizer colorizer)
+    { colorizer = null!; return VSConstants.E_NOTIMPL; }
+    public int GetCodeWindowManager(IVsCodeWindow window, out IVsCodeWindowManager manager)
+    { manager = null!; return VSConstants.E_NOTIMPL; }
 }

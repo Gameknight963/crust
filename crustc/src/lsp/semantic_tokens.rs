@@ -172,6 +172,7 @@ pub(super) fn request(
     params: Value,
     documents: &HashMap<String, Document>,
     roots: &[PathBuf],
+    database: &database::Database,
     visual_studio: bool,
     snapshots: &mut HashMap<String, Snapshot>,
 ) -> Result<Value, RequestError> {
@@ -184,14 +185,14 @@ pub(super) fn request(
     // Like an editor's syntax/semantic classifiers, keep lexical coloring
     // available during errors and preserve unchanged semantic spans while the
     // current edit cannot yet be analyzed. Never reuse spans inside the edit.
-    let mut bindings = if let Some(context) = Context::load(&uri, documents, roots) {
+    let mut bindings = if let Some(context) = Context::load(&uri, documents, roots, database) {
         resolved_bindings(&context)
     } else {
         let mut bindings = snapshots
             .get(&uri)
             .map(|snapshot| snapshot.translate(text))
             .unwrap_or_default();
-        if let Some(context) = Context::load_completion(&uri, documents, roots) {
+        if let Some(context) = Context::load_completion(&uri, documents, roots, database) {
             bindings.extend(resolved_bindings(&context));
         }
         bindings
