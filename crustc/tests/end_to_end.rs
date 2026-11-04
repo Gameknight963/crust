@@ -252,3 +252,24 @@ fn crustc_compiles_source_files_and_identifies_its_command() {
         "42\n"
     );
 }
+
+#[test]
+fn commands_without_arguments_show_help_outside_a_project() {
+    let directory = std::env::temp_dir();
+    for (binary, name) in [
+        (env!("CARGO_BIN_EXE_crust"), "crust"),
+        (env!("CARGO_BIN_EXE_crustc"), "crustc"),
+    ] {
+        let output = Command::new(binary)
+            .current_dir(&directory)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&output.stdout).starts_with(&format!("Usage: {name} ")));
+    }
+}

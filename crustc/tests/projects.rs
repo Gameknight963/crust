@@ -694,7 +694,7 @@ fn discovers_projects_from_subdirectories_and_runs_the_named_output() {
     );
     let output = fixture.invoke(&[]);
     success(&output);
-    assert_eq!(text(&output), "42\n");
+    assert!(text(&output).starts_with("Usage: crust "));
 }
 
 #[test]

@@ -40,10 +40,11 @@ pub fn main() -> ExitCode {
 fn run() -> Result<ExitCode, String> {
     // args_os preserves source and project paths that aren't valid UTF-8.
     let arguments: Vec<_> = env::args_os().skip(1).collect();
-    if arguments
-        .iter()
-        .take_while(|argument| *argument != "--")
-        .any(|argument| argument == "--help" || argument == "-h")
+    if arguments.is_empty()
+        || arguments
+            .iter()
+            .take_while(|argument| *argument != "--")
+            .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
             "Usage: {} [run|build|emit-c|emit-header|check|tokens|metadata] [file.cr|crust.toml|directory]",
