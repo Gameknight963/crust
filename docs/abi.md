@@ -41,7 +41,7 @@ the unsafe caller to provide valid, appropriately aligned storage of that length
 
 Quoted imports and exports choose a C-level name:
 
-```c
+```cpp
 extern int native_add(int left, int right) = "library_add";
 
 extern int answer() = "crust_answer" {

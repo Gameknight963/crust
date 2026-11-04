@@ -2,7 +2,7 @@
 
 Import the files you need using paths relative to your source file:
 
-```c
+```cpp
 import "../lib/box.cr";
 import "../lib/vector.cr";
 

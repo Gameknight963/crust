@@ -7,7 +7,7 @@ preprocess and compile mixed programs without an installed Clang executable.
 
 ## Example
 
-```c
+```cpp
 #define TAKE(value) move(value)
 #define FACTOR 3
 
@@ -43,7 +43,7 @@ The compiler diagnoses shorter markers such as `#pragma begin_c` at the pragma.
 
 [The stdio example](../examples/stdio.cr) imports `printf` from `<stdio.h>`:
 
-```c
+```cpp
 #pragma crust begin_c
 #include <stdio.h>
 #pragma crust end_c

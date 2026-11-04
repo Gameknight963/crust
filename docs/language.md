@@ -5,7 +5,7 @@ cleanup rules, and [the native ABI](abi.md) for layout and linkage.
 
 ## Imports
 
-```c
+```cpp
 import "containers/buffer.cr";
 ```
 
@@ -19,7 +19,7 @@ file. Each file can define its own static helper with the same name. Calls,
 function addresses, and generic bodies resolve helpers in their definition file.
 Local variables and parameters can shadow those helpers.
 
-```c
+```cpp
 static int twice(int value) {
     return value * 2;
 }
@@ -42,7 +42,7 @@ Top-level variables live for the whole program. Prefix a global with `static`
 to give it file-local visibility. A function-local `static` variable keeps its
 value across calls and follows the enclosing block's name visibility.
 
-```c
+```cpp
 const int increment = 2;
 static int total;
 
@@ -83,7 +83,7 @@ exported functions. `extern` declarations continue to name native C variables.
 `const T[]&` provides shared access. A slice carries a pointer and a length.
 Indexing checks the bounds, and the read-only `length` field has type `size_t`.
 
-```c
+```cpp
 int sum(const int[]& values) {
     int total = 0;
     for (size_t i = 0; i < values.length; i++) {
@@ -118,7 +118,7 @@ the slice's mutability. Null pointers require a zero length. The compiler tracks
 the borrow against the pointer's source, including a resource wrapper's receiver.
 Volatile slice elements are currently rejected.
 
-```c
+```cpp
 const T[]& view() const {
     unsafe { return slice(this.data, this.length); }
 }
@@ -134,7 +134,7 @@ expressions or enum members, with duplicates checked after conversion to the
 promoted selector type. Scoped enum members require qualification. Cases support
 fallthrough, `break`, and `default`. `continue` targets an enclosing loop.
 
-```c
+```cpp
 switch (status) {
     case Status::Ready:
         print(1);
@@ -170,7 +170,7 @@ returns run cleanup. Runtime termination ends the process immediately.
 File-based compilation reports `path:line:column: runtime error: message`,
 including failures in imported files.
 
-```c
+```cpp
 int main() {
     int total = 0;
     for (int i = 0; i < 5; i += 1) {
@@ -189,7 +189,7 @@ A single-statement body can contain an expression, return, loop control, or
 another control-flow statement. An `else` belongs to the nearest unmatched
 `if`. Local declarations in control-flow bodies require braces.
 
-```c
+```cpp
 if (value < 0) return 0;
 for (int index = 0; index < 3; index++) print(index);
 ```
@@ -198,7 +198,7 @@ for (int index = 0; index < 3; index++) print(index);
 `continue` cleans up body locals and advances to that test. `break` exits without
 evaluating the condition. Body-local names are scoped to the braces.
 
-```c
+```cpp
 int count = 0;
 do {
     count += 1;
@@ -218,7 +218,7 @@ the updated value, and postfix forms return the previous value. Integer updates
 use the same arithmetic and conversion checks as compound assignments.
 Raw pointer updates require `unsafe` and a complete object type.
 
-```c
+```cpp
 int value = 40;
 print(value++); // 40
 print(++value); // 42
@@ -232,7 +232,7 @@ same value type or compatible raw pointers, including added `const` and
 `volatile` qualifiers. Both branches can return `void`. Borrowed results require
 an explicit `if` and separate use of each borrow.
 
-```c
+```cpp
 Box<int> selected = condition ? move(first) : move(second);
 ```
 
@@ -246,7 +246,7 @@ See [the conditional expression example](../examples/conditional.cr).
 Type parameters follow the struct or function name. Uses supply explicit type
 arguments, including calls to generic functions.
 
-```c
+```cpp
 struct Pair<T, U> {
     T first;
     U second;
@@ -283,7 +283,7 @@ with private storage, checked borrows, and automatic deallocation.
 Interfaces declare method requirements. A constraint such as `T: Readable`
 accepts a struct with matching signatures. Parameter names can differ.
 
-```c
+```cpp
 interface Readable {
     int read() const;
 };
@@ -365,7 +365,7 @@ For example, `42L` keeps its native `long` type in a variadic C call.
 `18446744073709551615LL` exceeds its allowed signed type and is rejected.
 Write the signed 64-bit minimum as `-9223372036854775807LL - 1LL`.
 
-```c
+```cpp
 uint64_t count = 18446744073709551615;
 count += 1;
 print(count); // 0
@@ -394,7 +394,7 @@ host ABI. Specifiers can use C ordering, such as `unsigned long int` or
 
 ## Arrays
 
-```c
+```cpp
 typedef int Row[3];
 
 int sum(const Row& values) {
@@ -432,7 +432,7 @@ address has been captured.
 
 ## Strings
 
-```c
+```cpp
 typedef uint8_t Message[16];
 
 int main() {
@@ -465,7 +465,7 @@ capacity of three. Writes to literal storage and conversion to `char*` are rejec
 
 `enum class` keeps member names scoped to the enum type:
 
-```c
+```cpp
 enum class Status : uint8_t { Pending, Ready };
 enum class TaskState { Pending, Ready };
 ```
@@ -473,7 +473,7 @@ enum class TaskState { Pending, Ready };
 Use `Status::Ready` or `TaskState::Ready`. Members can use earlier members of
 their own enum in constant initializers. Ordinary `enum` retains unscoped names.
 
-```c
+```cpp
 enum Status : uint8_t {
     Pending,
     Ready = 4,
@@ -508,7 +508,7 @@ int main() {
 
 Native C enums use `extern enum`, with a header reference providing the C tag:
 
-```c
+```cpp
 extern header "native.h";
 extern enum NativeStatus : int32_t {
     NativeReady = 1,
@@ -527,7 +527,7 @@ See [C header bindings](c-bindings.md) for generated declarations.
 and hexadecimal literals support fractional parts and exponents. Unsuffixed
 literals have type `double`, `f` selects `float`, and `L` selects `long double`.
 
-```c
+```cpp
 float fraction = .5f;
 double scale = 1.25e2;
 long double wide = 0x1.8p1L;
@@ -548,7 +548,7 @@ See [the floating-point example](../examples/floats.cr).
 
 ## Booleans
 
-```c
+```cpp
 bool enabled = true;
 bool empty = false;
 ```
@@ -563,7 +563,7 @@ bool empty = false;
 
 ## Ownership
 
-```c
+```cpp
 import "lib/box.cr";
 
 int main() {
@@ -587,7 +587,7 @@ int main() {
 
 ## Structs
 
-```c
+```cpp
 import "lib/box.cr";
 
 struct Item {
@@ -626,7 +626,7 @@ partial field moves need further language support.
 
 ### Opaque structs
 
-```c
+```cpp
 struct NativeHandle;
 extern NativeHandle* create_handle();
 extern void destroy_handle(NativeHandle* handle);
@@ -641,7 +641,7 @@ extern void destroy_handle(NativeHandle* handle);
 
 Native tag aliases give a type a separate Crust name:
 
-```c
+```cpp
 struct Handle = "init";
 union Storage = "move";
 ```
@@ -655,7 +655,7 @@ with private storage, methods, and move-only destruction.
 
 ## Typedefs
 
-```c
+```cpp
 typedef int Count;
 typedef Resource Handle;
 typedef const Count& ReadCount;
@@ -671,7 +671,7 @@ typedef const Count& ReadCount;
 
 ## Borrows
 
-```c
+```cpp
 void increment(int& value) {
     value = value + 1;
 }
@@ -711,7 +711,7 @@ int main() {
 
 ### Local references
 
-```c
+```cpp
 int number = 40;
 {
     int& value = &number;
@@ -750,7 +750,7 @@ whose return type carries no references has no returned-lifetime contract.
 
 ### Reference fields
 
-```c
+```cpp
 struct View { const int& value; };
 struct Counter { int& value; void increment() { this.value++; } };
 
@@ -803,7 +803,7 @@ See [heap-stored views](../examples/heap_views.cr),
 
 ### Borrowed returns
 
-```c
+```cpp
 import "lib/box.cr";
 
 struct Item {
@@ -837,7 +837,7 @@ int main() {
 - Temporary returned loans from a `?:` condition end before either branch
 - Each return path must use a declared source, including every possible origin of a forwarded reference
 
-```c
+```cpp
 int& choose(bool first, int& a, int& b) borrows(a, b) {
     if (first) return a;
     return b;
@@ -855,7 +855,7 @@ reference in a local or another value requires a named owner.
 
 ## Methods
 
-```c
+```cpp
 struct Counter {
     int value;
 
@@ -889,7 +889,7 @@ Read the argument into a local before calling `set`.
 
 An explicit `Self this` first parameter passes the receiver by value:
 
-```c
+```cpp
 int finish(Self this) {
     return this.value.get();
 }
@@ -904,7 +904,7 @@ int finish(Self this) {
 
 ### Static methods
 
-```c
+```cpp
 struct Counter {
     int value;
 
@@ -929,7 +929,7 @@ int main() {
 
 ## Raw pointers and C calls
 
-```c
+```cpp
 extern int puts(const char* text);
 
 int main() {
@@ -977,7 +977,7 @@ can differ, and conflicting types or variadic signatures produce diagnostics.
 
 An import can use a different Crust name from its C symbol:
 
-```c
+```cpp
 extern int native_destroy(int value) = "destroy";
 ```
 
@@ -989,7 +989,7 @@ See [renamed imports](../examples/renamed_imports.cr) for direct and callback us
 
 Functions and methods can declare an unsafe caller contract:
 
-```c
+```cpp
 unsafe int read(int* value) {
     return *value;
 }
@@ -1011,7 +1011,7 @@ pointees. Accesses retain the C compiler's volatile semantics through field
 access, array indexing, reborrows, and returned borrows. `print` reads volatile
 byte-array views one byte at a time, stopping at a zero byte or the array bound.
 
-```c
+```cpp
 extern volatile int status;
 
 int read_status(const volatile int& value) {
@@ -1033,7 +1033,7 @@ Use a volatile pointer or borrowed view to access local storage. See
 An `extern` function with a body defines a named C symbol. An optional alias
 chooses its C name, using the same syntax as imports.
 
-```c
+```cpp
 import "lib/box.cr";
 
 extern int add(int left, int right) = "example_add" {
@@ -1075,7 +1075,7 @@ copyable value reads a copy and leaves the source initialized.
 
 They let a generic owner pair C allocation with Crust cleanup:
 
-```c
+```cpp
 T* data = (T*)malloc(sizeof(T));
 if (data == 0) { abort(); }
 init(data, move(value));
@@ -1120,7 +1120,7 @@ For a shared borrow of a raw pointer binding, use a typedef such as
 
 ## External variables
 
-```c
+```cpp
 extern int count;
 extern const int limit;
 extern int local_name = "native_name";
@@ -1140,7 +1140,7 @@ a const object, and a callback variable from a separate C file.
 
 On Windows, DLL declarations can use `__declspec(dllimport)`:
 
-```c
+```cpp
 extern __declspec(dllimport) int count;
 extern __declspec(dllimport) const int limit;
 extern __declspec(dllimport) int increment();
@@ -1153,7 +1153,7 @@ This uses the native [DLL data import convention](https://learn.microsoft.com/en
 
 ## Function pointers and callbacks
 
-```c
+```cpp
 typedef int (*Callback)(int value);
 
 int increment(int value) { return value + 1; }
@@ -1183,7 +1183,7 @@ are responsible for a valid function pointer and the target's unsafe requirement
 
 ## Calling conventions
 
-```c
+```cpp
 typedef int (__vectorcall *Callback)(int);
 extern int __vectorcall apply_native(Callback callback, int value);
 int __vectorcall increment(int value) { return value + 1; }
@@ -1206,7 +1206,7 @@ These rules follow the native conventions documented for
 
 ## Destructors
 
-```c
+```cpp
 struct Resource {
     int handle;
 
@@ -1230,7 +1230,7 @@ struct Resource {
 
 ### Tagged unions
 
-```c
+```cpp
 tagged union Result<T, E> {
     T ok;
     E error;
@@ -1247,7 +1247,7 @@ source diagnostic if the field is inactive. Payload borrows overlap each other.
 
 Use `switch` to handle the alternatives:
 
-```c
+```cpp
 switch (result) {
     case ok:
         print(result.ok);
@@ -1274,7 +1274,7 @@ See [the result example](../examples/results.cr).
 
 ### C unions
 
-```c
+```cpp
 union Value {
     int integer;
     uint64_t wide;
@@ -1311,7 +1311,7 @@ private and expose safe methods that track the selected field. See
 External declarations and function pointer typedefs can end their parameter list
 with `...`, following at least one fixed parameter:
 
-```c
+```cpp
 extern int snprintf(char* destination, size_t capacity, const char* format, ...);
 typedef int (*Formatter)(char*, size_t, const char*, ...);
 ```

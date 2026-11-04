@@ -4,7 +4,7 @@ Include C headers inside a [C region](mixed-source.md). The selected `CC` handle
 ordinary preprocessing, and bundled libclang supplies the declarations used by
 Crust code.
 
-```c
+```cpp
 #pragma crust begin_c
 #include "native.h"
 #pragma crust end_c
@@ -54,7 +54,7 @@ declaration types require a C wrapper with a representable signature.
 
 Macros expand in both Crust and C regions, following ordinary C preprocessing:
 
-```c
+```cpp
 #pragma crust begin_c
 #include "native.h"
 #pragma crust end_c
@@ -94,7 +94,7 @@ To expose native records or enums through an exported Crust function, add
 layout. Handwritten native declarations and aliases remain available for
 explicit interfaces. For example:
 
-```c
+```cpp
 extern header "native.h";
 extern struct Local = "NativeRecord" { int c_init = "init"; };
 ```
@@ -165,7 +165,7 @@ signedness.
 A typed header function can expose a function-like macro, string macro, or
 floating macro. For example:
 
-```c
+```cpp
 #define API_DOUBLE(value) ((value) + (value))
 #define API_NAME "example"
 #define API_SCALE 1.5L
@@ -201,7 +201,7 @@ the importer can represent.
 For example, a pointer-to-array API can expose a flat pointer with an explicit
 row count. Keep the array cast inside C:
 
-```c
+```cpp
 static int feature_rows(const int *elements, size_t rows) {
     return feature_rows_native((const int (*)[3])elements, rows);
 }

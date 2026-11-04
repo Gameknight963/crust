@@ -14,7 +14,7 @@ C and builds native executables, static libraries, and shared libraries.
 
 ## Example
 
-```c
+```cpp
 import "lib/box.cr";
 
 void increment(int& value) {

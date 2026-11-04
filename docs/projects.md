@@ -24,7 +24,7 @@ Reusable Crust code uses ordinary relative imports. A library can contain
 several files, each importing its dependencies. Projects can keep a library in
 their source tree or import it from a neighboring checkout.
 
-```c
+```cpp
 import "../../shared/box.cr";
 import "../../shared/vector.cr";
 ```
@@ -148,7 +148,7 @@ information to Rust callers.
 
 ## Source imports
 
-```c
+```cpp
 import "buffer.cr";
 ```
 
