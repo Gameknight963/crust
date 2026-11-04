@@ -25,11 +25,11 @@
         <key>settings</key><dict><key>vsclassificationtype</key><string>keyword - control</string></dict>
       </dict>
       <dict>
-        <key>scope</key><string>keyword.control.directive.crust</string>
+        <key>scope</key><string>punctuation.definition.directive.crust, keyword.control.directive.crust</string>
         <key>settings</key><dict><key>vsclassificationtype</key><string>preprocessor keyword</string></dict>
       </dict>
       <dict>
-        <key>scope</key><string>string.quoted.double.crust, string.quoted.single.crust</string>
+        <key>scope</key><string>string.quoted.double.crust, string.quoted.single.crust, string.quoted.other.lt-gt.include.crust</string>
         <key>settings</key><dict><key>vsclassificationtype</key><string>string</string></dict>
       </dict>
       <dict>

@@ -114,7 +114,7 @@ impl Server {
         assert_eq!(capabilities["completionProvider"]["resolveProvider"], false);
         assert_eq!(
             capabilities["completionProvider"]["triggerCharacters"],
-            json!([".", ":", ">"])
+            json!([".", ":", ">", "#", " ", "\"", "<", "/"])
         );
         server.notify("initialized", json!({}));
         return server;
@@ -1401,7 +1401,127 @@ fn complete(server: &mut Server, uri: &str, position: Value) -> Vec<Value> {
         }),
     );
     assert!(response.error.is_none(), "{:?}", response.error);
-    return response.result.unwrap().as_array().unwrap().clone();
+    let result = response.result.unwrap();
+    assert_eq!(result["isIncomplete"], true);
+    return result["items"].as_array().unwrap().clone();
+}
+
+#[test]
+fn directive_completion_and_hover_work_without_a_checked_program_or_c_compiler() {
+    let uri = "untitled:directives.cr";
+    let mut server = Server::start();
+    for (version, (marked, label, insertion)) in [
+        ("#|", "include", "include"),
+        ("#pr|", "pragma", "pragma"),
+        ("#pragma b|", "begin_c", "crust begin_c"),
+        ("#pragma crust be|gin_c", "begin_c", "begin_c"),
+        ("/* \u{1f980} */ #pragma crust e|nd_c", "end_c", "end_c"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let cursor = marked.find('|').unwrap();
+        let source = format!(
+            "{}\r\nint main(){{return missing;}}",
+            marked.replace('|', "")
+        );
+        server.open(uri, version as i32 + 1, &source);
+        let items = complete(&mut server, uri, at(&source, cursor));
+        let item = items
+            .iter()
+            .find(|item| item["label"] == label)
+            .unwrap_or_else(|| panic!("{marked}: {items:?}"));
+        assert_eq!(item["textEdit"]["newText"], insertion);
+        assert_eq!(
+            item["textEdit"]["range"]["end"],
+            at(&source, source.find("\r\n").unwrap())
+        );
+    }
+    for (version, source, word) in [
+        (10, "#pragma begin_c\ninvalid source", "begin_c"),
+        (11, "#pragma crust end_c\ninvalid source", "end_c"),
+        (12, "#include <stdio.h>\ninvalid source", "include"),
+    ] {
+        server.change(uri, version, source);
+        server.diagnostics();
+        let response = server.request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": point(source, word)}),
+        );
+        assert!(
+            response.result.unwrap()["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("#pragma crust")
+        );
+        assert!(complete(&mut server, uri, json!({"line": 0, "character": 0})).is_empty());
+        let response = server.request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0}}),
+        );
+        assert!(response.error.is_none());
+        assert!(response.result.unwrap_or(Value::Null).is_null());
+    }
+    for (version, marked) in [
+        (20, "/*\n#pragma cr|\n*/"),
+        (21, "#pragma // cr|"),
+        (22, "#pragma warning \"cr|\""),
+    ] {
+        let cursor = marked.find('|').unwrap();
+        let source = marked.replace('|', "");
+        server.change(uri, version, &source);
+        server.diagnostics();
+        assert!(
+            complete(&mut server, uri, at(&source, cursor)).is_empty(),
+            "{marked}"
+        );
+    }
+    server.stop();
+}
+
+#[test]
+fn include_completion_searches_local_project_and_system_headers_during_errors() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/lsp-directives")
+        .join(std::process::id().to_string());
+    std::fs::create_dir_all(root.join("include/config")).unwrap();
+    std::fs::write(root.join("local.h"), "").unwrap();
+    std::fs::write(root.join("include/crust_api.h"), "").unwrap();
+    std::fs::write(root.join("include/config/settings.h"), "").unwrap();
+    std::fs::write(root.join("main.cr"), "int main(){return 0;}").unwrap();
+    std::fs::write(root.join("crust.toml"), "[project]\nname='directives'\n[[targets]]\nname='app'\nkind='executable'\nentry='main.cr'\n[targets.native]\ninclude-dirs=['include']\n").unwrap();
+    let uri = file_uri(&root.join("main.cr"));
+    let mut server = Server::start();
+    for (version, (source, expected, kind)) in [
+        ("#include \"loc", "local.h", 17),
+        ("#include <crust_", "crust_api.h", 17),
+        ("#include <conf", "config/", 19),
+        ("#include <config/set", "settings.h", 17),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        server.open(&uri, version as i32 + 1, source);
+        let items = complete(&mut server, &uri, at(source, source.len()));
+        let item = items
+            .iter()
+            .find(|item| item["label"] == expected)
+            .unwrap_or_else(|| panic!("{source}: {items:?}"));
+        assert_eq!(item["kind"], kind);
+        assert_eq!(item["textEdit"]["newText"], expected);
+    }
+    server.stop();
+    let compiler =
+        std::env::var_os("CC").unwrap_or_else(|| if cfg!(windows) { "clang" } else { "cc" }.into());
+    let mut server = Server::start_with_compiler(json!({"capabilities": {}}), &compiler);
+    let source = "#include <std";
+    server.open(&uri, 1, source);
+    let items = complete(&mut server, &uri, at(source, source.len()));
+    assert!(
+        items.iter().any(|item| item["label"] == "stdio.h"),
+        "{items:?}"
+    );
+    server.stop();
 }
 
 #[test]
@@ -1618,7 +1738,7 @@ fn completion_triggers_distinguish_member_operators_from_comparisons_and_single_
         );
         assert!(response.error.is_none());
         let result = response.result.unwrap();
-        let items = result.as_array().unwrap();
+        let items = result["items"].as_array().unwrap();
         assert_eq!(
             items
                 .iter()

@@ -60,6 +60,7 @@ ownership checking, C generation, and native compilation.
 | `src/lsp/rename.rs` | Project-wide rename and affected-target validation |
 | `src/lsp/signature.rs` | Signature-help responses and active parameters |
 | `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
+| `src/lsp/directives.rs` | Preprocessor completion, pragma hover help, and include search |
 | `src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `editors/visualstudio/CrustLanguageClient.cs` | Visual Studio language client and server process lifetime |
 | `editors/visualstudio/CrustPackage.cs` | Visual Studio project commands, target selection, and build errors |

@@ -139,7 +139,9 @@ pub(super) fn request(
     roots: &[PathBuf],
 ) -> Result<Value, super::semantic::RequestError> {
     let params: CompletionParams = serde_json::from_value(params)?;
-    return Ok(complete(params, documents, roots));
+    // Use Roslyn's CompletionList response shape. Our list is prefix-filtered,
+    // so ask clients to refresh it as the prefix changes.
+    return Ok(json!({"isIncomplete": true, "items": complete(params, documents, roots)}));
 }
 
 fn complete(
@@ -155,6 +157,11 @@ fn complete(
     let Some(cursor) = offset(&document.text, &params.position) else {
         return Value::Array(Vec::new());
     };
+    if let Some(items) =
+        super::directives::complete(&document.text, cursor, &params.text_document.uri)
+    {
+        return items;
+    }
     let Some(site) = site(&document.text, cursor) else {
         return Value::Array(Vec::new());
     };

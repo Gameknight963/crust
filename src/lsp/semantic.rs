@@ -325,6 +325,13 @@ pub(super) fn request(
         let params: PositionParams = serde_json::from_value(params)?;
         (params, None, None)
     };
+    if method == "textDocument/hover"
+        && let Some(document) = documents.get(&params.text_document.uri)
+        && let Some(cursor) = offset(&document.text, &params.position)
+        && let Some(hover) = super::directives::hover(&document.text, cursor)
+    {
+        return Ok(hover);
+    }
     let Some(context) = Context::load(&params.text_document.uri, documents, workspace_roots) else {
         if new_name.is_some() {
             return Err(RequestError::failed(

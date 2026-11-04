@@ -19,16 +19,28 @@ $crustClassifications = Join-Path $crustRoot 'classifications.json'
 $crustPreviousClassifications = $env:CRUST_LIVE_CLASSIFICATIONS
 $crustEditor = Join-Path $crustVs 'Common7/IDE/CommonExtensions/Microsoft/Editor'
 $crustProbe = Join-Path $crustRoot 'Crust.EditorProbe.dll'
-$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
+$crustReferences = @('CoreUtility', 'Text.Data', 'Text.Logic', 'Text.UI', 'Language') | ForEach-Object { '/r:' + (Join-Path $crustEditor "Microsoft.VisualStudio.$_.dll") }
+$crustImmutable = Join-Path $crustVs 'Common7/IDE/PublicAssemblies/System.Collections.Immutable.dll'
+if (-not (Test-Path -LiteralPath $crustImmutable)) { throw 'Visual Studio immutable collections assembly was not found.' }
+$crustReferences += '/r:' + $crustImmutable
 $crustReferences += '/r:' + (Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.7.2/Facades/netstandard.dll')
 & (Join-Path $crustVs 'MSBuild/Current/Bin/Roslyn/csc.exe') /nologo /warnaserror /target:library /r:System.ComponentModel.Composition.dll /r:System.Web.Extensions.dll @crustReferences "/out:$crustProbe" (Join-Path $PSScriptRoot 'tests/EditorProbe.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Editor probe compilation failed.' }
+$crustServerProbe = Join-Path $crustRoot 'Crust.ServerProbe.exe'
+& (Join-Path $crustVs 'MSBuild/Current/Bin/Roslyn/csc.exe') /nologo /warnaserror "/out:$crustServerProbe" (Join-Path $PSScriptRoot 'tests/ServerProbe.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Language server probe compilation failed.' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $crustTestPackage = Join-Path $crustRoot 'Crust.LiveTests.vsix'
 Copy-Item -LiteralPath $Package -Destination $crustTestPackage
 $crustZip = [IO.Compression.ZipFile]::Open($crustTestPackage, 'Update')
 try {
     [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($crustZip, $crustProbe, 'Crust.EditorProbe.dll') | Out-Null
+    $crustServer = $crustZip.GetEntry('Server/crust-lsp.exe')
+    $crustServerCopy = Join-Path $crustRoot 'crust-lsp-real.exe'
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($crustServer, $crustServerCopy)
+    $crustServer.Delete()
+    [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($crustZip, $crustServerCopy, 'Server/crust-lsp-real.exe') | Out-Null
+    [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($crustZip, $crustServerProbe, 'Server/crust-lsp.exe') | Out-Null
     $crustEntry = $crustZip.GetEntry('extension.vsixmanifest')
     $crustReader = [IO.StreamReader]::new($crustEntry.Open())
     try { $crustXml = [xml]$crustReader.ReadToEnd() } finally { $crustReader.Dispose() }
@@ -65,7 +77,13 @@ function Wait-CrustClassification([string]$Text, [hashtable]$Expected) {
             $crustMissing = @($Expected.GetEnumerator() | Where-Object {
                 $crustName = $_.Key
                 $crustType = $_.Value
-                -not ($crustSnapshot.spans | Where-Object { $_.text -eq $crustName -and $_.types -contains $crustType })
+                $crustOccurrences = [regex]::Matches($Text, [regex]::Escape($crustName))
+                -not ($crustSnapshot.spans | Where-Object {
+                    $crustSpan = $_
+                    $_.types -contains $crustType -and ($crustOccurrences | Where-Object {
+                        $_.Index -ge $crustSpan.start -and $_.Index + $_.Length -le $crustSpan.start + $crustSpan.length
+                    })
+                })
             })
             if ($crustMissing.Count -eq 0) { return }
         } catch { }
@@ -110,6 +128,22 @@ try {
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustIncomplete)
     Wait-CrustClassification $crustIncomplete $crustExpected
     Write-Output 'PASS: native editor semantic classifications survive an incomplete edit'
+    $crustDirectiveText = "#pragma begin_c`n#include <stdio.h>`n#pragma end_c`nint main() { printf(`"hello`"); return 0; }`n"
+    [CrustLiveIde]::Edit($crustDte, $crustSource, $crustDirectiveText)
+    Wait-CrustClassification $crustDirectiveText @{ '#' = 'preprocessor keyword'; pragma = 'preprocessor keyword'; begin_c = 'preprocessor keyword'; end_c = 'preprocessor keyword'; include = 'preprocessor keyword'; '<stdio.h>' = 'string'; '"hello"' = 'string'; return = 'keyword - control'; printf = 'method name' }
+    Copy-Item -LiteralPath $crustClassifications -Destination (Join-Path $crustRoot 'invalid-directive-classifications.json')
+    Write-Output 'PASS: pragma, include, header path, string, and control keyword colors with invalid source'
+    $crustPrefix = '#pragma crust be'
+    $crustCompletionText = "$crustPrefix`n#pragma crust end_c`nint main() { return 0; }`n"
+    [CrustLiveIde]::Edit($crustDte, $crustSource, $crustCompletionText)
+    $crustCompletionResult = $crustClassifications + '.completion'
+    $crustDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $crustCompletionResult) -and [DateTime]::UtcNow -lt $crustDeadline) { Start-Sleep -Milliseconds 200 }
+    if (-not (Test-Path -LiteralPath $crustCompletionResult)) { throw "Visual Studio completion failed: $(Get-Content -LiteralPath ($crustClassifications + '.completion-error') -Raw -ErrorAction SilentlyContinue)" }
+    $crustCompletions = Get-Content -LiteralPath $crustCompletionResult -Raw | ConvertFrom-Json
+    if (-not ($crustCompletions.items | Where-Object { $_.label -eq 'begin_c' -and $_.insertion -eq 'begin_c' })) { throw 'Visual Studio did not offer the native C marker.' }
+    if (-not $crustCompletions.committedText.StartsWith('#pragma crust begin_c')) { throw 'Visual Studio did not commit the native C marker.' }
+    Write-Output 'PASS: Visual Studio IntelliSense offers the native C marker'
     $crustText = "#pragma crust begin_c`n#include <stdio.h>`nstatic int mark(void) { FILE* f = fopen(`"ran.txt`", `"wb`"); if (!f) return 1; fputs(`"run`", f); return fclose(f); }`n#pragma crust end_c`nint main() {`n    int answer = 42;`n    print(answer);`n    return mark();`n}`n"
     [CrustLiveIde]::Edit($crustDte, $crustSource, $crustText)
     [CrustLiveIde]::Breakpoint($crustDte, $crustSource, 7)

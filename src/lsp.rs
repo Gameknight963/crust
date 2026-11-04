@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 mod completion;
+mod directives;
 mod rename;
 mod semantic;
 mod semantic_tokens;
@@ -96,7 +97,7 @@ pub fn serve(connection: &Connection) -> ServerResult<()> {
                     "full": true
                 },
                 "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
-                "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">"] },
+                "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">", "#", " ", "\"", "<", "/"] },
                 "textDocumentSync": { "openClose": true, "change": 1 }
             },
             "serverInfo": { "name": "crust-lsp", "version": env!("CARGO_PKG_VERSION") }

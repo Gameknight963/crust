@@ -98,9 +98,15 @@ internal static class ClientProbe
             });
             diagnostics = Receive(reader);
             Assert(((object[])Object(diagnostics["params"])["diagnostics"]).Length == 0, "diagnostic recovery");
-            Request(writer, 2, "shutdown", null);
+            Request(writer, 2, "textDocument/completion", new {
+                textDocument = new { uri = "untitled:client-probe.cr" }, position = new { line = 0, character = 2 }
+            });
+            var completions = Object(Receive(reader)["result"]);
+            Assert((bool)completions["isIncomplete"] && ((object[])completions["items"])
+                .Any(item => (string)Object(item)["label"] == "int"), "completion list accepted by Visual Studio");
+            Request(writer, 3, "shutdown", null);
             var shutdown = Receive(reader);
-            Assert(!shutdown.ContainsKey("error") && Convert.ToInt32(shutdown["id"]) == 2, "shutdown response");
+            Assert(!shutdown.ContainsKey("error") && Convert.ToInt32(shutdown["id"]) == 3, "shutdown response");
             Notify(writer, "exit", null);
             var closed = Task.Run(() => reader.ReadByte());
             Assert(closed.Wait(TimeSpan.FromSeconds(10)) && closed.Result == -1, "server shutdown");

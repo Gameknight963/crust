@@ -36,6 +36,30 @@ A C declaration does not automatically require an `unsafe` caller. Crust raw
 pointer operations and indirect calls still require `unsafe`. Native C bodies
 follow C rules and are checked by the C compiler.
 
+## Standard C headers
+
+Use the complete markers `#pragma crust begin_c` and `#pragma crust end_c`.
+The compiler diagnoses shorter markers such as `#pragma begin_c` at the pragma.
+
+[The stdio example](../examples/stdio.cr) imports `printf` from `<stdio.h>`:
+
+```c
+#pragma crust begin_c
+#include <stdio.h>
+#pragma crust end_c
+
+int main()
+{
+    char text[7] = "hello\n";
+    printf(&text[0]);
+    return 0;
+}
+```
+
+Crust string literals are byte arrays. A native `char` array supplies the element
+type required by C string APIs. Take its first element's address for a pointer
+parameter. The call above uses the `printf` declaration discovered from the header.
+
 ## Preprocessing
 
 `#define` works at file scope outside native regions too. Definitions, token
@@ -80,6 +104,12 @@ Crust names map back to the original document. Hover and navigation can follow
 imported native declarations. Renaming text produced by a macro expansion is
 rejected because changing that occurrence could change its macro definition or
 other expansions. Edit the macro definition explicitly.
+
+Directive completion and hover help work independently of program analysis.
+Completing `#pragma b` inserts `#pragma crust begin_c`. Header completion searches
+the source directory for quoted includes, project include directories, and the
+selected C compiler's system include directories. These features remain available
+while the program has syntax or type errors.
 
 Clients that forward C document changes to `crust-lsp` use unsaved included-header
 snapshots. Header changes refresh the dependent Crust diagnostics.

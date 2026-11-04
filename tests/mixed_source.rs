@@ -2,6 +2,43 @@ mod common;
 use common::compiler as crust;
 
 #[test]
+fn native_region_marker_errors_point_to_the_pragma_instead_of_the_c_header() {
+    for (pragma, expected) in [
+        ("#pragma begin_c", "#pragma crust begin_c"),
+        ("#pragma end_c", "#pragma crust end_c"),
+        ("#pragma crust begin", "unknown Crust pragma"),
+    ] {
+        let source =
+            format!("// header\r\n  {pragma}\r\n#include <stdio.h>\r\nint main(){{return 0;}}\r\n");
+        let diagnostic = crust::check(&source).unwrap_err();
+        assert!(diagnostic.message.contains(expected), "{diagnostic}");
+        assert_eq!(diagnostic.span.line, 2);
+        assert_eq!(diagnostic.span.column, 3);
+        assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], pragma);
+    }
+    crust::check("#if 0\n#pragma begin_c\n#pragma crust bad\n#endif\nint main(){return 0;}\n")
+        .unwrap();
+}
+
+#[test]
+fn stdio_header_example_imports_printf_and_runs_through_the_cli() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
+        .args(["run", "examples/stdio.cr"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "hello\n"
+    );
+}
+
+#[test]
 fn cc_preprocesses_crust_generics_macros_and_conditionals() {
     let output = common::tracked_run(
         r#"

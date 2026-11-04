@@ -15,7 +15,7 @@ const GENERATED: &str = "#pragma crust generated_begin";
 pub(crate) fn needed(text: &str) -> bool {
     return directive_lines(text)
         .iter()
-        .any(|(_, directive)| *directive);
+        .any(|(_, directive)| directive.is_some());
 }
 
 fn physical_lines(text: &str) -> Vec<&str> {
@@ -34,7 +34,7 @@ fn physical_lines(text: &str) -> Vec<&str> {
     return lines;
 }
 
-fn directive_lines(text: &str) -> Vec<(&str, bool)> {
+fn directive_lines(text: &str) -> Vec<(&str, Option<usize>)> {
     let mut output = Vec::new();
     let mut block = false;
     let mut quote = None;
@@ -43,7 +43,7 @@ fn directive_lines(text: &str) -> Vec<(&str, bool)> {
         let bytes = line.as_bytes();
         let mut i = 0;
         let mut content = false;
-        let mut directive = false;
+        let mut directive = None;
         while i < bytes.len() {
             let b = bytes[i];
             let next = bytes.get(i + 1).copied();
@@ -76,7 +76,7 @@ fn directive_lines(text: &str) -> Vec<(&str, bool)> {
                 break;
             }
             if !content && b == b'#' {
-                directive = true;
+                directive = Some(i);
             }
             if !b.is_ascii_whitespace() {
                 content = true;
@@ -86,9 +86,30 @@ fn directive_lines(text: &str) -> Vec<(&str, bool)> {
             }
             i += 1;
         }
+        // Recover at an ordinary line ending after an unfinished string. A
+        // backslash continuation can carry a C string onto the next line.
+        if !line.trim_end_matches(['\r', '\n']).ends_with('\\') {
+            quote = None;
+            escape = false;
+        }
         output.push((line, directive));
     }
     return output;
+}
+
+// The editor uses physical directive ranges even when preprocessing or parsing
+// fails. The scanner excludes # characters in comments and string literals.
+pub(crate) fn directives(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut start = 0;
+    return directive_lines(text)
+        .into_iter()
+        .filter_map(|(line, hash)| {
+            let range =
+                hash.map(|hash| start + hash..start + line.trim_end_matches(['\r', '\n']).len());
+            start += line.len();
+            return range;
+        })
+        .collect();
 }
 
 pub(crate) fn editor_text(text: &str) -> std::borrow::Cow<'_, str> {
@@ -99,8 +120,8 @@ pub(crate) fn editor_text(text: &str) -> std::borrow::Cow<'_, str> {
     let mut native = false;
     let mut continuation = false;
     for (line, directive) in directive_lines(text) {
-        let selected = if directive { region(line) } else { None };
-        let hidden = native || directive || continuation || selected.is_some();
+        let selected = directive.and_then(|hash| region(&line[hash..]));
+        let hidden = native || directive.is_some() || continuation || selected.is_some();
         if let Some(value) = selected {
             native = value;
         }
@@ -115,8 +136,8 @@ pub(crate) fn editor_text(text: &str) -> std::borrow::Cow<'_, str> {
         } else {
             result.push_str(line);
         }
-        continuation =
-            (directive || continuation) && line.trim_end_matches(['\r', '\n']).ends_with('\\');
+        continuation = (directive.is_some() || continuation)
+            && line.trim_end_matches(['\r', '\n']).ends_with('\\');
     }
     return std::borrow::Cow::Owned(result);
 }
@@ -617,6 +638,34 @@ pub(crate) fn prepare(
             }
             line_number += 1;
             continue;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        let pragma = match words.as_slice() {
+            ["#pragma", name, ..] if matches!(*name, "begin_c" | "end_c") => Some(format!(
+                "unrecognized C region marker. Use '#pragma crust {name}'"
+            )),
+            ["#pragma", "crust", ..] => Some(String::from(
+                "unknown Crust pragma. Expected '#pragma crust begin_c' or '#pragma crust end_c'",
+            )),
+            _ => None,
+        };
+        if let Some(message) = pragma {
+            let source = &result.inputs[&filename];
+            let start = line_start(source, line_number);
+            let original = source[start..].split(['\r', '\n']).next().unwrap_or("");
+            let hash = original.find('#').unwrap_or(0);
+            return Err(SourceError {
+                path: filename,
+                diagnostic: Diagnostic::new(
+                    Span {
+                        start: start + hash,
+                        end: start + original.trim_end_matches(['\r', '\n']).len(),
+                        line: line_number,
+                        column: original[..hash].chars().count() + 1,
+                    },
+                    message,
+                ),
+            });
         }
         if in_c || line.trim_start().starts_with('#') {
             native_expanded.push_str(line);

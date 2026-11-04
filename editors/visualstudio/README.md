@@ -119,6 +119,13 @@ TextMate supplies lexical highlighting for comments, strings, keywords, and
 numbers. Both layers use Visual Studio classifications and follow its editor
 theme.
 
+Preprocessor keywords, native region markers, and include filenames have distinct
+classifications. Directive completion and hover help work during compiler errors.
+Type `#pragma b` and complete it to get `#pragma crust begin_c`. Inside an include,
+completion searches local, project, and C compiler system header directories.
+See [mixed C and Crust](../../docs/mixed-source.md#standard-c-headers) for a
+working `stdio.h` example.
+
 ## Development checks
 
 ```powershell
@@ -146,6 +153,9 @@ compose with the services exported by the CPS project scope.
 The live test requires the Visual Studio extensibility tools. It installs a copy
 of the VSIX in a uniquely named experimental profile, creates a project through
 Visual Studio's template engine, and checks editor classifications during an
-incomplete edit. It verifies the first F5 build, a source breakpoint, local
+incomplete edit. It also checks directive and string colors with invalid source
+and offers and commits a native region marker through Visual Studio's completion
+service. The test waits for the deferred LSP completion session used by VS 18.
+It verifies the first F5 build, a source breakpoint, local
 evaluation, source stepping, and Ctrl+F5 execution. The experimental profile and
 diagnostics under `target/visualstudio-live-tests/` remain available for inspection.

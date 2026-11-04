@@ -165,7 +165,7 @@ impl Snapshot {
                     })
                     .collect();
                 for (line, directive) in directive_lines(&text) {
-                    if !directive {
+                    if directive.is_none() {
                         continue;
                     }
                     let Some(rest) = line
@@ -358,7 +358,7 @@ impl Snapshot {
         let mut output = String::new();
         for (line, directive) in directive_lines(text) {
             let mut rewritten = false;
-            if directive
+            if directive.is_some()
                 && let Some(rest) = line
                     .trim_start()
                     .strip_prefix('#')
