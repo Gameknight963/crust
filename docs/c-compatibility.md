@@ -36,8 +36,8 @@ routes and their caller contracts.
 - Check shared-library imports, runtime deployment, and generated export headers on each supported platform.
 - Document the unsafe contract for ownership, validity, aliasing, callbacks, and synchronization at each boundary.
 
-The [binding tests](../tests/bindings.rs) validate included header declarations
-through bundled libclang and native execution. [Project integration tests](../tests/projects.rs)
+The [binding tests](../crustc/tests/bindings.rs) validate included header declarations
+through bundled libclang and native execution. [Project integration tests](../crustc/tests/projects.rs)
 exercise compiler and linker behavior across project inputs.
 
 Native wrapper tests also execute atomic and thread-local accessors, flexible

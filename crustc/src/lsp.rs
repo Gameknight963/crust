@@ -1,0 +1,646 @@
+use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::path::{Path, PathBuf};
+mod completion;
+mod directives;
+mod rename;
+mod semantic;
+mod semantic_tokens;
+mod signature;
+mod watch;
+mod workspace;
+
+type ServerResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenParams {
+    text_document: OpenDocument,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenDocument {
+    uri: String,
+    language_id: String,
+    version: i32,
+    text: String,
+}
+
+#[derive(Clone)]
+struct Document {
+    native: bool,
+    version: i32,
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeParams {
+    text_document: VersionedDocument,
+    content_changes: Vec<ContentChange>,
+}
+
+#[derive(Deserialize)]
+struct VersionedDocument {
+    uri: String,
+    version: i32,
+}
+
+#[derive(Deserialize)]
+struct ContentChange {
+    text: String,
+    range: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloseParams {
+    text_document: DocumentId,
+}
+
+#[derive(Deserialize)]
+struct DocumentId {
+    uri: String,
+}
+
+pub fn serve(connection: &Connection) -> ServerResult<()> {
+    let (id, params) = connection.initialize_start()?;
+    let mut workspace_roots = workspace::roots(&params);
+    let visual_studio = params["initializationOptions"]["visualStudioClassifications"]
+        .as_bool()
+        .unwrap_or(false);
+    let semantic_refresh = params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"]
+        .as_bool()
+        .unwrap_or(false);
+    let mut next_refresh = 0_u64;
+    let document_changes = params["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"]
+        .as_bool()
+        .unwrap_or(false);
+    connection.initialize_finish(
+        id,
+        json!({
+            "capabilities": {
+                "positionEncoding": "utf-16",
+                "hoverProvider": true,
+                "definitionProvider": true,
+                "referencesProvider": true,
+                "renameProvider": { "prepareProvider": true },
+                "documentSymbolProvider": true,
+                "workspaceSymbolProvider": true,
+                "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
+                "semanticTokensProvider": {
+                    "legend": { "tokenTypes": semantic_tokens::legend(visual_studio), "tokenModifiers": semantic_tokens::MODIFIERS },
+                    "full": true
+                },
+                "workspace": { "workspaceFolders": { "supported": true, "changeNotifications": true } },
+                "completionProvider": { "resolveProvider": false, "triggerCharacters": [".", ":", ">", "#", " ", "\"", "<", "/"] },
+                "textDocumentSync": { "openClose": true, "change": 1 }
+            },
+            "serverInfo": { "name": "crust-lsp", "version": env!("CARGO_PKG_VERSION") }
+        }),
+    )?;
+
+    watch::register(connection, &params)?;
+    let mut documents = HashMap::new();
+    let mut semantic_snapshots = HashMap::new();
+    let mut published = HashMap::new();
+    let mut shutdown = false;
+    for message in &connection.receiver {
+        match message {
+            Message::Request(request) => {
+                let response = if shutdown {
+                    Response::new_err(
+                        request.id,
+                        ErrorCode::InvalidRequest as i32,
+                        String::from("server is shutting down"),
+                    )
+                } else if request.method == "shutdown" {
+                    if request.params.is_null() {
+                        shutdown = true;
+                        Response::new_ok(request.id, Value::Null)
+                    } else {
+                        Response::new_err(
+                            request.id,
+                            ErrorCode::InvalidParams as i32,
+                            String::from("shutdown takes no parameters"),
+                        )
+                    }
+                } else if request.method == "textDocument/semanticTokens/full" {
+                    match semantic_tokens::request(
+                        request.params,
+                        &documents,
+                        &workspace_roots,
+                        visual_studio,
+                        &mut semantic_snapshots,
+                    ) {
+                        Ok(result) => Response::new_ok(request.id, result),
+                        Err(error) => Response::new_err(request.id, error.code, error.message),
+                    }
+                } else if matches!(
+                    request.method.as_str(),
+                    "textDocument/hover"
+                        | "textDocument/definition"
+                        | "textDocument/references"
+                        | "textDocument/prepareRename"
+                        | "textDocument/rename"
+                        | "textDocument/documentSymbol"
+                        | "textDocument/completion"
+                        | "workspace/symbol"
+                        | "textDocument/signatureHelp"
+                ) {
+                    match semantic::request(
+                        &request.method,
+                        request.params,
+                        &documents,
+                        document_changes,
+                        &workspace_roots,
+                    ) {
+                        Ok(result) => Response::new_ok(request.id, result),
+                        Err(error) => Response::new_err(request.id, error.code, error.message),
+                    }
+                } else {
+                    Response::new_err(
+                        request.id,
+                        ErrorCode::MethodNotFound as i32,
+                        format!("unsupported request '{}'", request.method),
+                    )
+                };
+                connection.sender.send(response.into())?;
+            }
+            Message::Notification(notification) => {
+                if notification.method == "exit" {
+                    if shutdown {
+                        return Ok(());
+                    }
+                    return Err("exit received before shutdown".into());
+                }
+                if shutdown {
+                    continue;
+                }
+                let refresh = matches!(
+                    notification.method.as_str(),
+                    "textDocument/didOpen"
+                        | "textDocument/didChange"
+                        | "textDocument/didClose"
+                        | "workspace/didChangeWorkspaceFolders"
+                        | "workspace/didChangeWatchedFiles"
+                );
+                let result = if notification.method == "workspace/didChangeWorkspaceFolders" {
+                    workspace::change(notification.params, &mut workspace_roots).and_then(|()| {
+                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                    })
+                } else if notification.method == "workspace/didChangeWatchedFiles" {
+                    watch::validate(notification.params).and_then(|()| {
+                        publish_all(connection, &documents, &mut published, "", &workspace_roots)
+                    })
+                } else {
+                    document_notification(
+                        connection,
+                        &mut documents,
+                        &mut published,
+                        notification,
+                        &workspace_roots,
+                    )
+                };
+                semantic_snapshots.retain(|uri, _| documents.contains_key(uri));
+                if let Err(error) = result {
+                    connection.sender.send(
+                        Notification::new(
+                            "window/logMessage".into(),
+                            json!({
+                                "type": 2, "message": error.to_string()
+                            }),
+                        )
+                        .into(),
+                    )?;
+                } else if semantic_refresh && refresh {
+                    next_refresh += 1;
+                    connection.sender.send(
+                        lsp_server::Request::new(
+                            format!("crust-semantic-refresh-{next_refresh}").into(),
+                            "workspace/semanticTokens/refresh".to_owned(),
+                            Value::Null,
+                        )
+                        .into(),
+                    )?;
+                }
+            }
+            Message::Response(_) => {}
+        }
+    }
+    return Err("client disconnected before exit".into());
+}
+
+fn document_notification(
+    connection: &Connection,
+    documents: &mut HashMap<String, Document>,
+    published: &mut HashMap<String, Value>,
+    notification: Notification,
+    roots: &[PathBuf],
+) -> ServerResult<()> {
+    match notification.method.as_str() {
+        "textDocument/didOpen" => {
+            let params: OpenParams = serde_json::from_value(notification.params)?;
+            let item = params.text_document;
+            if !matches!(item.language_id.as_str(), "crust" | "c") {
+                return Ok(());
+            }
+            let document = Document {
+                native: item.language_id == "c",
+                version: item.version,
+                text: item.text,
+            };
+            documents.insert(item.uri.clone(), document);
+            publish_all(connection, documents, published, &item.uri, roots)?;
+        }
+        "textDocument/didChange" => {
+            let params: ChangeParams = serde_json::from_value(notification.params)?;
+            let Some(document) = documents.get_mut(&params.text_document.uri) else {
+                return Err("didChange requires an open document".into());
+            };
+            if params.text_document.version <= document.version {
+                return Ok(());
+            }
+            if params
+                .content_changes
+                .iter()
+                .any(|change| change.range.is_some())
+            {
+                return Err("crust-lsp requests full-document synchronization".into());
+            }
+            if params.content_changes.is_empty() {
+                return Ok(());
+            }
+            for change in params.content_changes {
+                document.text = change.text;
+            }
+            document.version = params.text_document.version;
+            publish_all(
+                connection,
+                documents,
+                published,
+                &params.text_document.uri,
+                roots,
+            )?;
+        }
+        "textDocument/didClose" => {
+            let params: CloseParams = serde_json::from_value(notification.params)?;
+            documents.remove(&params.text_document.uri);
+            published.remove(&params.text_document.uri);
+            connection.sender.send(
+                Notification::new(
+                    "textDocument/publishDiagnostics".into(),
+                    json!({
+                        "uri": params.text_document.uri, "diagnostics": []
+                    }),
+                )
+                .into(),
+            )?;
+            publish_all(
+                connection,
+                documents,
+                published,
+                &params.text_document.uri,
+                roots,
+            )?;
+        }
+        _ => {}
+    }
+    return Ok(());
+}
+
+fn diagnostic_json(source: &str, diagnostic: crate::diagnostic::Diagnostic) -> Value {
+    return json!({
+        "range": {
+            "start": position(source, diagnostic.span.start),
+            "end": position(source, diagnostic.span.end)
+        },
+        "severity": 1,
+        "source": "crust",
+        "message": diagnostic.message
+    });
+}
+
+struct Sources {
+    paths: HashMap<PathBuf, String>,
+    graphs: Vec<crate::source::SourceSet>,
+    errors: Vec<crate::source::SourceError>,
+    targets: HashMap<PathBuf, crate::ProgramKind>,
+}
+
+fn source_text(
+    path: &Path,
+    paths: &HashMap<PathBuf, String>,
+    documents: &HashMap<String, Document>,
+) -> std::io::Result<String> {
+    if let Some(uri) = paths.get(path) {
+        return Ok(documents[uri].text.clone());
+    }
+    return std::fs::read_to_string(path);
+}
+
+fn load_sources(documents: &HashMap<String, Document>, roots: &[PathBuf]) -> Sources {
+    let paths: HashMap<_, _> = documents
+        .keys()
+        .filter_map(|uri| uri_path(uri).map(|path| (path, uri.clone())))
+        .collect();
+    let read = |path: &Path| {
+        return source_text(path, &paths, documents);
+    };
+    let mut graphs = Vec::new();
+    let mut errors = Vec::new();
+    let mut targets = HashMap::new();
+    for (uri, document) in documents {
+        if document.native {
+            continue;
+        }
+        if let Some(path) = uri_path(uri) {
+            match crate::source::SourceSet::load_with(&path, read) {
+                Ok(sources) => graphs.push(sources),
+                Err(error) => errors.push(error),
+            }
+        }
+    }
+    let mut manifests: HashSet<_> = paths
+        .keys()
+        .filter_map(|path| {
+            path.parent()?
+                .ancestors()
+                .map(|directory| directory.join("crust.toml"))
+                .find(|manifest| manifest.is_file())
+        })
+        .collect();
+    manifests.extend(
+        roots
+            .iter()
+            .filter_map(|root| crate::project::Project::discover(root).ok()),
+    );
+    for manifest in manifests {
+        let project = match crate::project::Project::load_diagnostic(&manifest) {
+            Ok(project) => project,
+            Err(error) => {
+                let range = error.range.unwrap_or(0..0);
+                errors.push(crate::source::SourceError {
+                    path: manifest,
+                    diagnostic: crate::diagnostic::Diagnostic::new(
+                        crate::diagnostic::Span {
+                            start: range.start,
+                            end: range.end,
+                            line: 1,
+                            column: 1,
+                        },
+                        error.message,
+                    ),
+                });
+                continue;
+            }
+        };
+        for target in project.targets {
+            targets.insert(target.entry.clone(), target.kind.program_kind());
+            graphs.retain(|sources| sources.files()[0].path != target.entry);
+            errors.retain(|error| error.path != target.entry);
+            match crate::source::SourceSet::load_for_target(
+                &target.entry,
+                &target.native,
+                target.kind,
+                read,
+            ) {
+                Ok(sources)
+                    if sources
+                        .files()
+                        .iter()
+                        .any(|file| paths.contains_key(&file.path)) =>
+                {
+                    graphs.push(sources)
+                }
+                Err(error)
+                    if paths.contains_key(&target.entry) || paths.contains_key(&error.path) =>
+                {
+                    errors.push(error)
+                }
+                _ => {}
+            }
+        }
+    }
+    // Analyze entries before their open dependencies, including import cycles.
+    graphs.sort_by(|a, b| {
+        b.files()
+            .len()
+            .cmp(&a.files().len())
+            .then_with(|| a.files()[0].path.cmp(&b.files()[0].path))
+    });
+    return Sources {
+        paths,
+        graphs,
+        errors,
+        targets,
+    };
+}
+
+fn publish_all(
+    connection: &Connection,
+    documents: &HashMap<String, Document>,
+    published: &mut HashMap<String, Value>,
+    active: &str,
+    roots: &[PathBuf],
+) -> ServerResult<()> {
+    let Sources {
+        paths,
+        graphs,
+        errors,
+        targets,
+    } = load_sources(documents, roots);
+    let mut diagnostics: HashMap<String, Vec<Value>> = documents
+        .keys()
+        .map(|uri| (uri.clone(), Vec::new()))
+        .collect();
+    for (uri, document) in documents {
+        if !document.native
+            && uri_path(uri).is_none()
+            && let Err(error) = crate::check(&document.text)
+        {
+            diagnostics
+                .get_mut(uri)
+                .unwrap()
+                .push(diagnostic_json(&document.text, error));
+        }
+    }
+    for error in errors {
+        let target = paths
+            .get(&error.path)
+            .cloned()
+            .unwrap_or_else(|| path_uri(&error.path));
+        let text = source_text(&error.path, &paths, documents).unwrap_or_default();
+        let values = diagnostics.entry(target).or_default();
+        let value = diagnostic_json(&text, error.diagnostic);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    let mut covered = HashSet::new();
+    for sources in graphs {
+        let entry = &sources.files()[0].path;
+        if covered.contains(entry) && !targets.contains_key(entry) {
+            continue;
+        }
+        covered.extend(sources.files().iter().map(|file| file.path.clone()));
+        let kind = targets.get(entry).copied().unwrap_or_default();
+        if let Err(error) = sources.check_with_kind(kind) {
+            let target = paths
+                .get(&error.path)
+                .cloned()
+                .unwrap_or_else(|| path_uri(&error.path));
+            let text = &sources
+                .files()
+                .iter()
+                .find(|file| file.path == error.path)
+                .unwrap()
+                .text;
+            let values = diagnostics.entry(target).or_default();
+            let value = diagnostic_json(text, error.diagnostic);
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+    }
+    for uri in published.keys() {
+        diagnostics.entry(uri.clone()).or_default();
+    }
+    let mut uris: Vec<_> = diagnostics.keys().cloned().collect();
+    uris.sort_by(|a, b| (a != active).cmp(&(b != active)).then_with(|| a.cmp(b)));
+    for uri in uris {
+        let mut payload = json!({ "uri": uri, "diagnostics": diagnostics[&uri] });
+        if let Some(document) = documents.get(&uri) {
+            payload["version"] = json!(document.version);
+        }
+        if published.get(&uri) != Some(&payload) {
+            connection.sender.send(
+                Notification::new("textDocument/publishDiagnostics".into(), payload.clone()).into(),
+            )?;
+            if !documents.contains_key(&uri) && payload["diagnostics"] == json!([]) {
+                published.remove(&uri);
+            } else {
+                published.insert(uri, payload);
+            }
+        }
+    }
+    return Ok(());
+}
+
+fn uri_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let (host, encoded) = rest.split_once('/')?;
+    let mut bytes = Vec::new();
+    let mut index = 0;
+    while index < encoded.len() {
+        let byte = encoded.as_bytes()[index];
+        if byte == b'%' {
+            bytes.push(u8::from_str_radix(encoded.get(index + 1..index + 3)?, 16).ok()?);
+            index += 3;
+        } else {
+            if matches!(byte, b'?' | b'#' | 0) {
+                return None;
+            }
+            bytes.push(byte);
+            index += 1;
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    if path.contains('\0') {
+        return None;
+    }
+    let local = host.is_empty() || host.eq_ignore_ascii_case("localhost");
+    let path = if cfg!(windows) && !local {
+        PathBuf::from(format!("//{host}/{path}"))
+    } else if !local {
+        return None;
+    } else if cfg!(windows) && path.as_bytes().get(1) == Some(&b':') {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(format!("/{path}"))
+    };
+    return crate::source::identity(&path).ok();
+}
+
+fn path_uri(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let path = path
+        .strip_prefix("//?/UNC/")
+        .map(|path| format!("//{path}"))
+        .unwrap_or_else(|| path.strip_prefix("//?/").unwrap_or(&path).to_owned());
+    let mut uri = if path.starts_with("//") {
+        "file:".to_owned()
+    } else if path.starts_with('/') {
+        "file://".to_owned()
+    } else {
+        "file:///".to_owned()
+    };
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    return uri;
+}
+
+// Compiler spans use byte offsets and character columns. LSP's default uses
+// UTF-16 code units, including two units for characters outside the BMP.
+fn position(source: &str, offset: usize) -> Value {
+    let mut end = offset.min(source.len());
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut line = 0;
+    let mut character = 0;
+    let mut chars = source[..end].chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                line += 1;
+                character = 0;
+            }
+            '\n' => {
+                line += 1;
+                character = 0;
+            }
+            _ => character += ch.len_utf16(),
+        }
+    }
+    return json!({ "line": line, "character": character });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_uris_round_trip_spaces_unicode_reserved_characters_and_existing_paths() {
+        let root = Path::new(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap(),
+        );
+        for path in [root.to_owned(), root.join("target/uri test 🦀 #%.cr")] {
+            let identity = crate::source::identity(&path).unwrap();
+            assert_eq!(uri_path(&path_uri(&identity)), Some(identity));
+        }
+        for uri in [
+            "untitled:main.cr",
+            "file:///bad%",
+            "file:///bad%GG",
+            "file:///bad%00",
+            "file:///bad#fragment",
+        ] {
+            assert!(uri_path(uri).is_none(), "{uri}");
+        }
+    }
+}

@@ -28,7 +28,7 @@ def main():
     arguments = parser.parse_args()
     rustc = command(["rustc", "-vV"])
     host = next(line.removeprefix("host: ") for line in rustc.splitlines() if line.startswith("host: "))
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+    version = tomllib.loads((ROOT / "crustc/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     build = ["cargo", "build", "--release", "--locked", "--bins", "--target", host]
     if arguments.offline:
         build.append("--offline")
@@ -42,13 +42,13 @@ def main():
     files = {}
     native_runtime, libclang_name = runtime_files()
     files.update(native_runtime)
-    for binary in ["crust", "crust-lsp"]:
+    for binary in ["crust", "crustc", "crust-lsp"]:
         path = target / host / "release" / f"{binary}{suffix}"
         subprocess.run([str(path), "--help"], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         files[f"bin/{path.name}"] = path
     tracked = subprocess.check_output([
         "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "Cargo.toml", "Cargo.lock", "README.md",
-        "src", "lib", "docs", "examples", "editors", "tests", "tools", "third-party",
+        "crustc", "lib", "docs", "examples", "editors", "tools", "third-party",
     ], cwd=ROOT)
     for entry in tracked.decode("utf-8").split("\0"):
         if entry and (ROOT / entry).is_file():
@@ -97,6 +97,8 @@ def main():
         if hashlib.sha256((extracted / entry).read_bytes()).hexdigest() != digest:
             raise RuntimeError(f"Archive checksum mismatch: {entry}")
     compiler = extracted / "bin" / f"crust{suffix}"
+    source_compiler = extracted / "bin" / f"crustc{suffix}"
+    command([str(source_compiler), "check", "examples/hello.cr"], cwd=extracted)
     mixed = extracted / "examples/mixed.cr"
     mixed_output = subprocess.check_output(
         [str(compiler), "run", str(mixed), "--release"], cwd=extracted, text=True,

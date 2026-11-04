@@ -181,9 +181,9 @@ and thread-local storage through accessor functions.
 
 ## Other native wrappers
 
-The executable [wrapper fixture](../tests/fixtures/c-wrappers.h) contains the C
+The executable [wrapper fixture](../crustc/tests/fixtures/c-wrappers.h) contains the C
 implementations used by `native_header_wrappers_cover_extended_c_storage_types_arrays_and_macros`
-in the [binding tests](../tests/bindings.rs). Each public function has a signature
+in the [binding tests](../crustc/tests/bindings.rs). Each public function has a signature
 the importer can represent.
 
 | C facility | Tested wrapper | Caller contract |

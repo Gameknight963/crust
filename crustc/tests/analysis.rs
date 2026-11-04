@@ -1,0 +1,706 @@
+mod common;
+use common::compiler as crustc;
+
+use crustc::analysis::{Analysis, SymbolKind};
+
+#[test]
+fn signature_help_resolves_functions_methods_generics_callbacks_and_parameter_ranges() {
+    let source = r#"
+        int add(int left, int right) { return left + right; }
+        T identity<T>(T value) { return value; }
+        typedef int (*Callback)(int, int);
+        struct Item {
+            int value;
+            static Self create(int value) { return (Self){ .value = value }; }
+            int get(int amount) const { return this.value + amount; }
+            int take(Self this, int extra) { return this.value + extra; }
+        };
+        int main() {
+            print(add(1, add(2, 3)));
+            print(identity<int>(4));
+            Item item = Item::create(5);
+            print(item.get(6)); print(item.take(7));
+            Callback callback = add;
+            unsafe { print(callback(8, 9)); }
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    for (needle, advance, expected, argument) in [
+        ("add(2, 3)", 4, "int add(int left, int right)", 0),
+        ("add(2, 3)", 7, "int add(int left, int right)", 1),
+        ("3)))", 2, "int add(int left, int right)", 1),
+        ("identity<int>(4)", 14, "int identity(int value)", 0),
+        (
+            "Item::create(5)",
+            13,
+            "struct Item Item::create(int value)",
+            0,
+        ),
+        ("item.get(6)", 9, "int Item.get(int amount) const", 0),
+        ("item.take(7)", 10, "int Item.take(int extra)", 0),
+    ] {
+        let help = analysis
+            .signature_help_at(0, source.find(needle).unwrap() + advance)
+            .unwrap();
+        assert_eq!(help.signatures[0].label, expected, "{needle}");
+        assert_eq!(help.argument, argument, "{needle}");
+        for signature in help.signatures {
+            let label: Vec<_> = signature.label.encode_utf16().collect();
+            for parameter in signature.parameters {
+                assert_eq!(
+                    String::from_utf16(&label[parameter.start..parameter.end]).unwrap(),
+                    parameter.label
+                );
+            }
+        }
+    }
+    let help = analysis
+        .signature_help_at(0, source.find("callback(8, 9)").unwrap() + 12)
+        .unwrap();
+    assert!(help.signatures[0].label.contains("callback(int, int)"));
+    assert_eq!(help.argument, 1);
+    assert!(analysis.signature_help_at(0, source.len()).is_none());
+}
+
+#[test]
+fn signature_help_counts_argument_boundaries_across_generic_commas_and_nested_initializers() {
+    let source = r#"
+        struct Pair<A, B> { A first; B second; };
+        int value<A, B>(Pair<A, B> pair) { return (int)pair.first; }
+        int add(int first, int second) { return first + second; }
+        int main() {
+            Pair<int, char> pair = { .first = 1, .second = 'a' };
+            print(add(value<int, char>((Pair<int, char>){ .first = 1, .second = 'a' }), 3));
+            return add(value<int, char>(pair), 2);
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    let offset = source.find("char>(pair)").unwrap() + 2;
+    let help = analysis.signature_help_at(0, offset).unwrap();
+    assert_eq!(help.argument, 0);
+    assert_eq!(help.signatures[0].label, "int add(int first, int second)");
+    let offset = source.find("pair), 2").unwrap() + 7;
+    assert_eq!(analysis.signature_help_at(0, offset).unwrap().argument, 1);
+    let offset = source.find("'a' }), 3").unwrap();
+    let help = analysis.signature_help_at(0, offset).unwrap();
+    assert_eq!(help.argument, 0);
+    assert!(help.signatures[0].label.contains("value("));
+}
+
+#[test]
+fn member_completion_resolves_types_aliases_static_members_borrows_and_private_access() {
+    use crustc::analysis::MemberAccess;
+    let source = r#"
+        enum Status { Ready, Failed };
+        typedef Status State;
+        struct Item {
+            private int hidden;
+            int value;
+            static Self create() { return (Self){ .hidden = 1, .value = 2 }; }
+            int get() const { return this.hidden; }
+        };
+        typedef Item Named;
+        int main() {
+            Item item = Named::create();
+            print(item.get());
+            const Item& reference = &const item;
+            print(reference.get());
+            print(State::Ready == Status::Ready);
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    let names = |needle: &str, length: usize, access| {
+        return analysis
+            .member_completions_at(0, source.find(needle).unwrap() + length - 1, access)
+            .iter()
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>();
+    };
+    assert_eq!(names("Named::", 5, MemberAccess::Type), ["create"]);
+    assert_eq!(names("item.get", 4, MemberAccess::Value), ["get", "value"]);
+    assert_eq!(
+        names("reference.", 9, MemberAccess::Value),
+        ["get", "value"]
+    );
+    assert_eq!(
+        names("this.hidden", 4, MemberAccess::Value),
+        ["get", "hidden", "value"]
+    );
+    assert_eq!(names("State::", 5, MemberAccess::Type), ["Failed", "Ready"]);
+}
+
+#[test]
+fn member_completion_keeps_concrete_generic_types_and_chained_receivers() {
+    use crustc::analysis::MemberAccess;
+    let source = r#"
+        struct Cell<T> {
+            T value;
+            static Self create(T value) { return (Self){ .value = value }; }
+            T get() const { return this.value; }
+        };
+        struct Holder { Cell<int> cell; };
+        int main() {
+            Holder holder = { .cell = Cell<int>::create(1) };
+            Cell<char> letter = Cell<char>::create('a');
+            print(holder.cell.get()); print(letter.get());
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    for (needle, length, access, expected) in [
+        ("Cell<int>::create", 9, MemberAccess::Type, vec!["create"]),
+        ("Cell<char>::create", 10, MemberAccess::Type, vec!["create"]),
+        (
+            "holder.cell.get",
+            11,
+            MemberAccess::Value,
+            vec!["get", "value"],
+        ),
+        ("letter.get", 6, MemberAccess::Value, vec!["get", "value"]),
+        ("this.value", 4, MemberAccess::Value, vec!["get", "value"]),
+    ] {
+        let symbols =
+            analysis.member_completions_at(0, source.find(needle).unwrap() + length - 1, access);
+        assert_eq!(
+            symbols
+                .iter()
+                .map(|symbol| symbol.name.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{needle}"
+        );
+    }
+}
+
+#[test]
+fn completion_respects_block_scopes_declaration_order_shadowing_and_for_lifetimes() {
+    let source = r#"
+        extern int external_value;
+        int helper(int argument) { return argument; }
+        int main() {
+            int value = 1;
+            { int copy = value + 1; int value = 2; print(value); int later = 3; }
+            for (int index = 0; index < 1; index += 1) { print(index); }
+            print(value);
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    let candidates = |offset| analysis.completions_at(0, offset);
+    assert!(analysis.completions_at(1, 0).is_empty());
+    assert!(analysis.completions_at(0, source.len() + 1).is_empty());
+    let initializer = candidates(source.find("value + 1").unwrap());
+    assert_eq!(
+        initializer
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 1").unwrap()
+    );
+    let inner = candidates(source.find("print(value)").unwrap());
+    assert_eq!(
+        inner
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 2").unwrap()
+    );
+    assert!(
+        !inner
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "later" | "argument" | "index"))
+    );
+    assert!(inner.iter().any(|symbol| symbol.name == "external_value"));
+    assert!(inner.iter().any(|symbol| symbol.name == "helper"));
+    assert!(
+        candidates(source.find("print(index)").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "index")
+    );
+    let outer = candidates(source.rfind("print(value)").unwrap());
+    assert!(
+        !outer
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "index" | "later" | "argument"))
+    );
+    assert_eq!(
+        outer
+            .iter()
+            .find(|symbol| symbol.name == "value")
+            .unwrap()
+            .location
+            .span
+            .start,
+        source.find("value = 1").unwrap()
+    );
+    assert!(
+        candidates(source.find("return argument").unwrap())
+            .iter()
+            .any(|symbol| symbol.name == "argument")
+    );
+}
+
+#[test]
+fn completion_keeps_generic_parameters_within_their_source_declarations() {
+    let source = "T identity<T>(T value) { return value; } int main() { return identity<int>(1); }";
+    let analysis = crustc::analyze(source).unwrap();
+    let generic = analysis.completions_at(0, source.find("return value").unwrap());
+    assert!(generic.iter().any(|symbol| symbol.name == "T"));
+    assert!(generic.iter().any(|symbol| symbol.name == "value"));
+    let main = analysis.completions_at(0, source.find("return identity").unwrap());
+    assert!(
+        !main
+            .iter()
+            .any(|symbol| matches!(symbol.name.as_str(), "T" | "value"))
+    );
+}
+
+#[test]
+fn reference_search_groups_redeclarations_and_preserves_lexical_bindings() {
+    let source = r#"
+        typedef int Count;
+        typedef int Count;
+        extern int native(Count);
+        extern int native(int);
+        extern int other(int) = "native";
+        int main() {
+            Count value = 1;
+            { Count value = 2; print(value); }
+            value = value + 1;
+            unsafe { print(native(value)); print(other(value)); }
+            return value;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    for offset in source
+        .match_indices("native")
+        .map(|(offset, _)| offset)
+        .take(2)
+    {
+        let references = analysis.references_at(0, offset, true);
+        assert_eq!(references.len(), 3);
+        assert!(
+            references
+                .iter()
+                .all(|location| &source[location.span.start..location.span.end] == "native")
+        );
+        assert_eq!(analysis.references_at(0, offset, false).len(), 1);
+    }
+    let alias = source.find("Count;\n        extern").unwrap();
+    assert_eq!(analysis.references_at(0, alias, true).len(), 5);
+    assert_eq!(analysis.references_at(0, alias, false).len(), 3);
+    let local = source.find("value = 1").unwrap();
+    assert_eq!(analysis.references_at(0, local, false).len(), 5);
+    let shadow = source.find("value = 2").unwrap();
+    assert_eq!(analysis.references_at(0, shadow, true).len(), 2);
+    assert_eq!(
+        analysis
+            .references_at(0, source.find("other(int)").unwrap(), true)
+            .len(),
+        2
+    );
+    assert!(
+        analysis
+            .references_at(0, source.find("\"native\"").unwrap() + 1, true)
+            .is_empty()
+    );
+}
+
+#[test]
+fn reference_search_deduplicates_generic_replays_and_distinguishes_member_owners() {
+    let source = r#"
+        struct First { int value; int get() const { return this.value; } };
+        struct Second { int value; int get() const { return this.value; } };
+        T identity<T>(T value) { return value; }
+        int main() {
+            First first = { .value = 1 };
+            Second second = { .value = 2 };
+            print(first.get()); print(second.get());
+            print(identity<int>(1)); print(identity<char>('a'));
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    let generic = source.find("identity<T>").unwrap();
+    assert_eq!(analysis.references_at(0, generic, true).len(), 3);
+    let parameter = source.find("value) { return value").unwrap();
+    assert_eq!(analysis.references_at(0, parameter, true).len(), 2);
+    for offset in source
+        .match_indices("get() const")
+        .map(|(offset, _)| offset)
+    {
+        assert_eq!(analysis.references_at(0, offset, true).len(), 2);
+        assert_eq!(analysis.references_at(0, offset, false).len(), 1);
+    }
+    let first_field = source.find("value;").unwrap();
+    assert_eq!(analysis.references_at(0, first_field, true).len(), 3);
+}
+
+fn definition<'a>(
+    analysis: &'a Analysis,
+    source: &str,
+    needle: &str,
+) -> &'a crustc::analysis::Symbol {
+    let offset = source.find(needle).unwrap();
+    let definitions = analysis.definitions_at(0, offset);
+    assert_eq!(definitions.len(), 1, "expected a definition at {needle}");
+    return definitions[0];
+}
+
+#[test]
+fn bindings_resolve_parameters_shadowed_locals_reads_writes_and_calls() {
+    let source = r#"
+        int answer(int input) {
+            int value = input;
+            { int value = 7; print(value); }
+            value = 42;
+            return value;
+        }
+        int main() { int input = 1; return answer(input); }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    assert_eq!(
+        definition(&analysis, source, "input;").kind,
+        SymbolKind::Parameter
+    );
+    assert_eq!(
+        definition(&analysis, source, "input;").location.span.start,
+        source.find("input)").unwrap()
+    );
+    assert_eq!(
+        definition(&analysis, source, "value);").location.span.start,
+        source.find("value = 7").unwrap()
+    );
+    assert_eq!(
+        definition(&analysis, source, "value = 42")
+            .location
+            .span
+            .start,
+        source.find("value = input").unwrap()
+    );
+    assert_eq!(
+        definition(&analysis, source, "value;").location.span.start,
+        source.find("value = input").unwrap()
+    );
+    assert_eq!(
+        definition(&analysis, source, "answer(input)").detail,
+        "int answer(int input)"
+    );
+    assert_eq!(
+        definition(&analysis, source, "input);").location.span.start,
+        source.find("input = 1").unwrap()
+    );
+}
+
+#[test]
+fn fields_methods_static_factories_enums_and_callbacks_keep_their_resolved_declarations() {
+    let source = r#"
+        enum Status { Ready = 7 };
+        typedef int (*Callback)(int);
+        struct Counter {
+            int value;
+            static Self create(int value) { return (Self){ .value = value }; }
+            int get() const { return this.value; }
+        };
+        int identity(int value) { return value; }
+        int main() {
+            Counter counter = Counter::create(42);
+            print(counter.get()); print(counter.value);
+            print((int)Status::Ready);
+            Callback callback = identity; unsafe { print(callback(1)); }
+            return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    assert_eq!(
+        definition(&analysis, source, "get());").detail,
+        "int get() const"
+    );
+    assert_eq!(
+        definition(&analysis, source, "create(42)").detail,
+        "static Self create(int value)"
+    );
+    assert_eq!(
+        definition(&analysis, source, "value);").kind,
+        SymbolKind::Field
+    );
+    assert_eq!(
+        definition(&analysis, source, "Ready);").kind,
+        SymbolKind::EnumMember
+    );
+    assert_eq!(
+        definition(&analysis, source, "identity;")
+            .location
+            .span
+            .start,
+        source.find("identity(int").unwrap()
+    );
+    assert_eq!(
+        definition(&analysis, source, "callback(1)").kind,
+        SymbolKind::Variable
+    );
+    assert_eq!(
+        definition(&analysis, source, "callback(1)").detail,
+        "Callback callback"
+    );
+}
+
+#[test]
+fn instantiated_generics_share_source_declarations_and_keep_call_site_types() {
+    let source = "T identity<T>(T value) { return value; } int main() { print(identity<int>(42)); print(identity<char>('a')); return 0; }";
+    let analysis = crustc::analyze(source).unwrap();
+    let first = definition(&analysis, source, "identity<int>");
+    let second = definition(&analysis, source, "identity<char>");
+    assert_eq!(first.location, second.location);
+    assert_eq!(first.detail, "T identity<T>(T value)");
+    assert_eq!(
+        analysis
+            .type_at(0, source.find("42").unwrap())
+            .unwrap()
+            .description,
+        "int"
+    );
+    assert_eq!(
+        analysis
+            .type_at(0, source.find("'a'").unwrap())
+            .unwrap()
+            .description,
+        "char"
+    );
+    assert_eq!(definition(&analysis, source, "value;").detail, "T value");
+}
+
+#[test]
+fn analysis_uses_the_same_frontend_errors_as_compilation() {
+    let source = "int main() { Box<int> owner = Box<int>::create(1); Box<int> moved = move(owner); print(owner.get()); return 0; }";
+    assert_eq!(
+        crustc::analyze(source).unwrap_err(),
+        crustc::check(source).unwrap_err()
+    );
+}
+
+#[test]
+fn analysis_maps_imported_declarations_to_their_own_file_and_byte_offsets() {
+    let root = std::path::Path::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap(),
+    )
+    .join("target/virtual-analysis");
+    let entry = "import \"helper.cr\"; int main() { return answer(42); }";
+    let helper = "// 🦀\r\nint answer(int value) { return value; }";
+    let sources = crustc::source::SourceSet::load_with(&root.join("main.cr"), |path| {
+        return Ok(if path.ends_with("main.cr") {
+            entry.to_owned()
+        } else {
+            helper.to_owned()
+        });
+    })
+    .unwrap();
+    let analysis = sources.analyze().unwrap();
+    let definitions = analysis.definitions_at(0, entry.find("answer").unwrap());
+    assert_eq!(definitions.len(), 1);
+    let location = definitions[0].location;
+    assert_eq!(location.file, 1);
+    assert_eq!(location.span.start, helper.find("answer").unwrap());
+    assert_eq!(location.span.line, 2);
+    assert!(
+        analysis.files[location.file]
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("helper.cr")
+    );
+    assert_eq!(definitions[0].detail, "int answer(int value)");
+}
+
+#[test]
+fn type_names_follow_alias_precedence_explicit_tags_and_scoped_enum_members() {
+    let source = r#"
+        struct Item { int value; };
+        typedef int Item;
+        enum Status { Ready };
+        union Handle;
+        int main() {
+            Item count = 1;
+            struct Item record = { .value = 2 };
+            Status status = Status::Ready;
+            union Handle* pointer = 0;
+            return count + record.value;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    assert_eq!(
+        definition(&analysis, source, "Item count").kind,
+        SymbolKind::Alias
+    );
+    assert_eq!(
+        definition(&analysis, source, "Item count").detail,
+        "typedef int Item"
+    );
+    assert_eq!(
+        definition(&analysis, source, "Item record").kind,
+        SymbolKind::Struct
+    );
+    assert_eq!(
+        definition(&analysis, source, "Status::Ready").kind,
+        SymbolKind::Enum
+    );
+    assert_eq!(
+        definition(&analysis, source, "Ready;").kind,
+        SymbolKind::EnumMember
+    );
+    assert_eq!(
+        definition(&analysis, source, "Handle* pointer").kind,
+        SymbolKind::Union
+    );
+}
+
+#[test]
+fn unused_templates_interfaces_constraints_and_generic_parameter_bindings_have_symbols() {
+    let source = r#"
+        interface Readable { int read() const; };
+        struct Unused<T: Readable> { T value; };
+        T identity<T>(T T) { return T; }
+        int main() { print(identity<int>(42)); return 0; }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    assert!(
+        analysis
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "Unused" && symbol.kind == SymbolKind::Struct)
+    );
+    assert!(analysis.symbols.iter().any(|symbol| symbol.name == "read"
+        && symbol.kind == SymbolKind::Method
+        && symbol.container.as_deref() == Some("Readable")));
+    assert_eq!(
+        definition(&analysis, source, "Readable>").kind,
+        SymbolKind::Interface
+    );
+    assert_eq!(
+        definition(&analysis, source, "T identity").kind,
+        SymbolKind::TypeParameter
+    );
+    assert_eq!(
+        definition(&analysis, source, "T T)").kind,
+        SymbolKind::TypeParameter
+    );
+    assert_eq!(
+        definition(&analysis, source, "T;").kind,
+        SymbolKind::Parameter
+    );
+    assert_eq!(definition(&analysis, source, "T;").detail, "T T");
+}
+
+#[test]
+fn type_arguments_and_qualified_type_names_take_precedence_over_enclosing_function_references() {
+    let source = r#"
+        typedef int Count;
+        typedef int (*Callback)(int);
+        T identity<T>(T value) { return value; }
+        struct Helpers { int value; static int read(int value) { return value; } };
+        int main() { Callback first = identity<int>; Callback second = identity<Count>; Callback third = Helpers::read; return 0; }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    assert!(
+        analysis
+            .definitions_at(0, source.find("int>;").unwrap())
+            .is_empty()
+    );
+    assert_eq!(
+        analysis
+            .type_at(0, source.find("int>;").unwrap())
+            .unwrap()
+            .description,
+        "int"
+    );
+    assert_eq!(
+        definition(&analysis, source, "Count>;").kind,
+        SymbolKind::Alias
+    );
+    assert_eq!(
+        definition(&analysis, source, "Helpers::read").kind,
+        SymbolKind::Struct
+    );
+    assert_eq!(
+        definition(&analysis, source, "read;").kind,
+        SymbolKind::Method
+    );
+}
+
+#[test]
+fn unused_interface_signatures_keep_self_and_aliases_in_their_declaration_scope() {
+    let source = "typedef int Count; interface Factory { static Self create(Count count); }; int main() { return 0; }";
+    let analysis = crustc::analyze(source).unwrap();
+    assert_eq!(
+        definition(&analysis, source, "Self create").kind,
+        SymbolKind::Interface
+    );
+    assert_eq!(
+        definition(&analysis, source, "Count count").kind,
+        SymbolKind::Alias
+    );
+    assert_eq!(
+        definition(&analysis, source, "create(Count").detail,
+        "static Self create(Count count)"
+    );
+}
+
+#[test]
+fn reference_ranges_preserve_identifier_tokens_and_implicit_receivers_are_not_method_uses() {
+    let source = r#"
+        typedef int (*Callback)(int);
+        int identity(int value) { return value; }
+        struct Counter { int value; int get() const { return (this).value; } };
+        int main() {
+            int number = 7; print((number));
+            Callback call = &(identity); unsafe { print(call(1)); }
+            Counter counter = { .value = 42 }; print(counter.get()); return 0;
+        }
+    "#;
+    let analysis = crustc::analyze(source).unwrap();
+    for needle in ["number));", "identity);", "call(1)"] {
+        let offset = source.find(needle).unwrap();
+        let reference = analysis
+            .references
+            .iter()
+            .find(|reference| {
+                reference.location.span.start == offset && reference.declaration.is_some()
+            })
+            .unwrap();
+        let text = &source[reference.location.span.start..reference.location.span.end];
+        assert!(
+            text.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "{text}"
+        );
+    }
+    let method = analysis
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "get")
+        .unwrap();
+    assert_eq!(
+        analysis
+            .references
+            .iter()
+            .filter(|reference| reference.declaration == Some(method.location))
+            .count(),
+        1
+    );
+    let offset = source.find("this").unwrap();
+    assert!(analysis.definitions_at(0, offset).is_empty());
+    assert_eq!(
+        analysis.type_at(0, offset).unwrap().description,
+        "struct Counter"
+    );
+}

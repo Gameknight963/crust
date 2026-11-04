@@ -36,6 +36,6 @@ and borrows, generates C, and invokes a native C compiler.
 ## Validation
 
 - For compiler changes, run `cargo fmt --check, cargo test --offline, and cargo clippy --offline --all-targets -- -D warnings`
-- Verify ownership changes with compiled execution. tests/common/mod.rs provides allocator tracking for cleanup tests
+- Verify ownership changes with compiled execution. crustc/tests/common/mod.rs provides allocator tracking for cleanup tests
 - For documentation changes, check the diff, local links, and any changed examples as appropriate
 - For VS Code client changes, run npm run check and npm run package in editors/vscode

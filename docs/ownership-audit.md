@@ -14,7 +14,7 @@ field restarted its cycle guard. This affected ordinary calls that store a
 reference through an accessor, even when the recursive pointer was null and
 never dereferenced at runtime.
 
-The [retention traversal](../src/check/retention.rs) now shares its active
+The [retention traversal](../crustc/src/check/retention.rs) now shares its active
 type/projection set across struct fields.
 It removes entries on return so separate fields remain independently visible.
 Regression tests cover self-recursive and mutually recursive records, compiled
@@ -33,12 +33,12 @@ the stored reference remains live.
 | Raw and native boundaries | Raw address creation permissions, explicit unsafe dereference/indexing/arithmetic/casts/calls, and union reads |
 | Library resources | Byte/string bounds and allocation arithmetic, file handle detachment before close, and SQLite statement/connection cleanup |
 
-The new [audit tests](../tests/ownership_audit.rs) check unsafe boundaries and
-reference escapes. The [cleanup model](../tests/ownership_model.rs) independently
+The new [audit tests](../crustc/tests/ownership_audit.rs) check unsafe boundaries and
+reference escapes. The [cleanup model](../crustc/tests/ownership_model.rs) independently
 predicts destructor and free events for control-flow paths and checks them
 against native execution. Its allocation tracker also rejects invalid frees
 and live allocations at program exit. The
-[stored-reference tests](../tests/stored_borrows.rs) exercise the recursive-record
+[stored-reference tests](../crustc/tests/stored_borrows.rs) exercise the recursive-record
 finding and propagation through calls.
 
 ## Validation

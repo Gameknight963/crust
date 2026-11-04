@@ -1,8 +1,9 @@
 # Installation
 
 Extract a compiler archive and add its `bin` directory to `PATH`. It contains
-`crust` and the standalone `crust-lsp` server. The archive also includes the
-source library, examples, documentation, compiler sources, and the libclang
+`crustc`, the `crust` project driver, and the standalone `crust-lsp` server.
+The archive also includes the source library, examples, documentation, compiler
+sources, and the libclang
 runtime used to analyze C declarations.
 
 Install a C11 compiler and its development libraries. Crust defaults to Clang

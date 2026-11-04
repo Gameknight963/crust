@@ -31,7 +31,7 @@ fn main() {
     let heap_views = include_str!("heap_views.cr")
         .replace("import \"../lib/box.cr\";", &declarations)
         .replace("import \"../lib/vector.cr\";", "");
-    crust::check(&heap_views).expect("heap-view mutation seed must compile");
+    crustc::check(&heap_views).expect("heap-view mutation seed must compile");
     let methods = include_str!("methods.cr").replace("import \"../lib/box.cr\";", &declarations);
     library.push_str(r#"
         int main() {
@@ -47,7 +47,7 @@ fn main() {
             return 0;
         }
     "#);
-    crust::check(&library).expect("library mutation seed must compile");
+    crustc::check(&library).expect("library mutation seed must compile");
     let corpus = [
         include_str!("hello.cr"),
         methods.as_str(),
@@ -75,7 +75,7 @@ fn main() {
         library.as_str(),
     ];
     for source in &corpus {
-        crust::check(source).expect("mutation corpus seed must pass checking");
+        crustc::check(source).expect("mutation corpus seed must pass checking");
     }
     let fragments: &[&[u8]] = &[
         b"{}",
@@ -121,8 +121,8 @@ fn main() {
         let source = String::from_utf8_lossy(&bytes);
         std::fs::write(&current, source.as_bytes()).unwrap();
         let result = std::panic::catch_unwind(|| {
-            let _ = crust::compile(&source);
-            let _ = crust::analyze(&source);
+            let _ = crustc::compile(&source);
+            let _ = crustc::analyze(&source);
         });
         if let Err(panic) = result {
             let crash = directory.join(format!("crash_{seed}_{iteration}.cr"));

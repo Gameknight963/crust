@@ -7,61 +7,63 @@ ownership checking, C generation, and native compilation.
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.rs` | CLI commands, source loading, build output, execution |
-| `src/lib.rs` | Frontend and source-to-C APIs |
-| `src/lexer.rs` | Tokens and scanning |
-| `src/diagnostic.rs` | Source locations and diagnostics |
-| `src/frontend.rs` | Frontend worker stack and thread-start diagnostics |
-| `src/parser/limits.rs` | Parser recursion, expression-tree, and type-composition limits |
-| `src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
-| `src/analysis/rename.rs` | Rename edits, native-name preservation, and binding validation |
-| `src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
-| `src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
-| `src/analysis/signatures.rs` | Resolved call signatures, argument boundaries, and parameter label ranges |
-| `src/bindings.rs` | Native declaration discovery and type rendering |
-| `src/bindings/libclang.rs` | C declarations, enum representations, and record fields |
-| `src/bindings/enums.rs` | Native enum metadata |
-| `src/bindings/records.rs` | Native record metadata |
-| `src/bindings/render.rs` | C type trees to Crust declarations |
-| `src/preprocess/snapshot.rs` | Source/header snapshots and import preprocessing |
-| `src/ast.rs` | Syntax tree and type representation |
-| `src/parser.rs` | Declarations, statements, expressions |
-| `src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
-| `src/parser/calling_conventions.rs` | Target calling conventions and DLL import attributes |
-| `src/parser/constants.rs` | Integer constant evaluation, array lengths, and enum dependencies |
-| `src/parser/integers.rs` | C integer type specifiers |
-| `src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
-| `src/check.rs` | Names, types, ownership states, call-argument borrows |
-| `src/check/captures.rs` | Stored reference paths, lifetime sources, and retained loans |
-| `src/check/drop_borrows.rs` | Source cleanup order and references protected through destructors |
-| `src/types.rs` | Struct and array layout dependencies and ownership propagation |
-| `src/types/borrows.rs` | Reference-containing types, mutability, and destructor queries |
-| `src/emit_c.rs` | Generated C and cleanup |
-| `src/header.rs` | C export prototypes, callback declarations, and native tag preservation |
-| `src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
-| `src/native.rs` | Native compiler invocation and Windows toolchain discovery |
-| `src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
-| `src/native/shared.rs` | Shared-library compilation, import libraries, and coordinated output recovery |
-| `src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
-| `src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
-| `src/native/tool_paths.rs` | Native tool working directories and preserved input paths |
-| `src/native/debug_bundle.rs` | macOS symbol bundle validation and recovery |
-| `src/native/source_mapping_tests.rs` | Native source locations, debug records, and filename escaping |
-| `src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
-| `src/project.rs` | TOML project loading, discovery, and target selection |
-| `src/project/links.rs` | Native target dependency order and transitive archive inputs |
-| `src/project/metadata.rs` | Versioned project metadata for editor and build-tool integrations |
-| `src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
-| `src/lsp.rs` | Document synchronization and compiler diagnostics |
-| `src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
-| `src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
-| `src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
-| `src/lsp/watch.rs` | Client file-watcher registration and disk-change event validation |
-| `src/lsp/rename.rs` | Project-wide rename and affected-target validation |
-| `src/lsp/signature.rs` | Signature-help responses and active parameters |
-| `src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
-| `src/lsp/directives.rs` | Preprocessor completion and include search |
-| `src/bin/crust-lsp.rs` | Standalone stdio language server |
+| `crustc/src/main.rs` | `crust` project-driver entry point |
+| `crustc/src/bin/crustc.rs` | `crustc` compiler entry point |
+| `crustc/src/cli.rs` | Shared CLI commands, source loading, build output, execution |
+| `crustc/src/lib.rs` | Frontend and source-to-C APIs |
+| `crustc/src/lexer.rs` | Tokens and scanning |
+| `crustc/src/diagnostic.rs` | Source locations and diagnostics |
+| `crustc/src/frontend.rs` | Frontend worker stack and thread-start diagnostics |
+| `crustc/src/parser/limits.rs` | Parser recursion, expression-tree, and type-composition limits |
+| `crustc/src/analysis.rs` | Public symbol, reference, and expression-type snapshots |
+| `crustc/src/analysis/rename.rs` | Rename edits, native-name preservation, and binding validation |
+| `crustc/src/analysis/completion.rs` | Lexical completion scopes, declaration order, and shadowing |
+| `crustc/src/analysis/members.rs` | Resolved receiver types, member sets, and private-field visibility |
+| `crustc/src/analysis/signatures.rs` | Resolved call signatures, argument boundaries, and parameter label ranges |
+| `crustc/src/bindings.rs` | Native declaration discovery and type rendering |
+| `crustc/src/bindings/libclang.rs` | C declarations, enum representations, and record fields |
+| `crustc/src/bindings/enums.rs` | Native enum metadata |
+| `crustc/src/bindings/records.rs` | Native record metadata |
+| `crustc/src/bindings/render.rs` | C type trees to Crust declarations |
+| `crustc/src/preprocess/snapshot.rs` | Source/header snapshots and import preprocessing |
+| `crustc/src/ast.rs` | Syntax tree and type representation |
+| `crustc/src/parser.rs` | Declarations, statements, expressions |
+| `crustc/src/parser/generics.rs` | Generic declarations, concrete instantiation, and interface requirements |
+| `crustc/src/parser/calling_conventions.rs` | Target calling conventions and DLL import attributes |
+| `crustc/src/parser/constants.rs` | Integer constant evaluation, array lengths, and enum dependencies |
+| `crustc/src/parser/integers.rs` | C integer type specifiers |
+| `crustc/src/parser/symbols.rs` | Source declarations and lexical type-parameter bindings |
+| `crustc/src/check.rs` | Names, types, ownership states, call-argument borrows |
+| `crustc/src/check/captures.rs` | Stored reference paths, lifetime sources, and retained loans |
+| `crustc/src/check/drop_borrows.rs` | Source cleanup order and references protected through destructors |
+| `crustc/src/types.rs` | Struct and array layout dependencies and ownership propagation |
+| `crustc/src/types/borrows.rs` | Reference-containing types, mutability, and destructor queries |
+| `crustc/src/emit_c.rs` | Generated C and cleanup |
+| `crustc/src/header.rs` | C export prototypes, callback declarations, and native tag preservation |
+| `crustc/src/runtime_numbers.h` | Embedded C helpers for checked arithmetic, indexing, and text output |
+| `crustc/src/native.rs` | Native compiler invocation and Windows toolchain discovery |
+| `crustc/src/native/archive.rs` | Static archive staging, C object compilation, and archiver invocation |
+| `crustc/src/native/shared.rs` | Shared-library compilation, import libraries, and coordinated output recovery |
+| `crustc/src/native/executable.rs` | Executable backups, native output checks, and failure recovery |
+| `crustc/src/native/staging.rs` | Fresh build directories and tracked-file cleanup |
+| `crustc/src/native/tool_paths.rs` | Native tool working directories and preserved input paths |
+| `crustc/src/native/debug_bundle.rs` | macOS symbol bundle validation and recovery |
+| `crustc/src/native/source_mapping_tests.rs` | Native source locations, debug records, and filename escaping |
+| `crustc/src/native/volatile_tests.rs` | Optimized LLVM checks for volatile loads and stores |
+| `crustc/src/project.rs` | TOML project loading, discovery, and target selection |
+| `crustc/src/project/links.rs` | Native target dependency order and transitive archive inputs |
+| `crustc/src/project/metadata.rs` | Versioned project metadata for editor and build-tool integrations |
+| `crustc/src/source.rs` | Import graph loading, source identity, and diagnostic mapping |
+| `crustc/src/lsp.rs` | Document synchronization and compiler diagnostics |
+| `crustc/src/lsp/semantic.rs` | Hover, definition, references, document symbols, and request positions |
+| `crustc/src/lsp/completion.rs` | Completion items, prefix ranges, and partial-word analysis repairs |
+| `crustc/src/lsp/workspace.rs` | Workspace folders, target loading, and cross-project symbol search |
+| `crustc/src/lsp/watch.rs` | Client file-watcher registration and disk-change event validation |
+| `crustc/src/lsp/rename.rs` | Project-wide rename and affected-target validation |
+| `crustc/src/lsp/signature.rs` | Signature-help responses and active parameters |
+| `crustc/src/lsp/semantic_tokens.rs` | Resolved identifier classification and UTF-16 semantic-token encoding |
+| `crustc/src/lsp/directives.rs` | Preprocessor completion and include search |
+| `crustc/src/bin/crust-lsp.rs` | Standalone stdio language server |
 | `editors/visualstudio/CrustLanguageClient.cs` | Visual Studio language client and server process lifetime |
 | `editors/visualstudio/CrustPackage.cs` | Visual Studio project commands, target selection, and build errors |
 | `editors/visualstudio/ProjectTool.cs` | Compiler process invocation and project metadata |
@@ -72,9 +74,9 @@ ownership checking, C generation, and native compilation.
 | `editors/msbuild/Tasks/` | Compiler task invocation, metadata, and source diagnostics for both MSBuild hosts |
 | `editors/visualstudio/ConsoleRunner.cs` | Console input, output, and exit handling |
 | `editors/visualstudio/test.ps1` | VSIX inspection and packaged-client protocol checks |
-| `tests/common/mod.rs` | Allocator tracking for native cleanup tests |
-| `tests/common/files.rs` | Native file-handle tracking and I/O fault injection |
-| `tests/release_app.rs` | File-statistics CLI, argument forwarding, recoverable errors, and allocation-failure cleanup |
+| `crustc/tests/common/mod.rs` | Allocator tracking for native cleanup tests |
+| `crustc/tests/common/files.rs` | Native file-handle tracking and I/O fault injection |
+| `crustc/tests/release_app.rs` | File-statistics CLI, argument forwarding, recoverable errors, and allocation-failure cleanup |
 
 ## Continuous integration
 
@@ -87,7 +89,7 @@ artifact.
 A Linux job runs native ownership and borrowing tests under AddressSanitizer
 and UndefinedBehaviorSanitizer. To run the same tests locally, set
 `CRUST_TEST_SANITIZERS=address,undefined` before invoking Cargo. This setting
-instruments generated C executed by `tests/common/mod.rs`.
+instruments generated C executed by `crustc/tests/common/mod.rs`.
 
 ## Frontend mutation testing
 
@@ -190,7 +192,7 @@ Expression and type limits use iterative walks, including chains built without
 recursive parsing. Struct tags end the type-composition walk, allowing recursive
 structures through pointers.
 
-`crust::analyze` and `SourceSet::analyze` return source snapshots with declarations,
+`crustc::analyze` and `SourceSet::analyze` return source snapshots with declarations,
 resolved references, and expression types. Locations identify a file index and a
 file-local byte span. Generic instances share their original declarations, and
 ambiguous concrete types in replayed bodies are omitted from type queries.
@@ -384,13 +386,13 @@ owning sources must be declared before their reference holders. Destructor
 queries visit each concrete type once, including repeated aggregate shapes.
 
 Compiler ownership fixtures define `Box<T>` in
-[tests/common/box.cr](../tests/common/box.cr). The test compiler facade appends
+[crustc/tests/common/box.cr](../crustc/tests/common/box.cr). The test compiler facade appends
 that definition to fixtures that use it. Production compilation resolves owner
 types through their source declarations and imports.
 
 ## Ownership model test
 
-`tests/ownership_model.rs` generates mixed operations on vectors of owning
+`crustc/tests/ownership_model.rs` generates mixed operations on vectors of owning
 resources and compares native execution with a Rust model. Four deterministic
 seeds cover insertion, removal, replacement, mutation, swaps, capacity changes,
 whole-container moves, and recovery of rejected values after allocation failure.
@@ -449,16 +451,16 @@ source-library APIs.
 
 ## Mixed-source frontend
 
-`src/preprocess.rs` runs the selected C compiler's preprocessor before parsing
+`crustc/src/preprocess.rs` runs the selected C compiler's preprocessor before parsing
 Crust. It keeps native C regions opaque, resolves included headers through the
 preprocessor's include trace, and maps expanded tokens to original source
-locations. `src/preprocess/snapshot.rs` stages source and project headers,
+locations. `crustc/src/preprocess/snapshot.rs` stages source and project headers,
 including unsaved editor text. Imports become guarded includes so macro state
 and header identity are shared across the target. `SourceSet::load_for_target`
 selects the preprocessing flags for executables, static libraries, and shared
 libraries. CLI and project-aware LSP paths use this entry point.
 
-`src/bindings/libclang.rs` loads the stable libclang C API and analyzes only the
+`crustc/src/bindings/libclang.rs` loads the stable libclang C API and analyzes only the
 preprocessed C regions. Referenced C declarations enter the existing native type
 renderer before Crust's parser and semantic checker run. Function bodies stay
 with the native compiler. `tools/native_runtime.py` collects the shared runtime

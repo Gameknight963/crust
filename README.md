@@ -70,9 +70,19 @@ use const native `char` arrays containing UTF-8 and work with C string APIs.
 - [Target links](examples/linked_project/): automatic library builds and native linking
 - [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64
 
+## Repository layout
+
+- `crustc/`: Rust compiler crate, command-line tools, language server, and compiler tests
+- `lib/`: Crust source library
+- `examples/`: Crust programs and integration projects
+- `editors/`: editor and MSBuild integrations
+- `docs/`: language and tooling documentation
+
 ## Getting started
 
-Compiler archives include `crust`, `crust-lsp`, and the source library.
+Compiler archives include `crustc`, `crust`, `crust-lsp`, and the source library.
+Use `crustc` for source-file compilation and `crust` for project commands.
+Both commands currently share the same driver and accept the existing command syntax.
 See [installation](docs/installation.md) for binary setup and archive builds.
 
 Install Rust and Cargo, plus a C11 compiler and its development libraries.
@@ -81,7 +91,7 @@ For [mixed-source builds](docs/mixed-source.md) from a checkout, install libclan
 or set `CRUST_LIBCLANG` to its library file. Compiler archives bundle it.
 
 ```powershell
-cargo run -- examples/hello.cr
+cargo run --bin crustc -- examples/hello.cr
 cargo run -- examples/methods.cr
 cargo run -- examples/destructors.cr
 cargo run -- run --project examples/project

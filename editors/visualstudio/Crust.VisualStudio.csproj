@@ -75,6 +75,9 @@
     <Content Include="$(CompilerExecutable)">
       <Link>Server/crust.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../target/release/crustc.exe">
+      <Link>Server/crustc.exe</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="$(LibClangRuntime)">
       <Link>Server/libclang.dll</Link><IncludeInVSIX>true</IncludeInVSIX><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
