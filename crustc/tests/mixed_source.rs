@@ -583,7 +583,7 @@ static inline GoInt64 cgo_answer(GoInt64 value) { return value + CGO_OFFSET; }
         "42\n"
     );
 
-    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_crustc"))
+    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
         .args(["run", entry.to_str().unwrap()])
         .current_dir(&root)
         .output()

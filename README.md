@@ -52,6 +52,27 @@ Get the latest nightly releases from here. These are all zipped for now, Linux d
 [Linux compiler, Clang](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-ubuntu-latest-clang.zip) <br>
 [Linux compiler, GCC](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-ubuntu-latest-gcc.zip) <br>
 
+These zips will contain everything you need to get started:
+
+```
+crust-0.1.0-x86_64-pc-windows-msvc/
+├── bin/                 # Add bin/ to PATH
+│   ├── crust.exe
+│   ├── crustc.exe
+│   ├── crust-lsp.exe
+│   └── libclang.dll
+├── lib/                 # Standard library
+├── examples/
+├── docs/
+├── editors/
+├── crustc/              # Compiler source
+├── tools/
+├── third-party/
+├── Cargo.toml
+├── Cargo.lock
+├── README.md
+└── manifest.json        # Version and file checksums
+```
 
 Additionally, for editor support:
 
@@ -99,7 +120,8 @@ For [mixed-source builds](docs/mixed-source.md) from a checkout, install libclan
 or set `CRUST_LIBCLANG` to its library file. Compiler archives bundle it.
 
 ```
-cargo run --bin crustc -- examples/hello.cr
+cargo build --bins
+cargo run --bin crustc -- examples/hello.cr -o target/hello
 cargo run -- examples/methods.cr
 cargo run -- examples/destructors.cr
 cargo run -- run --project examples/project
@@ -117,8 +139,7 @@ Use `--release` with `build` or `run` to optimize generated programs with native
 `-O2`. Builds default to `-O0`. `--debug` selects `-O0` with debug symbols.
 Project flags apply to linked project dependencies too.
 
-Use `cargo run -- <command> <file.cr>` for a source file, or run a command in a
-directory containing `crust.toml`:
+`crust` (not `crustc`) is the project driver. Use `crust` for your projects.
 
 | Command | Action |
 | --- | --- |
@@ -130,10 +151,25 @@ directory containing `crust.toml`:
 | `tokens` | Print tokens and source locations |
 | `metadata` | Write project targets and output paths as JSON |
 
-Passing a source filename directly also compiles and runs it:
+`Crust` can also compile and runs individual source files:
 
 ```
-crustc examples/ownership.cr
+crust run examples/ownership.cr
+```
+
+For direct compilation, use `crustc`:
+
+```
+crustc examples/hello.cr -o target/hello
+```
+
+`crustc` builds the output without running it. It also supports several options:
+
+```
+crustc --check hello.cr
+crustc --emit-c hello.cr
+crustc --emit-header library.cr --kind static-library
+crustc --tokens hello.cr
 ```
 
 ## Documentation

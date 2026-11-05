@@ -384,7 +384,7 @@ fn library_search_paths_and_standard_overrides_work_from_other_directories() {
     std::fs::write(root.join("standard/probe.cr"), "int std_value(){return 7;}").unwrap();
     let entry = root.join("main.cr");
     std::fs::write(&entry, "import <json/parser.cr>; import <std/probe.cr>; int main(){print(json_value());print(std_value());return 0;}").unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crustc"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_crust"))
         .arg("run")
         .arg(&entry)
         .current_dir(std::env::temp_dir())

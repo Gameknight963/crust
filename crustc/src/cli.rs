@@ -280,84 +280,116 @@ fn process_source(
     kind: TargetKind,
     program_arguments: &[OsString],
 ) -> Result<ExitCode, String> {
-    if mode == Mode::Run && kind != TargetKind::Executable {
-        return Err(format!(
-            "{} libraries are built with 'crust build' and linked by a consumer",
-            if kind == TargetKind::StaticLibrary {
-                "static"
+    use std::io::Write;
+    use std::process::Stdio;
+    let compiler = if let Some(path) = env::var_os("CRUSTC") {
+        PathBuf::from(path)
+    } else {
+        let current = env::current_exe()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| error.to_string())?;
+        current
+            .parent()
+            .ok_or("driver executable needs a directory")?
+            .join(if cfg!(windows) {
+                "crustc.exe"
             } else {
-                "shared"
-            }
-        ));
-    }
-    match mode {
-        Mode::Tokens => {
-            let sources = crustc::source::SourceSet::load_for_target(path, native, kind, |path| {
-                fs::read_to_string(path)
+                "crustc"
             })
-            .map_err(|error| error.to_string())?;
-            for (path, token) in sources.tokens() {
-                println!(
-                    "{}:{}:{}  {:?}",
-                    path.display(),
-                    token.span.line,
-                    token.span.column,
-                    token.kind
-                );
+    };
+    let mut arguments = vec![
+        OsString::from(match mode {
+            Mode::Check => "--check",
+            Mode::Tokens => "--tokens",
+            Mode::EmitC => "--emit-c",
+            Mode::EmitHeader => "--emit-header",
+            _ => "--build",
+        }),
+        path.as_os_str().to_owned(),
+        OsString::from("--output-base"),
+        output.as_os_str().to_owned(),
+        OsString::from("--kind"),
+        OsString::from(match kind {
+            TargetKind::Executable => "executable",
+            TargetKind::StaticLibrary => "static-library",
+            TargetKind::SharedLibrary => "shared-library",
+        }),
+    ];
+    arguments.push(OsString::from(
+        if native.profile == crustc::native::Profile::Release {
+            "--release"
+        } else {
+            "--debug-profile"
+        },
+    ));
+    if native.debug {
+        arguments.push(OsString::from("--debug-symbols"));
+    }
+    if mode == Mode::Run || mode == Mode::BuildDependency {
+        arguments.push(OsString::from("--quiet"));
+    }
+    for (flag, paths) in [
+        ("--protect-input", protected),
+        ("--native-source", native.sources.as_slice()),
+        ("--include-dir", native.include_dirs.as_slice()),
+        ("--library-dir", native.library_dirs.as_slice()),
+        ("--link-input", native.link_inputs.as_slice()),
+        ("--runtime-dir", native.runtime_dirs.as_slice()),
+        ("--runtime-library", native.runtime_libraries.as_slice()),
+    ] {
+        for path in paths {
+            arguments.push(flag.into());
+            arguments.push(path.as_os_str().to_owned());
+        }
+    }
+    for (flag, values) in [
+        ("--define", &native.defines),
+        ("--library", &native.libraries),
+        ("--link-target", &native.link_targets),
+    ] {
+        for value in values {
+            arguments.push(flag.into());
+            arguments.push(value.into());
+        }
+    }
+    for sanitizer in &native.sanitizers {
+        arguments.push("--sanitize".into());
+        arguments.push(
+            match sanitizer {
+                crustc::native::Sanitizer::Address => "address",
+                crustc::native::Sanitizer::Undefined => "undefined",
             }
-            return Ok(ExitCode::SUCCESS);
-        }
-        Mode::Check => {
-            let sources = crustc::source::SourceSet::load_for_target(path, native, kind, |path| {
-                fs::read_to_string(path)
-            })
-            .map_err(|error| error.to_string())?;
-            sources
-                .check_with_kind(kind.program_kind())
-                .map_err(|error| error.to_string())?;
-            println!("{}: OK", path.display());
-            return Ok(ExitCode::SUCCESS);
-        }
-        _ => {}
+            .into(),
+        );
     }
-    let sources = crustc::source::SourceSet::load_for_target(path, native, kind, |path| {
-        fs::read_to_string(path)
-    })
-    .map_err(|error| error.to_string())?;
-    if mode == Mode::EmitHeader {
-        let header = sources
-            .emit_header(kind.program_kind())
-            .map_err(|error| error.to_string())?;
-        print!("{header}");
-        return Ok(ExitCode::SUCCESS);
-    }
-    let generated = sources
-        .compile_with_kind(kind.program_kind())
+    let request = serde_json::to_vec(&crate::invocation::encode(&arguments))
         .map_err(|error| error.to_string())?;
-    if mode == Mode::EmitC {
-        print!("{generated}");
+    let mut child = Command::new(&compiler)
+        .arg("--driver-request")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "could not start compiler {}: {error}. Set CRUSTC to the compiler executable",
+                compiler.display()
+            )
+        })?;
+    let written = child
+        .stdin
+        .take()
+        .ok_or("compiler stdin was not piped")?
+        .write_all(&request);
+    let status = child
+        .wait()
+        .map_err(|error| format!("could not wait for compiler: {error}"))?;
+    if !status.success() {
+        return Err(format!("compiler exited with {status}"));
+    }
+    written.map_err(|error| format!("could not send compiler arguments: {error}"))?;
+    if mode != Mode::Run {
         return Ok(ExitCode::SUCCESS);
     }
-    let protected: Vec<_> = protected
-        .iter()
-        .cloned()
-        .chain(
-            sources
-                .files()
-                .iter()
-                .filter(|file| file.physical)
-                .map(|file| file.path.clone()),
-        )
-        .chain(sources.native_headers().iter().cloned())
-        .chain(native.runtime_libraries.iter().cloned())
-        .collect();
-    let executable = build(&generated, output, &protected, native, kind)?;
-    if matches!(mode, Mode::Build | Mode::BuildDependency) {
-        if mode == Mode::Build {
-            println!("Built {}", executable.display());
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
+    let executable = kind.artifact_path(output)?;
     let mut command = Command::new(&executable);
     command.args(program_arguments);
     if !cfg!(windows) && !native.runtime_dirs.is_empty() {
@@ -379,91 +411,4 @@ fn process_source(
         .status()
         .map_err(|error| format!("could not run {}: {error}", executable.display()))?;
     return Ok(ExitCode::from(status.code().unwrap_or(1) as u8));
-}
-
-fn build(
-    generated: &str,
-    output: &Path,
-    protected: &[PathBuf],
-    native: &crustc::native::Options,
-    kind: TargetKind,
-) -> Result<PathBuf, String> {
-    let directory = output.parent().ok_or("output path needs a directory")?;
-    fs::create_dir_all(directory)
-        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
-    let c_path = output.with_extension("c");
-    let executable = kind.artifact_path(output)?;
-    let import = crustc::native::import_library(&executable);
-    let mut destinations = vec![c_path.clone(), executable.clone()];
-    let debug_bundle =
-        (cfg!(target_os = "macos") && native.debug && kind != TargetKind::StaticLibrary)
-            .then(|| crustc::native::debug_bundle(&executable));
-    if let Some(bundle) = &debug_bundle {
-        destinations.push(bundle.clone());
-    }
-    if kind == TargetKind::SharedLibrary && cfg!(windows) {
-        destinations.push(import);
-    }
-    if cfg!(windows) {
-        if kind != TargetKind::StaticLibrary
-            && let Some(debug) = crustc::native::debug_symbols_for(&executable, native)
-        {
-            destinations.push(debug);
-        }
-        if kind == TargetKind::Executable && !native.runtime_libraries.is_empty() {
-            destinations.push(crustc::native::application_manifest(&executable));
-        }
-        for library in &native.runtime_libraries {
-            destinations.push(
-                directory.join(
-                    library
-                        .file_name()
-                        .ok_or("runtime library needs a filename")?,
-                ),
-            );
-        }
-    }
-    for destination in &destinations {
-        let resolved = if destination.exists() {
-            destination
-                .canonicalize()
-                .map_err(|error| error.to_string())?
-        } else {
-            directory
-                .canonicalize()
-                .map_err(|error| error.to_string())?
-                .join(
-                    destination
-                        .file_name()
-                        .ok_or("output path needs a filename")?,
-                )
-        };
-        for input in protected {
-            let input = input
-                .canonicalize()
-                .map_err(|error| format!("could not resolve input {}: {error}", input.display()))?;
-            if resolved == input
-                || (debug_bundle.as_ref() == Some(destination) && input.starts_with(&resolved))
-            {
-                return Err(format!(
-                    "output would overwrite an input file: {}",
-                    destination.display()
-                ));
-            }
-        }
-    }
-    fs::write(&c_path, generated)
-        .map_err(|error| format!("could not write {}: {error}", c_path.display()))?;
-    match kind {
-        TargetKind::StaticLibrary => {
-            crustc::native::compile_static_library(&c_path, &executable, native)?
-        }
-        TargetKind::SharedLibrary => {
-            crustc::native::compile_shared_library(&c_path, &executable, native)?
-        }
-        TargetKind::Executable => {
-            crustc::native::compile_file_with_options(&c_path, &executable, native)?
-        }
-    }
-    return Ok(executable);
 }

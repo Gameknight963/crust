@@ -106,7 +106,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Build compiler for editor integration tests
-        run: cargo build --locked --bin crust
+        run: cargo build --locked --bin crust --bin crustc
       - uses: actions/setup-node@v7
         with:
           node-version: 24

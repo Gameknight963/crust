@@ -22,6 +22,28 @@ crust run examples/text.cr
 crust run --project examples/file_project
 ```
 
+`crust` invokes the adjacent `crustc` executable for each compilation. Keep both
+executables in the same directory. `CRUSTC` can select another compiler executable.
+The project driver resolves manifests, target dependencies, profiles, and runtime
+arguments. The language server uses the compiler library directly.
+
+To build a single source file with explicit options:
+
+```text
+crustc examples/hello.cr -o target/hello
+crustc --check examples/hello.cr
+crustc --emit-c examples/hello.cr
+```
+
+`-o` names the exact output file. On Windows, use `-o target/hello.exe`.
+Without `-o`, the compiler derives the platform artifact name from the source
+filename in the current directory. `--kind static-library` and
+`--kind shared-library` compile library entries. `crustc --help` lists native
+include, source, library, and sanitizer options.
+
+Checkout development needs `cargo build --bins` before invoking the project
+driver through `cargo run`. Cargo builds only the selected binary for `cargo run`.
+
 ## Editors
 
 - VS Code: install `crust-language.vsix` using **Extensions: Install from VSIX**. Put the server on `PATH`, or set `crust.server.path` to its full executable path.

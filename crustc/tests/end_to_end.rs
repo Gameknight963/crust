@@ -232,14 +232,16 @@ fn crustc_compiles_source_files_and_identifies_its_command() {
         .unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: crustc "));
+    let source = source_file("int main() { print(42); return 0; }");
+    let executable = source.with_extension(if cfg!(windows) {
+        "compiled.exe"
+    } else {
+        "compiled"
+    });
     let output = Command::new(env!("CARGO_BIN_EXE_crustc"))
-        .arg("run")
-        .arg(source_file("int main() { print(42); return 0; }"))
-        .current_dir(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap(),
-        )
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
         .output()
         .unwrap();
     assert!(
@@ -247,8 +249,11 @@ fn crustc_compiles_source_files_and_identifies_its_command() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Built "));
+    let executed = Command::new(&executable).output().unwrap();
+    assert!(executed.status.success());
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        String::from_utf8_lossy(&executed.stdout).replace('\r', ""),
         "42\n"
     );
 }
@@ -272,4 +277,106 @@ fn commands_without_arguments_show_help_outside_a_project() {
         assert!(output.stderr.is_empty());
         assert!(String::from_utf8_lossy(&output.stdout).starts_with(&format!("Usage: {name} ")));
     }
+}
+
+#[test]
+fn compiler_requires_explicit_source_and_driver_invokes_configured_compiler() {
+    let source = source_file("int main() { return 0; }");
+    for argument in ["run", "--project", "metadata"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_crustc"))
+            .arg(argument)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Use crust"));
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("check")
+        .arg(&source)
+        .env("CRUSTC", source.with_extension("missing-compiler"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("could not start compiler"));
+    let output = Command::new(env!("CARGO_BIN_EXE_crust"))
+        .arg("check")
+        .arg(&source)
+        .env("CRUSTC", env!("CARGO_BIN_EXE_crustc"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains(": OK"));
+}
+
+#[test]
+fn direct_compiler_ignores_project_manifests_and_accepts_native_settings() {
+    let path = source_file("int main(){return 0;}");
+    let directory = path.with_extension("standalone");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("crust.toml"), "invalid manifest").unwrap();
+    fs::write(directory.join("value.h"), "#define VALUE ANSWER\n").unwrap();
+    fs::write(directory.join("main.cr"), "#pragma crust begin_c\n#include <value.h>\n#pragma crust end_c\nint main(){print(VALUE);return 0;}").unwrap();
+    let executable = directory.join(if cfg!(windows) {
+        "answer.exe"
+    } else {
+        "answer"
+    });
+    let compiled = Command::new(env!("CARGO_BIN_EXE_crustc"))
+        .args([
+            "main.cr",
+            "--define",
+            "ANSWER=42",
+            "--include-dir",
+            ".",
+            "-o",
+        ])
+        .arg(&executable)
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executed = Command::new(&executable).output().unwrap();
+    assert!(executed.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&executed.stdout).replace('\r', ""),
+        "42\n"
+    );
+    let checked = Command::new(env!("CARGO_BIN_EXE_crustc"))
+        .arg("--check")
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("requires a source file"));
+}
+
+#[test]
+fn direct_compiler_preserves_native_inputs_when_selecting_an_output() {
+    let source = source_file("int main(){return 0;}");
+    let native_source = source.with_extension("c");
+    let contents = "int external_value(void){return 42;}";
+    fs::write(&native_source, contents).unwrap();
+    let executable = source.with_extension(if cfg!(windows) { "exe" } else { "bin" });
+    let output = Command::new(env!("CARGO_BIN_EXE_crustc"))
+        .arg(&source)
+        .arg("--native-source")
+        .arg(&native_source)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("output would overwrite an input file")
+    );
+    assert_eq!(fs::read_to_string(&native_source).unwrap(), contents);
 }

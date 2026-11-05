@@ -9,7 +9,10 @@ ownership checking, C generation, and native compilation.
 | --- | --- |
 | `crustc/src/main.rs` | `crust` project-driver entry point |
 | `crustc/src/bin/crustc.rs` | `crustc` compiler entry point |
-| `crustc/src/cli.rs` | Shared CLI commands, source loading, build output, execution |
+| `crustc/src/cli.rs` | Project commands, compiler subprocess invocation, and program execution |
+| `crustc/src/compiler_cli.rs` | Explicit source compiler arguments |
+| `crustc/src/compiler.rs` | Source compilation and protected native output |
+| `crustc/src/invocation.rs` | Driver argument transport preserving OS paths |
 | `crustc/src/lib.rs` | Frontend and source-to-C APIs |
 | `crustc/src/lexer.rs` | Tokens and scanning |
 | `crustc/src/diagnostic.rs` | Source locations and diagnostics |
