@@ -264,7 +264,7 @@ fn run_project(mut project: Project, options: &Options) -> Result<ExitCode, Stri
             target.kind,
             &options.program_arguments,
         )?;
-        if mode == Mode::Run {
+        if mode == Mode::Run || code != ExitCode::SUCCESS {
             return Ok(code);
         }
     }
@@ -383,7 +383,7 @@ fn process_source(
         .wait()
         .map_err(|error| format!("could not wait for compiler: {error}"))?;
     if !status.success() {
-        return Err(format!("compiler exited with {status}"));
+        return Ok(ExitCode::from(status.code().unwrap_or(1) as u8));
     }
     written.map_err(|error| format!("could not send compiler arguments: {error}"))?;
     if mode != Mode::Run {

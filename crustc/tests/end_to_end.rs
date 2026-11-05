@@ -207,6 +207,7 @@ fn cli_keeps_frontend_errors_separate_from_c_compilation() {
         "{error}"
     );
     assert!(!error.contains("C compiler"), "{error}");
+    assert_eq!(error.lines().count(), 1, "{error}");
 }
 
 #[test]
