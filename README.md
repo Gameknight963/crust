@@ -9,10 +9,11 @@ C and builds native executables, static libraries, and shared libraries.
 
 ## Goals
 
-- Familiar C syntax
-- Compile-time ownership and borrow checking
-- Automatic resource cleanup with destructors
-- Integration with C libraries and headers
+- Familiar to C, easy to pick up for C/C++ programmers, 
+- Simple like C
+- Safe like Rust
+- Automatic resource cleanup with destructors (RAII)
+- Very good C interop
 
 ## Example
 
@@ -42,7 +43,25 @@ use const native `char` arrays containing UTF-8 and work with C string APIs.
 [Floating-point numbers](examples/floats.cr) support `float`, `double`, and
 `long double`, including C calls and checked numeric conversions.
 
-### Ownership and containers
+## Try it now
+
+Get the latest nightly releases from here. These are all zipped for now, Linux downloads might use tar in the future.
+
+[Windows compiler](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-windows-latest-clang.zip) <br>
+[macOS compiler](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-macos-latest-clang.zip) <br>
+[Linux compiler, Clang](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-ubuntu-latest-clang.zip) <br>
+[Linux compiler, GCC](https://nightly.link/Gameknight963/crust/workflows/ci/main/compiler-ubuntu-latest-gcc.zip) <br>
+
+
+Additionally, for editor support:
+
+[Visual Studio extension](https://nightly.link/Gameknight963/crust/workflows/ci/main/visualstudio-extension.zip)
+<br>
+[VS Code extension](https://nightly.link/Gameknight963/crust/workflows/ci/main/vscode-extension.zip)
+
+## Read some examples
+
+#### Ownership and containers
 
 - [Library](lib/): reusable boxes, buffers, vectors, and sorting
 - [Slices](examples/slices.cr): borrowed views of arrays and containers
@@ -57,7 +76,7 @@ use const native `char` arrays containing UTF-8 and work with C string APIs.
 - [File resource](examples/file_project/): binary I/O, ownership transfer, and automatic closing
 - [File statistics](examples/crustwc/): a multi-file CLI with UTF-8 validation and recoverable errors
 
-### C integration
+#### C integration
 
 - [Headers](examples/header_project/): direct header inclusion and an opaque handle wrapper
 - [Header-only C](examples/header_only_project/): static functions, packed records, and bitfields
@@ -72,39 +91,23 @@ use const native `char` arrays containing UTF-8 and work with C string APIs.
 - [Target links](examples/linked_project/): automatic library builds and native linking
 - [Calling conventions](examples/calling_convention_project/): `__vectorcall` callbacks on Windows x86 and x64
 
-## Repository layout
+## Development
 
-- `crustc/`: Rust compiler crate, command-line tools, language server, and compiler tests
-- `lib/`: Crust source library
-- `examples/`: Crust programs and integration projects
-- `editors/`: editor and MSBuild integrations
-- `docs/`: language and tooling documentation
-
-## Getting started
-
-Compiler archives include `crustc`, `crust`, `crust-lsp`, and the source library.
-Use `crustc` for source-file compilation and `crust` for project commands.
-Both commands currently share the same driver and accept the existing command syntax.
-See [installation](docs/installation.md) for binary setup and archive builds.
-
-Install Rust and Cargo, plus a C11 compiler and its development libraries.
+Install Rust and Cargo, plus a C11 compiler.
 The compiler driver defaults to Clang on Windows and `cc` elsewhere.
 For [mixed-source builds](docs/mixed-source.md) from a checkout, install libclang
 or set `CRUST_LIBCLANG` to its library file. Compiler archives bundle it.
 
-```powershell
+```
 cargo run --bin crustc -- examples/hello.cr
 cargo run -- examples/methods.cr
 cargo run -- examples/destructors.cr
 cargo run -- run --project examples/project
 ```
 
-In VS Code, install the recommended **rust-analyzer** extension. **Ctrl+Shift+B**
-builds the project, and **Terminal > Run Task** lists the examples.
-
 To select a C compiler, set `CC` to its executable path:
 
-```powershell
+```
 $env:CC = 'clang'
 ```
 
@@ -129,8 +132,8 @@ directory containing `crust.toml`:
 
 Passing a source filename directly also compiles and runs it:
 
-```powershell
-cargo run -- examples/ownership.cr
+```
+crustc examples/ownership.cr
 ```
 
 ## Documentation
