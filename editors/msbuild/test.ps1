@@ -111,6 +111,7 @@ entry = "../src/tool.cr"
     $crustLocalCompiler = Join-Path $crustDirectory 'tools/crust.exe'
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($crustLocalCompiler)) | Out-Null
     Copy-Item -LiteralPath $CompilerPath -Destination $crustLocalCompiler
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $CompilerPath) 'crustc.exe') -Destination (Join-Path (Split-Path -Parent $crustLocalCompiler) 'crustc.exe')
     Assert-CrustSuccess (Invoke-CrustBuild $crustHostKind $crustProject @('-t:Check', '-p:CrustCompilerPath=tools/crust.exe') 'missing-cc-for-check')
     if (Test-Path -LiteralPath (Join-Path $crustDirectory 'config/target')) { throw 'Metadata or Check built native artifacts.' }
     Assert-CrustSuccess (Invoke-CrustBuild $crustHostKind $crustProject @('-t:Build', '-p:CrustTarget=app') '')

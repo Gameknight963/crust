@@ -50,6 +50,7 @@ $crustSources = @{
     'language-configuration.json' = 'editors/vscode/language-configuration.json'
     'Server/crust-lsp.exe' = 'target/release/crust-lsp.exe'
     'Server/crust.exe' = 'target/release/crust.exe'
+    'Server/crustc.exe' = 'target/release/crustc.exe'
     'Server/libclang.dll' = 'target/native-runtime/libclang.dll'
     'Server/third-party/llvm/LICENSE.TXT' = 'third-party/llvm/LICENSE.TXT'
     'Tools/Crust.Console.exe' = 'target/visualstudio-console/Crust.Console.exe'
